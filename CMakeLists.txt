@@ -29,6 +29,12 @@ add_executable(process_checks tests/process_checks.cpp)
 target_link_libraries(process_checks PRIVATE tmog_core)
 add_test(NAME process_checks COMMAND process_checks)
 
+if(WIN32)
+    add_executable(smoke_enumerate tests/smoke_enumerate.cpp)
+    target_link_libraries(smoke_enumerate PRIVATE tmog_core)
+    add_test(NAME smoke_enumerate COMMAND smoke_enumerate)
+endif()
+
 if(TARGET Qt6::Widgets)
     add_executable(TmogReplica
         src/main.cpp
