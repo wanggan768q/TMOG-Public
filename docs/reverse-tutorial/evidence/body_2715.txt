@@ -1,0 +1,38 @@
+## raw_result.value.pseudocode
+
+
+void FUN_1401f26f0(undefined8 *param_1,undefined8 *param_2)
+
+{
+  int iVar1;
+  undefined8 uVar2;
+  int *piVar3;
+  int *local_res8;
+  undefined8 *local_res10;
+  
+  uVar2 = *param_1;
+  local_res8 = (int *)*param_2;
+  if (local_res8 != (int *)0x0) {
+    LOCK();
+    *local_res8 = *local_res8 + 1;
+    UNLOCK();
+  }
+  local_res10 = param_2;
+  FUN_1401f6280(uVar2,&local_res8);
+  piVar3 = (int *)*param_2;
+  if (piVar3 != (int *)0x0) {
+    LOCK();
+    iVar1 = *piVar3;
+    *piVar3 = *piVar3 + -1;
+    UNLOCK();
+    if (iVar1 == 1) {
+      thunk_FUN_140327e20(piVar3,0x20);
+      return;
+    }
+  }
+  return;
+}
+
+
+
+## raw_result.value.assembly

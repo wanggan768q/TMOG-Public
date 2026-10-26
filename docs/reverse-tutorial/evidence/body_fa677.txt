@@ -1,0 +1,163 @@
+## raw_result.value.pseudocode
+
+
+void FUN_1401fa380(longlong param_1)
+
+{
+  HWND pHVar1;
+  bool bVar2;
+  char cVar3;
+  HWND pHVar4;
+  BOOL BVar5;
+  BOOL BVar6;
+  undefined8 *puVar7;
+  BOOL BVar8;
+  undefined8 local_28;
+  undefined8 local_20;
+  
+  BVar6 = 0;
+  BVar8 = 0;
+  switch(*(undefined8 *)(param_1 + 0x2ec8)) {
+  case 8:
+    cVar3 = *(char *)(param_1 + 0x1f5b);
+    break;
+  case 9:
+    cVar3 = *(char *)(param_1 + 0x1f5c);
+    break;
+  case 10:
+    cVar3 = *(char *)(param_1 + 0xb91);
+    break;
+  case 0xb:
+    cVar3 = *(char *)(param_1 + 0xd60);
+    break;
+  case 0xc:
+    cVar3 = *(char *)(param_1 + 0xdd2);
+    break;
+  case 0xd:
+    cVar3 = *(char *)(param_1 + 0x1f5d);
+    break;
+  case 0xe:
+    cVar3 = *(char *)(param_1 + 0x1f5e);
+    break;
+  default:
+    goto switchD_1401fa3cd_default;
+  }
+  if (cVar3 == '\0') {
+    bVar2 = true;
+  }
+  else {
+switchD_1401fa3cd_default:
+    bVar2 = false;
+    BVar6 = 1;
+  }
+  if (*(HWND *)(param_1 + 0x290) != (HWND)0x0) {
+    EnableWindow(*(HWND *)(param_1 + 0x290),1);
+  }
+  if (*(HWND *)(param_1 + 0x288) != (HWND)0x0) {
+    EnableWindow(*(HWND *)(param_1 + 0x288),BVar6);
+  }
+  if (*(HWND *)(param_1 + 0xaa8) != (HWND)0x0) {
+    if ((!bVar2) || (BVar5 = BVar8, *(longlong *)(param_1 + 0x2ec8) != 10)) {
+      BVar5 = 1;
+    }
+    EnableWindow(*(HWND *)(param_1 + 0xaa8),BVar5);
+  }
+  puVar7 = (undefined8 *)(param_1 + 0xab0);
+  if (param_1 != param_1 + 0x18) {
+    do {
+      if ((HWND)*puVar7 != (HWND)0x0) {
+        if ((!bVar2) || (BVar5 = BVar8, *(longlong *)(param_1 + 0x2ec8) != 10)) {
+          BVar5 = 1;
+        }
+        EnableWindow((HWND)*puVar7,BVar5);
+      }
+      puVar7 = puVar7 + 1;
+    } while (puVar7 != (undefined8 *)(param_1 + 0xac8));
+  }
+  pHVar1 = *(HWND *)(param_1 + 0xac8);
+  if (pHVar1 != (HWND)0x0) {
+    if ((!bVar2) || (BVar5 = BVar8, *(longlong *)(param_1 + 0x2ec8) != 10)) {
+      BVar5 = 1;
+    }
+    EnableWindow(pHVar1,BVar5);
+  }
+  if (*(HWND *)(param_1 + 0xad0) != (HWND)0x0) {
+    if ((!bVar2) || (BVar5 = BVar8, *(longlong *)(param_1 + 0x2ec8) != 10)) {
+      BVar5 = 1;
+    }
+    EnableWindow(*(HWND *)(param_1 + 0xad0),BVar5);
+  }
+  if (*(HWND *)(param_1 + 0xad8) != (HWND)0x0) {
+    if ((!bVar2) || (BVar5 = BVar8, *(longlong *)(param_1 + 0x2ec8) != 10)) {
+      BVar5 = 1;
+    }
+    EnableWindow(*(HWND *)(param_1 + 0xad8),BVar5);
+  }
+  if (*(HWND *)(param_1 + 0xae0) != (HWND)0x0) {
+    if ((!bVar2) || (BVar5 = BVar8, *(longlong *)(param_1 + 0x2ec8) != 10)) {
+      BVar5 = 1;
+    }
+    EnableWindow(*(HWND *)(param_1 + 0xae0),BVar5);
+  }
+  if (*(HWND *)(param_1 + 0xae8) != (HWND)0x0) {
+    if ((!bVar2) || (BVar5 = BVar8, *(longlong *)(param_1 + 0x2ec8) != 10)) {
+      BVar5 = 1;
+    }
+    EnableWindow(*(HWND *)(param_1 + 0xae8),BVar5);
+  }
+  if (*(HWND *)(param_1 + 0xaf0) != (HWND)0x0) {
+    EnableWindow(*(HWND *)(param_1 + 0xaf0),0);
+  }
+  if (*(HWND *)(param_1 + 0xaa0) != (HWND)0x0) {
+    if ((!bVar2) || (BVar5 = BVar8, *(longlong *)(param_1 + 0x2ec8) != 10)) {
+      BVar5 = 1;
+    }
+    EnableWindow(*(HWND *)(param_1 + 0xaa0),BVar5);
+  }
+  if (*(HWND *)(param_1 + 0x2c0) != (HWND)0x0) {
+    EnableWindow(*(HWND *)(param_1 + 0x2c0),BVar6);
+  }
+  puVar7 = &local_28;
+  local_28 = *(undefined8 *)(param_1 + 0x1920);
+  local_20 = *(undefined8 *)(param_1 + 0x1928);
+  do {
+    if ((HWND)*puVar7 != (HWND)0x0) {
+      if ((!bVar2) || (BVar6 = BVar8, *(longlong *)(param_1 + 0x2ec8) != 0xe)) {
+        BVar6 = 1;
+      }
+      EnableWindow((HWND)*puVar7,BVar6);
+    }
+    puVar7 = puVar7 + 1;
+  } while (puVar7 != (undefined8 *)&stack0xffffffffffffffe8);
+  if (bVar2) {
+    FUN_1401f87c0(param_1);
+    if ((*(longlong *)(param_1 + 0x1f68) != 0) && (*(longlong *)(param_1 + 0x1f70) != 0)) {
+      pHVar1 = *(HWND *)(param_1 + 0x290);
+      pHVar4 = GetFocus();
+      if ((pHVar4 == pHVar1) && (*(HWND *)(param_1 + 0x1f88) != (HWND)0x0)) {
+        SetFocus(*(HWND *)(param_1 + 0x1f88));
+      }
+      FUN_1401f8260(param_1);
+      SetWindowPos(*(HWND *)(param_1 + 0x1f68),(HWND)0x0,0,0,0,0,0x53);
+      RedrawWindow(*(HWND *)(param_1 + 0x1f68),(RECT *)0x0,(HRGN)0x0,0x105);
+      SetWindowPos(*(HWND *)(param_1 + 0x1f70),(HWND)0x0,0,0,0,0,0x53);
+      RedrawWindow(*(HWND *)(param_1 + 0x1f70),(RECT *)0x0,(HRGN)0x0,0x185);
+    }
+  }
+  else {
+    if (*(HWND *)(param_1 + 0x1f68) != (HWND)0x0) {
+      ShowWindow(*(HWND *)(param_1 + 0x1f68),0);
+    }
+    if (*(HWND *)(param_1 + 0x1f70) != (HWND)0x0) {
+                    /* WARNING: Could not recover jumptable at 0x0001401fa66d. Too many branches */
+                    /* WARNING: Treating indirect jump as call */
+      ShowWindow(*(HWND *)(param_1 + 0x1f70),0);
+      return;
+    }
+  }
+  return;
+}
+
+
+
+## raw_result.value.assembly
