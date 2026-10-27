@@ -1,0 +1,146 @@
+## raw_result.value.pseudocode
+
+
+void FUN_1401f87c0(longlong param_1)
+
+{
+  bool bVar1;
+  char cVar2;
+  ATOM AVar3;
+  DWORD DVar4;
+  HWND pHVar5;
+  undefined8 uVar6;
+  wchar_t *pszSubAppName;
+  longlong *plVar7;
+  bool bVar8;
+  longlong local_c8;
+  longlong local_c0;
+  WNDCLASSEXW local_b8;
+  WNDCLASSEXW local_68;
+  
+  if ((*(longlong *)(param_1 + 0x230) != 0) &&
+     ((((*(longlong *)(param_1 + 0x1f68) == 0 || (*(longlong *)(param_1 + 0x1f70) == 0)) ||
+       (*(longlong *)(param_1 + 0x1f88) == 0)) || (*(longlong *)(param_1 + 0x1f90) == 0)))) {
+    if (*(HWND *)(param_1 + 0x1f70) != (HWND)0x0) {
+      DestroyWindow(*(HWND *)(param_1 + 0x1f70));
+    }
+    if (*(HWND *)(param_1 + 0x1f68) != (HWND)0x0) {
+      DestroyWindow(*(HWND *)(param_1 + 0x1f68));
+    }
+    bVar8 = DAT_1404cddd8 == '\0';
+    *(undefined8 *)(param_1 + 0x1f68) = 0;
+    *(undefined8 *)(param_1 + 0x1f70) = 0;
+    *(undefined8 *)(param_1 + 0x1f88) = 0;
+    *(undefined8 *)(param_1 + 0x1f90) = 0;
+    if (bVar8) {
+      local_b8.cbSize = 0x50;
+      local_b8.style = 0;
+      local_b8.cbClsExtra = 0;
+      local_b8.cbWndExtra = 0;
+      local_b8.lpfnWndProc = FUN_1401f93b0;
+      local_b8.hInstance = *(HINSTANCE *)(param_1 + 0x228);
+      local_b8.hIcon = (HICON)0x0;
+      local_b8.hCursor = (HCURSOR)0x0;
+      local_b8.hbrBackground = (HBRUSH)0x0;
+      local_b8.lpszMenuName = (LPCWSTR)0x0;
+      local_b8.lpszClassName = (LPCWSTR)0x0;
+      local_b8.hIconSm = (HICON)0x0;
+      local_b8.hCursor = LoadCursorW((HINSTANCE)0x0,(LPCWSTR)0x7f00);
+      local_b8.lpszClassName = L"TmogProVeil";
+      AVar3 = RegisterClassExW(&local_b8);
+      if ((AVar3 == 0) && (DVar4 = GetLastError(), DVar4 != 0x582)) {
+        bVar8 = false;
+      }
+      else {
+        bVar8 = true;
+      }
+      local_68.cbSize = 0x50;
+      local_68.style = 0;
+      local_68.cbClsExtra = 0;
+      local_68.cbWndExtra = 0;
+      local_68.lpfnWndProc = FUN_1401f8cd0;
+      local_68.hInstance = *(HINSTANCE *)(param_1 + 0x228);
+      local_68.hIcon = (HICON)0x0;
+      local_68.hCursor = (HCURSOR)0x0;
+      local_68.hbrBackground = (HBRUSH)0x0;
+      local_68.lpszMenuName = (LPCWSTR)0x0;
+      local_68.lpszClassName = (LPCWSTR)0x0;
+      local_68.hIconSm = (HICON)0x0;
+      local_68.hCursor = LoadCursorW((HINSTANCE)0x0,(LPCWSTR)0x7f00);
+      local_68.lpszClassName = L"TmogProPanel";
+      AVar3 = RegisterClassExW(&local_68);
+      if ((AVar3 == 0) && (DVar4 = GetLastError(), DVar4 != 0x582)) {
+        bVar1 = false;
+      }
+      else {
+        bVar1 = true;
+      }
+      if ((!bVar8) || (!bVar1)) {
+        DAT_1404cddd8 = 0;
+        return;
+      }
+      DAT_1404cddd8 = '\x01';
+    }
+    pHVar5 = (HWND)FUN_14003a600(0x80000,L"TmogProVeil",&DAT_14037c97c,0x44000000,0,0,0,0,
+                                 *(undefined8 *)(param_1 + 0x230),0,*(undefined8 *)(param_1 + 0x228)
+                                 ,0);
+    *(HWND *)(param_1 + 0x1f68) = pHVar5;
+    if (pHVar5 != (HWND)0x0) {
+      SetWindowLongPtrW(pHVar5,-0x15,param_1);
+      SetLayeredWindowAttributes(*(HWND *)(param_1 + 0x1f68),0,0x8c,2);
+    }
+    pHVar5 = (HWND)FUN_14003a600(0,L"TmogProPanel",&DAT_14037c97c,0x46000000,0,0,0,0,
+                                 *(undefined8 *)(param_1 + 0x230),0,*(undefined8 *)(param_1 + 0x228)
+                                 ,0);
+    *(HWND *)(param_1 + 0x1f70) = pHVar5;
+    if (pHVar5 == (HWND)0x0) {
+      if (*(HWND *)(param_1 + 0x1f68) == (HWND)0x0) {
+        return;
+      }
+      DestroyWindow(*(HWND *)(param_1 + 0x1f68));
+    }
+    else {
+      SetWindowLongPtrW(pHVar5,-0x15,param_1);
+      uVar6 = FUN_14003a600(0,L"BUTTON",L"Upgrade to Pro",0x5001000b,0,0,0,0,
+                            *(undefined8 *)(param_1 + 0x1f70),1,*(undefined8 *)(param_1 + 0x228),0);
+      *(undefined8 *)(param_1 + 0x1f88) = uVar6;
+      local_c0 = FUN_14003a600(0,L"BUTTON",&DAT_140404488,0x5001000b,0,0,0,0,
+                               *(undefined8 *)(param_1 + 0x1f70),2,*(undefined8 *)(param_1 + 0x228),
+                               0);
+      *(longlong *)(param_1 + 0x1f90) = local_c0;
+      if ((((*(longlong *)(param_1 + 0x1f68) != 0) && (*(longlong *)(param_1 + 0x1f70) != 0)) &&
+          (*(longlong *)(param_1 + 0x1f88) != 0)) && (local_c0 != 0)) {
+        local_c8 = *(longlong *)(param_1 + 0x1f88);
+        plVar7 = &local_c8;
+        do {
+          pHVar5 = (HWND)*plVar7;
+          if (pHVar5 != (HWND)0x0) {
+            cVar2 = FUN_1400eb420(param_1);
+            pszSubAppName = L"Explorer";
+            if (cVar2 != '\0') {
+              pszSubAppName = L"DarkMode_Explorer";
+            }
+            SetWindowTheme(pHVar5,pszSubAppName,(LPCWSTR)0x0);
+          }
+          plVar7 = plVar7 + 1;
+        } while ((WNDCLASSEXW *)plVar7 != &local_b8);
+        return;
+      }
+      if (*(HWND *)(param_1 + 0x1f70) != (HWND)0x0) {
+        DestroyWindow(*(HWND *)(param_1 + 0x1f70));
+      }
+      if (*(HWND *)(param_1 + 0x1f68) != (HWND)0x0) {
+        DestroyWindow(*(HWND *)(param_1 + 0x1f68));
+      }
+      *(undefined8 *)(param_1 + 0x1f70) = 0;
+      *(undefined8 *)(param_1 + 0x1f88) = 0;
+      *(undefined8 *)(param_1 + 0x1f90) = 0;
+    }
+    *(undefined8 *)(param_1 + 0x1f68) = 0;
+  }
+  return;
+}
+
+
+
+## raw_result.value.assembly

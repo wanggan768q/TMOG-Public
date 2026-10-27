@@ -1,0 +1,97 @@
+## raw_result.value.pseudocode
+
+
+void FUN_14010ee30(longlong param_1,ulonglong param_2)
+
+{
+  char cVar1;
+  undefined4 uVar2;
+  ulonglong uVar3;
+  undefined1 auStack_68 [80];
+  ulonglong local_18;
+  
+  if (0xf < param_2) {
+    return;
+  }
+  local_18 = DAT_1404c7ac0 ^ (ulonglong)auStack_68;
+  if (param_2 != 0xf) {
+    FUN_1401bbbb0();
+  }
+  if (((*(ulonglong *)(param_1 + 0x2ec8) - 0xd < 2) && (param_2 != *(ulonglong *)(param_1 + 0x2ec8))
+      ) && (*(HWND *)(param_1 + 0x230) != (HWND)0x0)) {
+    KillTimer(*(HWND *)(param_1 + 0x230),3);
+    *(undefined1 *)(param_1 + 0x1828) = 0;
+  }
+  if (param_2 == 8) {
+    cVar1 = FUN_1401f84c0(param_1,5);
+    if (cVar1 == '\0') goto LAB_14010ef5c;
+    *(undefined1 *)(param_1 + 0x1f5b) = 1;
+LAB_14010eec3:
+    *(undefined1 *)(param_1 + 0x1f5c) = 0;
+    if (param_2 != 10) goto LAB_14010ef89;
+    cVar1 = FUN_1401f84c0(param_1,7);
+    if (cVar1 == '\0') goto LAB_14010ef89;
+    FUN_1400d11f0(param_1,1);
+LAB_14010eef3:
+    FUN_1400d5b70(param_1,0);
+    if (param_2 != 0xc) goto LAB_14010efbc;
+    cVar1 = FUN_1401f84c0(param_1,8);
+    if (cVar1 == '\0') goto LAB_14010efbc;
+    FUN_14012c5c0(param_1,1);
+LAB_14010ef26:
+    *(undefined1 *)(param_1 + 0x1f5d) = 0;
+    if (param_2 != 0xe) goto LAB_14010efec;
+    cVar1 = FUN_1401f84c0(param_1,0);
+    if (cVar1 == '\0') goto LAB_14010efec;
+    *(undefined1 *)(param_1 + 0x1f5e) = 1;
+    *(undefined1 *)(param_1 + 0xb92) = 0;
+  }
+  else {
+LAB_14010ef5c:
+    *(undefined1 *)(param_1 + 0x1f5b) = 0;
+    if (param_2 != 9) goto LAB_14010eec3;
+    cVar1 = FUN_1401f84c0(param_1,6);
+    if (cVar1 == '\0') goto LAB_14010eec3;
+    *(undefined1 *)(param_1 + 0x1f5c) = 1;
+LAB_14010ef89:
+    FUN_1400d11f0(param_1,0);
+    if (param_2 != 0xb) goto LAB_14010eef3;
+    cVar1 = FUN_1401f84c0(param_1,2);
+    if (cVar1 == '\0') goto LAB_14010eef3;
+    FUN_1400d5b70(param_1,1);
+LAB_14010efbc:
+    FUN_14012c5c0(param_1,0);
+    if (param_2 != 0xd) goto LAB_14010ef26;
+    cVar1 = FUN_1401f84c0(param_1,1);
+    if (cVar1 == '\0') goto LAB_14010ef26;
+    *(undefined1 *)(param_1 + 0x1f5d) = 1;
+LAB_14010efec:
+    *(undefined1 *)(param_1 + 0x1f5e) = 0;
+    *(undefined1 *)(param_1 + 0xb92) = 0;
+    if (param_2 == 0xf) goto LAB_14010f007;
+  }
+  *(ulonglong *)(param_1 + 0x2ed0) = param_2;
+LAB_14010f007:
+  *(ulonglong *)(param_1 + 0x2ec8) = param_2;
+  uVar2 = FUN_1400e6910(param_1);
+  FUN_14003af90(*(undefined8 *)(param_1 + 0x290),0x1001,0,uVar2);
+  uVar2 = FUN_1400e6910(param_1);
+  FUN_14003af90(*(undefined8 *)(param_1 + 0x290),0x1026,0,uVar2);
+  FUN_1400ddca0(param_1);
+  uVar3 = param_2;
+  if (param_2 == 0xf) {
+    uVar3 = 0xffffffffffffffff;
+  }
+  FUN_14003af90(*(undefined8 *)(param_1 + 0x240),0x186,uVar3,0);
+  InvalidateRect(*(HWND *)(param_1 + 0x240),(RECT *)0x0,0);
+  InvalidateRect(*(HWND *)(param_1 + 0x248),(RECT *)0x0,0);
+  InvalidateRect(*(HWND *)(param_1 + 0x260),(RECT *)0x0,0);
+                    /* WARNING: Could not recover jumptable at 0x00014010f0c1. Too many branches */
+                    /* WARNING: Treating indirect jump as call */
+  (*(code *)(IMAGE_DOS_HEADER_140000000.e_magic + *(uint *)(&DAT_14010f2ec + param_2 * 4)))();
+  return;
+}
+
+
+
+## raw_result.value.assembly

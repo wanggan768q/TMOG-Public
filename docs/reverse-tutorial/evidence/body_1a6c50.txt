@@ -1,0 +1,87 @@
+## raw_result.value.pseudocode
+
+
+void FUN_1401a6c50(longlong param_1)
+
+{
+  char cVar1;
+  char cVar2;
+  longlong lVar3;
+  longlong lVar4;
+  longlong lVar5;
+  bool bVar6;
+  bool bVar7;
+  bool bVar8;
+  char cVar9;
+  int iVar10;
+  
+  if (*(longlong *)(param_1 + 0x230) == 0) {
+    return;
+  }
+  if (((*(char *)(param_1 + 0xd60) == '\0') || (*(char *)(param_1 + 0xd61) == '\0')) ||
+     (*(char *)(param_1 + 0xd62) != '\0')) {
+    bVar6 = false;
+  }
+  else {
+    bVar6 = true;
+  }
+  lVar3 = *(longlong *)(param_1 + 0x5e0);
+  lVar4 = *(longlong *)(param_1 + 0xe8);
+  cVar1 = *(char *)(param_1 + 4);
+  iVar10 = FUN_1403265a0(param_1 + 0x17c0);
+  if (iVar10 != 0) {
+LAB_1401a6e50:
+                    /* WARNING: Subroutine does not return */
+    FUN_140325560(5);
+  }
+  if (*(int *)(param_1 + 0x180c) == 0x7fffffff) {
+    *(undefined4 *)(param_1 + 0x180c) = 0x7ffffffe;
+  }
+  else {
+    lVar5 = *(longlong *)(param_1 + 0x1810);
+    FUN_1403266c0(param_1 + 0x17c0);
+    iVar10 = FUN_1403265a0(param_1 + 0xb98);
+    if (iVar10 != 0) goto LAB_1401a6e50;
+    if (*(int *)(param_1 + 0xbe4) == 0x7fffffff) {
+      *(undefined4 *)(param_1 + 0xbe4) = 0x7ffffffe;
+    }
+    else {
+      cVar2 = *(char *)(param_1 + 0xcd8);
+      FUN_1403266c0(param_1 + 0xb98);
+      iVar10 = FUN_1403265a0(param_1 + 0xe18);
+      if (iVar10 != 0) goto LAB_1401a6e50;
+      if (*(int *)(param_1 + 0xe64) != 0x7fffffff) {
+        cVar9 = *(char *)(param_1 + 0xf08);
+        FUN_1403266c0();
+        if ((cVar9 == '\0') &&
+           (((*(char *)(param_1 + 0xdd2) == '\0' || (*(char *)(param_1 + 0xdd3) == '\0')) ||
+            (*(char *)(param_1 + 0xdd4) != '\0')))) {
+          bVar7 = false;
+        }
+        else {
+          bVar7 = true;
+        }
+        if ((*(char *)(param_1 + 0x1630) == '\0') || (cVar9 = FUN_1401cd1b0(), cVar9 == '\0')) {
+          bVar8 = false;
+        }
+        else {
+          bVar8 = true;
+        }
+        if (((((!bVar6 && cVar2 == '\0') && *(char *)(param_1 + 0x1f59) == '\0') &&
+             (!bVar7 && lVar3 == 0)) && (lVar4 == 0 && cVar1 == '\0')) && (lVar5 == 0 && !bVar8)) {
+          KillTimer(*(HWND *)(param_1 + 0x230),0xe);
+          return;
+        }
+        SetTimer(*(HWND *)(param_1 + 0x230),0xe,0xfa,(TIMERPROC)0x0);
+        return;
+      }
+      *(undefined4 *)(param_1 + 0xe64) = 0x7ffffffe;
+    }
+  }
+                    /* WARNING: Subroutine does not return */
+  FUN_140325560(6);
+}
+
+
+
+## raw_result.value.assembly

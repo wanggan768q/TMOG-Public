@@ -1,0 +1,27 @@
+## raw_result.value.pseudocode
+
+
+undefined8 * FUN_1401f98d0(longlong param_1,undefined8 *param_2)
+
+{
+  char cVar1;
+  undefined8 uVar2;
+  wchar_t *pwVar3;
+  
+  cVar1 = FUN_1401f5c70(param_1 + 0x1a38);
+  pwVar3 = L"Task Manager TMOG";
+  *param_2 = 0;
+  param_2[1] = 0;
+  if (cVar1 != '\0') {
+    pwVar3 = L"Task Manager TMOG PRO";
+  }
+  param_2[2] = 0;
+  param_2[3] = 0;
+  uVar2 = FUN_140335100(pwVar3);
+  FUN_1400017a0(param_2,pwVar3,uVar2);
+  return param_2;
+}
+
+
+
+## raw_result.value.assembly

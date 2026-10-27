@@ -1,0 +1,709 @@
+## raw_result.value.pseudocode
+
+
+/* WARNING: Function: __security_check_cookie replaced with injection: security_check_cookie */
+
+void FUN_1401f8160(longlong param_1)
+
+{
+  code *pcVar1;
+  char cVar2;
+  undefined8 uVar3;
+  undefined8 ****ppppuVar4;
+  ulonglong uVar5;
+  wchar_t *pwVar6;
+  undefined1 auStack_58 [40];
+  undefined8 ***local_30;
+  undefined8 uStack_28;
+  undefined8 local_20;
+  ulonglong local_18;
+  ulonglong local_10;
+  
+  local_10 = DAT_1404c7ac0 ^ (ulonglong)auStack_58;
+  if (*(longlong *)(param_1 + 0x230) != 0) {
+    cVar2 = FUN_1401f5c70(param_1 + 0x1a38);
+    pwVar6 = L"Task Manager TMOG";
+    if (cVar2 != '\0') {
+      pwVar6 = L"Task Manager TMOG PRO";
+    }
+    local_30 = (undefined8 ****)0x0;
+    uStack_28 = 0;
+    local_20 = 0;
+    local_18 = 0;
+    uVar3 = FUN_140335100(pwVar6);
+    FUN_1400017a0(&local_30,pwVar6,uVar3);
+    ppppuVar4 = &local_30;
+    if (7 < local_18) {
+      ppppuVar4 = (undefined8 ****)local_30;
+    }
+    FUN_14003b170(*(undefined8 *)(param_1 + 0x230),ppppuVar4);
+    if (7 < local_18) {
+      uVar5 = local_18 * 2 + 2;
+      ppppuVar4 = (undefined8 ****)local_30;
+      if (0xfff < uVar5) {
+        ppppuVar4 = (undefined8 ****)local_30[-1];
+        if (0x1f < (ulonglong)((longlong)local_30 + (-8 - (longlong)ppppuVar4))) {
+          pcVar1 = (code *)swi(0x29);
+          (*pcVar1)(5);
+          pcVar1 = (code *)swi(3);
+          (*pcVar1)();
+          return;
+        }
+        uVar5 = local_18 * 2 + 0x29;
+      }
+      thunk_FUN_140327e20(ppppuVar4,uVar5);
+    }
+  }
+  return;
+}
+
+
+
+## raw_result.value.referenced_names
+
+| address     | source_address | value                             |
+|-------------|----------------|-----------------------------------|
+| 0x1400017a0 | 0x1401f81d7    | FUN_1400017a0                     |
+| 0x14003b170 | 0x1401f81f5    | FUN_14003b170                     |
+| 0x1401f5c70 | 0x1401f8191    | FUN_1401f5c70                     |
+| 0x1401f8238 | 0x1401f821a    | LAB_1401f8238                     |
+| 0x1401f823d | 0x1401f8184    | LAB_1401f823d                     |
+| 0x1401f823d | 0x1401f8204    | LAB_1401f823d                     |
+| 0x1401f8255 | 0x1401f822b    | LAB_1401f8255                     |
+| 0x1403272f0 | 0x1401f8238    | thunk_FUN_140327e20               |
+| 0x140327740 | 0x1401f8245    | __security_check_cookie           |
+| 0x140335100 | 0x1401f81c7    | FUN_140335100                     |
+| 0x14037c310 | 0x1401f819d    | u_Task_Manager_TMOG_14037c310     |
+| 0x14037c310 | 0x1401f81c4    | u_Task_Manager_TMOG_14037c310     |
+| 0x14041cbe0 | 0x1401f8196    | u_Task_Manager_TMOG_PRO_14041cbe0 |
+| 0x14041cbe0 | 0x1401f81c4    | u_Task_Manager_TMOG_PRO_14041cbe0 |
+| 0x14041cbe0 | 0x1401f81cf    | u_Task_Manager_TMOG_PRO_14041cbe0 |
+| 0x1404c7ac0 | 0x1401f816a    | DAT_1404c7ac0                     |
+
+## raw_result.value.referenced_strings
+
+| address     | source_address | value                 |
+|-------------|----------------|-----------------------|
+| 0x14037c310 | 0x1401f819d    | Task Manager TMOG     |
+| 0x14037c310 | 0x1401f81c4    | Task Manager TMOG     |
+| 0x14041cbe0 | 0x1401f8196    | Task Manager TMOG PRO |
+| 0x14041cbe0 | 0x1401f81c4    | Task Manager TMOG PRO |
+| 0x14041cbe0 | 0x1401f81cf    | Task Manager TMOG PRO |
+
+## normalized_result.assembly
+
+0x1401f8160: MOV qword ptr [RSP + 0x10], RBX,0x1401f8165: PUSH RDI,0x1401f8166: SUB RSP, 0x50,0x1401f816a: MOV RAX, qword ptr [0x1404c7ac0],0x1401f8171: XOR RAX, RSP,0x1401f8174: MOV qword ptr [RSP + 0x48], RAX,0x1401f8179: MOV RDI, RCX,0x1401f817c: CMP qword ptr [RCX + 0x230], 0x0,0x1401f8184: JZ 0x1401f823d,0x1401f818a: ADD RCX, 0x1a38,0x1401f8191: CALL 0x1401f5c70,0x1401f8196: LEA RCX, [0x14041cbe0],0x1401f819d: LEA RBX, [0x14037c310],0x1401f81a4: TEST AL, AL,0x1401f81a6: CMOVNZ RBX, RCX,0x1401f81aa: XORPS XMM0, XMM0,0x1401f81ad: MOVUPS xmmword ptr [RSP + 0x28], XMM0,0x1401f81b2: MOV qword ptr [RSP + 0x38], 0x0,0x1401f81bb: MOV qword ptr [RSP + 0x40], 0x0,0x1401f81c4: MOV RCX, RBX,0x1401f81c7: CALL 0x140335100,0x1401f81cc: MOV R8, RAX,0x1401f81cf: MOV RDX, RBX,0x1401f81d2: LEA RCX, [RSP + 0x28],0x1401f81d7: CALL 0x1400017a0,0x1401f81dc: NOP,0x1401f81dd: LEA RDX, [RSP + 0x28],0x1401f81e2: CMP qword ptr [RSP + 0x40], 0x7,0x1401f81e8: CMOVA RDX, qword ptr [RSP + 0x28],0x1401f81ee: MOV RCX, qword ptr [RDI + 0x230],0x1401f81f5: CALL 0x14003b170,0x1401f81fa: NOP,0x1401f81fb: MOV R8, qword ptr [RSP + 0x40],0x1401f8200: CMP R8, 0x7,0x1401f8204: JBE 0x1401f823d,0x1401f8206: LEA RDX, [0x2 + R8*0x2],0x1401f820e: MOV RCX, qword ptr [RSP + 0x28],0x1401f8213: CMP RDX, 0x1000,0x1401f821a: JC 0x1401f8238,0x1401f821c: MOV RAX, qword ptr [RCX + -0x8],0x1401f8220: SUB RCX, RAX,0x1401f8223: SUB RCX, 0x8,0x1401f8227: CMP RCX, 0x1f,0x1401f822b: JA 0x1401f8255,0x1401f822d: LEA RDX, [0x29 + R8*0x2],0x1401f8235: MOV RCX, RAX,0x1401f8238: CALL 0x1403272f0,0x1401f823d: MOV RCX, qword ptr [RSP + 0x48],0x1401f8242: XOR RCX, RSP,0x1401f8245: CALL 0x140327740,0x1401f824a: MOV RBX, qword ptr [RSP + 0x68],0x1401f824f: ADD RSP, 0x50,0x1401f8253: POP RDI,0x1401f8254: RET,0x1401f8255: MOV ECX, 0x5,0x1401f825a: INT 0x29,0x1401f825c: INT3
+
+## normalized_result.basic_blocks
+
+| end         | start       | successors              |
+|-------------|-------------|-------------------------|
+| 0x1401f818a | 0x1401f8160 | 0x1401f818a,0x1401f823d |
+| 0x1401f8206 | 0x1401f818a | 0x1401f8206,0x1401f823d |
+| 0x1401f821c | 0x1401f8206 | 0x1401f821c,0x1401f8238 |
+| 0x1401f822d | 0x1401f821c | 0x1401f822d,0x1401f8255 |
+| 0x1401f8238 | 0x1401f822d | 0x1401f8238             |
+| 0x1401f823d | 0x1401f8238 | 0x1401f823d             |
+| 0x1401f8255 | 0x1401f823d |                         |
+| 0x1401f825d | 0x1401f8255 |                         |
+
+## normalized_result.callees
+
+| address     | body            | classification  | name                    |
+|-------------|-----------------|-----------------|-------------------------|
+| 0x1400017a0 | [object Object] | [object Object] | FUN_1400017a0           |
+| 0x14003b170 | [object Object] | [object Object] | FUN_14003b170           |
+| 0x1401f5c70 | [object Object] | [object Object] | FUN_1401f5c70           |
+| 0x1403272f0 | [object Object] | [object Object] | thunk_FUN_140327e20     |
+| 0x140327740 | [object Object] | [object Object] | __security_check_cookie |
+| 0x140335100 | [object Object] | [object Object] | FUN_140335100           |
+
+## normalized_result.callers
+
+| address     | body            | classification  | name          |
+|-------------|-----------------|-----------------|---------------|
+| 0x14007bd50 | [object Object] | [object Object] | FUN_14007bd50 |
+| 0x1401e59c0 | [object Object] | [object Object] | FUN_1401e59c0 |
+
+## normalized_result.comments
+
+
+
+## normalized_result.incoming_references
+
+| kind            | source_address | source_procedure | target_address | target_procedure |
+|-----------------|----------------|------------------|----------------|------------------|
+| [object Object] | 0x14007be10    | [object Object]  | 0x1401f8160    | [object Object]  |
+| [object Object] | 0x1401e6775    | [object Object]  | 0x1401f8160    | [object Object]  |
+| [object Object] | 0x1404dfb64    |                  | 0x1401f8160    | [object Object]  |
+
+## normalized_result.limitations
+
+Unresolved computed or indirect flows without target addresses are not represented as reference edges.,Thunk and external classifications are Ghidra FunctionManager observations; they do not resolve targetless calls.,Pseudocode and assembly are Ghidra-specific representations, not original source or Hopper-equivalent text.,Synthetic Ghidra entry-point references without actionable memory sources are omitted.,Ghidra Listing reports a terminal call at 0x1401f825c with no resolved callee; its no-return basis is unknown.
+
+## normalized_result.native_api.available
+
+true
+
+## normalized_result.native_api.calling_convention
+
+__fastcall
+
+## normalized_result.native_api.decompiler_artifacts
+
+recovered-signature,register-and-stack-variables,compiler-generated-control-flow,pointer-arithmetic,pseudocode
+
+## normalized_result.native_api.jump_tables
+
+
+
+## normalized_result.native_api.limitations
+
+Types and calling conventions are Ghidra decompiler observations, not source declarations.,Register variables, compiler-generated blocks, and pointer arithmetic remain decompiler artifacts.,Pseudocode is neither original source nor guaranteed to compile.
+
+## normalized_result.native_api.parameters
+
+| confidence | data_type | decompiler_artifacts                                                      | evidence                        | name    | ordinal | role      | size_bytes | storage |
+|------------|-----------|---------------------------------------------------------------------------|---------------------------------|---------|---------|-----------|------------|---------|
+| low        | longlong  | recovered-signature,register-or-stack-storage,compiler-generated-variable | [object Object],[object Object] | param_1 | 0       | parameter | 8          | RCX:8   |
+
+## normalized_result.native_api.provenance
+
+ghidra-high-function
+
+## normalized_result.native_api.pseudocode
+
+| Key            | Value                           |
+|----------------|---------------------------------|
+| classification | decompiler-generated-non-source |
+| compilable     | false                           |
+
+## normalized_result.native_api.return_type.confidence
+
+low
+
+## normalized_result.native_api.return_type.data_type
+
+void
+
+## normalized_result.native_api.return_type.decompiler_artifacts
+
+recovered-signature,register-or-stack-storage
+
+## normalized_result.native_api.return_type.evidence
+
+| detail                                 | kind             | source                  |
+|----------------------------------------|------------------|-------------------------|
+| Function signature source is default.  | signature-source | ghidra-function-manager |
+| HighFunction recovered data type void. | decompiler-type  | ghidra-high-function    |
+
+## normalized_result.native_api.return_type.name
+
+null
+
+## normalized_result.native_api.return_type.ordinal
+
+null
+
+## normalized_result.native_api.return_type.role
+
+return
+
+## normalized_result.native_api.return_type.size_bytes
+
+0
+
+## normalized_result.native_api.return_type.storage
+
+<VOID>
+
+## normalized_result.native_api.signature_source
+
+default
+
+## normalized_result.native_value_flow.available
+
+true
+
+## normalized_result.native_value_flow.def_use
+
+| definition      | input_index | use             |
+|-----------------|-------------|-----------------|
+| 0x1401f8171#531 | 1           | 0x1401f8171#18  |
+| 0x1401f8166#523 | 0           | 0x1401f8171#531 |
+| 0x1401f817c#532 | 1           | 0x1401f817c#30  |
+| 0x1401f817c#30  | 0           | 0x1401f817c#36  |
+| 0x1401f817c#29  | 0           | 0x1401f817c#532 |
+| 0x1401f817c#36  | 1           | 0x1401f8184#41  |
+| 0x1401f818a#44  | 1           | 0x1401f8191#53  |
+| 0x1401f8171#18  | 0           | 0x1401f8191#502 |
+| 0x1401f8191#53  | 0           | 0x1401f81a4#60  |
+| 0x1401f81a4#60  | 1           | 0x1401f81a6#68  |
+| 0x1401f819d#55  | 0           | 0x1401f81aa#325 |
+| 0x1401f81a6#69  | 1           | 0x1401f81aa#325 |
+| 0x1401f81aa#325 | 1           | 0x1401f81c7#86  |
+| 0x1401f8191#444 | 0           | 0x1401f81c7#445 |
+| 0x1401f81ad#441 | 0           | 0x1401f81c7#471 |
+| 0x1401f81ad#442 | 0           | 0x1401f81c7#479 |
+| 0x1401f81b2#79  | 0           | 0x1401f81c7#487 |
+| 0x1401f81bb#82  | 0           | 0x1401f81c7#495 |
+| 0x1401f8191#502 | 0           | 0x1401f81c7#503 |
+| 0x1401f81d2#524 | 1           | 0x1401f81d7#93  |
+| 0x1401f81aa#325 | 2           | 0x1401f81d7#93  |
+| 0x1401f81c7#86  | 3           | 0x1401f81d7#93  |
+| 0x1401f81c7#445 | 0           | 0x1401f81d7#446 |
+| 0x1401f81c7#471 | 0           | 0x1401f81d7#472 |
+| 0x1401f81c7#479 | 0           | 0x1401f81d7#480 |
+| 0x1401f81c7#487 | 0           | 0x1401f81d7#488 |
+| 0x1401f81c7#495 | 0           | 0x1401f81d7#496 |
+| 0x1401f81c7#503 | 0           | 0x1401f81d7#504 |
+| 0x1401f81d7#496 | 1           | 0x1401f81e8#109 |
+| 0x1401f81e8#109 | 1           | 0x1401f81e8#114 |
+| 0x1401f81dd#525 | 0           | 0x1401f81e8#529 |
+| 0x1401f81e8#533 | 0           | 0x1401f81e8#530 |
+| 0x1401f81d7#472 | 0           | 0x1401f81e8#533 |
+| 0x1401f81ee#534 | 1           | 0x1401f81ee#117 |
+| 0x1401f81e8#529 | 0           | 0x1401f81ee#324 |
+| 0x1401f81e8#530 | 1           | 0x1401f81ee#324 |
+| 0x1401f81ee#116 | 0           | 0x1401f81ee#534 |
+| 0x1401f81ee#117 | 1           | 0x1401f81f5#121 |
+| 0x1401f81ee#324 | 2           | 0x1401f81f5#121 |
+| 0x1401f81d7#446 | 0           | 0x1401f81f5#447 |
+| 0x1401f81d7#472 | 0           | 0x1401f81f5#473 |
+| 0x1401f81d7#480 | 0           | 0x1401f81f5#481 |
+| 0x1401f81d7#488 | 0           | 0x1401f81f5#489 |
+| 0x1401f81d7#496 | 0           | 0x1401f81f5#497 |
+| 0x1401f81d7#504 | 0           | 0x1401f81f5#505 |
+| 0x1401f81f5#497 | 1           | 0x1401f8204#135 |
+| 0x1401f8204#135 | 1           | 0x1401f8204#136 |
+| 0x1401f81f5#497 | 0           | 0x1401f8206#137 |
+| 0x1401f8206#137 | 0           | 0x1401f8206#138 |
+| 0x1401f8206#138 | 1           | 0x1401f8213#144 |
+| 0x1401f8213#144 | 1           | 0x1401f821a#153 |
+| 0x1401f821a#535 | 0           | 0x1401f821a#528 |
+| 0x1401f81f5#473 | 0           | 0x1401f821a#535 |
+| 0x1401f821c#526 | 1           | 0x1401f821c#155 |
+| 0x1401f81f5#473 | 0           | 0x1401f821c#526 |
+| 0x1401f821c#155 | 0           | 0x1401f821c#536 |
+| 0x1401f8223#538 | 0           | 0x1401f8223#168 |
+| 0x1401f8223#527 | 1           | 0x1401f8223#168 |
+| 0x1401f8223#537 | 1           | 0x1401f8223#527 |
+| 0x1401f821c#536 | 0           | 0x1401f8223#537 |
+| 0x1401f81f5#473 | 0           | 0x1401f8223#538 |
+| 0x1401f822b#539 | 1           | 0x1401f822b#185 |
+| 0x1401f822b#185 | 1           | 0x1401f822b#187 |
+| 0x1401f8223#168 | 0           | 0x1401f822b#539 |
+| 0x1401f81f5#497 | 0           | 0x1401f822d#188 |
+| 0x1401f822d#188 | 0           | 0x1401f822d#189 |
+| 0x1401f8238#313 | 1           | 0x1401f8238#194 |
+| 0x1401f8238#322 | 2           | 0x1401f8238#194 |
+| 0x1401f821a#528 | 0           | 0x1401f8238#313 |
+| 0x1401f821c#536 | 1           | 0x1401f8238#313 |
+| 0x1401f8206#138 | 0           | 0x1401f8238#322 |
+| 0x1401f822d#189 | 1           | 0x1401f8238#322 |
+| 0x1401f81f5#447 | 0           | 0x1401f8238#450 |
+| 0x1401f81f5#473 | 0           | 0x1401f8238#476 |
+| 0x1401f81f5#481 | 0           | 0x1401f8238#484 |
+| 0x1401f81f5#489 | 0           | 0x1401f8238#492 |
+| 0x1401f81f5#497 | 0           | 0x1401f8238#500 |
+| 0x1401f81f5#505 | 0           | 0x1401f8238#508 |
+| 0x1401f81f5#447 | 1           | 0x1401f823d#453 |
+| 0x1401f8238#450 | 2           | 0x1401f823d#453 |
+| 0x1401f823d#453 | 0           | 0x1401f8254#451 |
+| 0x1401f825a#540 | 0           | 0x1401f825a#231 |
+| 0x1401f81f5#447 | 0           | 0x1401f825a#448 |
+| 0x1401f81f5#473 | 0           | 0x1401f825a#474 |
+| 0x1401f81f5#481 | 0           | 0x1401f825a#482 |
+| 0x1401f81f5#489 | 0           | 0x1401f825a#490 |
+| 0x1401f81f5#497 | 0           | 0x1401f825a#498 |
+| 0x1401f81f5#505 | 0           | 0x1401f825a#506 |
+| 0x1401f825a#230 | 0           | 0x1401f825a#540 |
+| 0x1401f825c#541 | 0           | 0x1401f825c#233 |
+| 0x1401f825a#448 | 0           | 0x1401f825c#449 |
+| 0x1401f825c#449 | 0           | 0x1401f825c#452 |
+| 0x1401f825a#474 | 0           | 0x1401f825c#475 |
+| 0x1401f825a#482 | 0           | 0x1401f825c#483 |
+| 0x1401f825a#490 | 0           | 0x1401f825c#491 |
+| 0x1401f825a#498 | 0           | 0x1401f825c#499 |
+| 0x1401f825a#506 | 0           | 0x1401f825c#507 |
+| 0x1401f825c#232 | 0           | 0x1401f825c#541 |
+
+## normalized_result.native_value_flow.effects
+
+| kind               | operand_input | operation       | value_input |
+|--------------------|---------------|-----------------|-------------|
+| memory_read        | 1             | 0x1401f817c#30  |             |
+| conditional_branch |               | 0x1401f8184#41  | 1           |
+| direct_call        | 0             | 0x1401f8191#53  |             |
+| conditional_branch |               | 0x1401f81a6#68  | 1           |
+| direct_call        | 0             | 0x1401f81c7#86  |             |
+| direct_call        | 0             | 0x1401f81d7#93  |             |
+| conditional_branch |               | 0x1401f81e8#114 | 1           |
+| memory_read        | 1             | 0x1401f81ee#117 |             |
+| direct_call        | 0             | 0x1401f81f5#121 |             |
+| conditional_branch |               | 0x1401f8204#136 | 1           |
+| conditional_branch |               | 0x1401f821a#153 | 1           |
+| memory_read        | 1             | 0x1401f821c#155 |             |
+| conditional_branch |               | 0x1401f822b#187 | 1           |
+| direct_call        | 0             | 0x1401f8238#194 |             |
+| indirect_call      | 0             | 0x1401f825a#231 |             |
+| indirect_call      | 0             | 0x1401f825c#233 |             |
+
+## normalized_result.native_value_flow.known_omitted_edges
+
+0
+
+## normalized_result.native_value_flow.known_omitted_inputs
+
+0
+
+## normalized_result.native_value_flow.limitations
+
+High p-code is decompiler-derived, not original source or runtime behavior. is_dead preserves the Java AST flag; decoded block members can retain that flag, so block_membership separately reports actual syntax-tree membership.,Def-use links do not cross function boundaries and may omit memory aliasing, call side effects, or unresolved indirect flow.,Memory read/write effects include stack and temporary memory operations; they do not identify persistent state or business meaning.,Operation, input, and def-use limits can truncate large functions; inspect truncation, omitted lower bounds, and known omitted counts before drawing conclusions.,Known omitted-edge counts cover links omitted from retained operations; omitted operations may contain additional uncounted links.
+
+## normalized_result.native_value_flow.omitted_operations_lower_bound
+
+0
+
+## normalized_result.native_value_flow.operations
+
+| address     | block_membership | id              | inputs                                                          | is_dead | opcode       | output          | sequence |
+|-------------|------------------|-----------------|-----------------------------------------------------------------|---------|--------------|-----------------|----------|
+| 0x1401f8166 | member           | 0x1401f8166#523 | [object Object],[object Object]                                 | true    | PTRSUB       | [object Object] | 523      |
+| 0x1401f8171 | member           | 0x1401f8171#18  | [object Object],[object Object]                                 | true    | INT_XOR      | [object Object] | 18       |
+| 0x1401f8171 | member           | 0x1401f8171#531 | [object Object]                                                 | true    | CAST         | [object Object] | 531      |
+| 0x1401f817c | member           | 0x1401f817c#29  | [object Object],[object Object]                                 | true    | INT_ADD      | [object Object] | 29       |
+| 0x1401f817c | member           | 0x1401f817c#30  | [object Object],[object Object]                                 | true    | LOAD         | [object Object] | 30       |
+| 0x1401f817c | member           | 0x1401f817c#36  | [object Object],[object Object]                                 | true    | INT_NOTEQUAL | [object Object] | 36       |
+| 0x1401f817c | member           | 0x1401f817c#532 | [object Object]                                                 | true    | CAST         | [object Object] | 532      |
+| 0x1401f8184 | member           | 0x1401f8184#41  | [object Object],[object Object]                                 | true    | CBRANCH      |                 | 41       |
+| 0x1401f818a | member           | 0x1401f818a#44  | [object Object],[object Object]                                 | true    | INT_ADD      | [object Object] | 44       |
+| 0x1401f8191 | member           | 0x1401f8191#53  | [object Object],[object Object]                                 | true    | CALL         | [object Object] | 53       |
+| 0x1401f8191 | member           | 0x1401f8191#444 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 444      |
+| 0x1401f8191 | member           | 0x1401f8191#502 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 502      |
+| 0x1401f819d | member           | 0x1401f819d#55  | [object Object]                                                 | true    | COPY         | [object Object] | 55       |
+| 0x1401f81a4 | member           | 0x1401f81a4#60  | [object Object],[object Object]                                 | true    | INT_NOTEQUAL | [object Object] | 60       |
+| 0x1401f81a6 | member           | 0x1401f81a6#68  | [object Object],[object Object]                                 | true    | CBRANCH      |                 | 68       |
+| 0x1401f81a6 | member           | 0x1401f81a6#69  | [object Object]                                                 | true    | COPY         | [object Object] | 69       |
+| 0x1401f81aa | member           | 0x1401f81aa#325 | [object Object],[object Object]                                 | true    | MULTIEQUAL   | [object Object] | 325      |
+| 0x1401f81ad | member           | 0x1401f81ad#441 | [object Object]                                                 | true    | COPY         | [object Object] | 441      |
+| 0x1401f81ad | member           | 0x1401f81ad#442 | [object Object]                                                 | true    | COPY         | [object Object] | 442      |
+| 0x1401f81b2 | member           | 0x1401f81b2#79  | [object Object]                                                 | true    | COPY         | [object Object] | 79       |
+| 0x1401f81bb | member           | 0x1401f81bb#82  | [object Object]                                                 | true    | COPY         | [object Object] | 82       |
+| 0x1401f81c7 | member           | 0x1401f81c7#86  | [object Object],[object Object]                                 | true    | CALL         | [object Object] | 86       |
+| 0x1401f81c7 | member           | 0x1401f81c7#445 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 445      |
+| 0x1401f81c7 | member           | 0x1401f81c7#471 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 471      |
+| 0x1401f81c7 | member           | 0x1401f81c7#479 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 479      |
+| 0x1401f81c7 | member           | 0x1401f81c7#487 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 487      |
+| 0x1401f81c7 | member           | 0x1401f81c7#495 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 495      |
+| 0x1401f81c7 | member           | 0x1401f81c7#503 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 503      |
+| 0x1401f81d2 | member           | 0x1401f81d2#524 | [object Object],[object Object]                                 | true    | PTRSUB       | [object Object] | 524      |
+| 0x1401f81d7 | member           | 0x1401f81d7#93  | [object Object],[object Object],[object Object],[object Object] | true    | CALL         |                 | 93       |
+| 0x1401f81d7 | member           | 0x1401f81d7#446 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 446      |
+| 0x1401f81d7 | member           | 0x1401f81d7#472 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 472      |
+| 0x1401f81d7 | member           | 0x1401f81d7#480 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 480      |
+| 0x1401f81d7 | member           | 0x1401f81d7#488 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 488      |
+| 0x1401f81d7 | member           | 0x1401f81d7#496 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 496      |
+| 0x1401f81d7 | member           | 0x1401f81d7#504 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 504      |
+| 0x1401f81dd | member           | 0x1401f81dd#525 | [object Object],[object Object]                                 | true    | PTRSUB       | [object Object] | 525      |
+| 0x1401f81e8 | member           | 0x1401f81e8#109 | [object Object],[object Object]                                 | true    | INT_LESS     | [object Object] | 109      |
+| 0x1401f81e8 | member           | 0x1401f81e8#114 | [object Object],[object Object]                                 | true    | CBRANCH      |                 | 114      |
+| 0x1401f81e8 | member           | 0x1401f81e8#529 | [object Object]                                                 | true    | COPY         | [object Object] | 529      |
+| 0x1401f81e8 | member           | 0x1401f81e8#530 | [object Object]                                                 | true    | COPY         | [object Object] | 530      |
+| 0x1401f81e8 | member           | 0x1401f81e8#533 | [object Object]                                                 | true    | CAST         | [object Object] | 533      |
+| 0x1401f81ee | member           | 0x1401f81ee#116 | [object Object],[object Object]                                 | true    | INT_ADD      | [object Object] | 116      |
+| 0x1401f81ee | member           | 0x1401f81ee#117 | [object Object],[object Object]                                 | true    | LOAD         | [object Object] | 117      |
+| 0x1401f81ee | member           | 0x1401f81ee#324 | [object Object],[object Object]                                 | true    | MULTIEQUAL   | [object Object] | 324      |
+| 0x1401f81ee | member           | 0x1401f81ee#534 | [object Object]                                                 | true    | CAST         | [object Object] | 534      |
+| 0x1401f81f5 | member           | 0x1401f81f5#121 | [object Object],[object Object],[object Object]                 | true    | CALL         |                 | 121      |
+| 0x1401f81f5 | member           | 0x1401f81f5#447 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 447      |
+| 0x1401f81f5 | member           | 0x1401f81f5#473 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 473      |
+| 0x1401f81f5 | member           | 0x1401f81f5#481 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 481      |
+| 0x1401f81f5 | member           | 0x1401f81f5#489 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 489      |
+| 0x1401f81f5 | member           | 0x1401f81f5#497 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 497      |
+| 0x1401f81f5 | member           | 0x1401f81f5#505 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 505      |
+| 0x1401f8204 | member           | 0x1401f8204#135 | [object Object],[object Object]                                 | true    | INT_LESS     | [object Object] | 135      |
+| 0x1401f8204 | member           | 0x1401f8204#136 | [object Object],[object Object]                                 | true    | CBRANCH      |                 | 136      |
+| 0x1401f8206 | member           | 0x1401f8206#137 | [object Object],[object Object]                                 | true    | INT_MULT     | [object Object] | 137      |
+| 0x1401f8206 | member           | 0x1401f8206#138 | [object Object],[object Object]                                 | true    | INT_ADD      | [object Object] | 138      |
+| 0x1401f8213 | member           | 0x1401f8213#144 | [object Object],[object Object]                                 | true    | INT_LESS     | [object Object] | 144      |
+| 0x1401f821a | member           | 0x1401f821a#153 | [object Object],[object Object]                                 | true    | CBRANCH      |                 | 153      |
+| 0x1401f821a | member           | 0x1401f821a#528 | [object Object]                                                 | true    | COPY         | [object Object] | 528      |
+| 0x1401f821a | member           | 0x1401f821a#535 | [object Object]                                                 | true    | CAST         | [object Object] | 535      |
+| 0x1401f821c | member           | 0x1401f821c#155 | [object Object],[object Object]                                 | true    | LOAD         | [object Object] | 155      |
+| 0x1401f821c | member           | 0x1401f821c#526 | [object Object],[object Object],[object Object]                 | true    | PTRADD       | [object Object] | 526      |
+| 0x1401f821c | member           | 0x1401f821c#536 | [object Object]                                                 | true    | CAST         | [object Object] | 536      |
+| 0x1401f8223 | member           | 0x1401f8223#168 | [object Object],[object Object]                                 | true    | INT_ADD      | [object Object] | 168      |
+| 0x1401f8223 | member           | 0x1401f8223#527 | [object Object],[object Object]                                 | true    | INT_SUB      | [object Object] | 527      |
+| 0x1401f8223 | member           | 0x1401f8223#537 | [object Object]                                                 | true    | CAST         | [object Object] | 537      |
+| 0x1401f8223 | member           | 0x1401f8223#538 | [object Object]                                                 | true    | CAST         | [object Object] | 538      |
+| 0x1401f822b | member           | 0x1401f822b#185 | [object Object],[object Object]                                 | true    | INT_LESS     | [object Object] | 185      |
+| 0x1401f822b | member           | 0x1401f822b#187 | [object Object],[object Object]                                 | true    | CBRANCH      |                 | 187      |
+| 0x1401f822b | member           | 0x1401f822b#539 | [object Object]                                                 | true    | CAST         | [object Object] | 539      |
+| 0x1401f822d | member           | 0x1401f822d#188 | [object Object],[object Object]                                 | true    | INT_MULT     | [object Object] | 188      |
+| 0x1401f822d | member           | 0x1401f822d#189 | [object Object],[object Object]                                 | true    | INT_ADD      | [object Object] | 189      |
+| 0x1401f8238 | member           | 0x1401f8238#194 | [object Object],[object Object],[object Object]                 | true    | CALL         |                 | 194      |
+| 0x1401f8238 | member           | 0x1401f8238#313 | [object Object],[object Object]                                 | true    | MULTIEQUAL   | [object Object] | 313      |
+| 0x1401f8238 | member           | 0x1401f8238#322 | [object Object],[object Object]                                 | true    | MULTIEQUAL   | [object Object] | 322      |
+| 0x1401f8238 | member           | 0x1401f8238#450 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 450      |
+| 0x1401f8238 | member           | 0x1401f8238#476 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 476      |
+| 0x1401f8238 | member           | 0x1401f8238#484 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 484      |
+| 0x1401f8238 | member           | 0x1401f8238#492 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 492      |
+| 0x1401f8238 | member           | 0x1401f8238#500 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 500      |
+| 0x1401f8238 | member           | 0x1401f8238#508 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 508      |
+| 0x1401f823d | member           | 0x1401f823d#453 | [object Object],[object Object],[object Object]                 | true    | MULTIEQUAL   | [object Object] | 453      |
+| 0x1401f8254 | member           | 0x1401f8254#228 | [object Object]                                                 | true    | RETURN       |                 | 228      |
+| 0x1401f8254 | member           | 0x1401f8254#451 | [object Object]                                                 | true    | COPY         | [object Object] | 451      |
+| 0x1401f825a | member           | 0x1401f825a#230 | [object Object],[object Object]                                 | true    | CALLOTHER    | [object Object] | 230      |
+| 0x1401f825a | member           | 0x1401f825a#231 | [object Object],[object Object]                                 | true    | CALLIND      |                 | 231      |
+| 0x1401f825a | member           | 0x1401f825a#448 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 448      |
+| 0x1401f825a | member           | 0x1401f825a#474 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 474      |
+| 0x1401f825a | member           | 0x1401f825a#482 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 482      |
+| 0x1401f825a | member           | 0x1401f825a#490 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 490      |
+| 0x1401f825a | member           | 0x1401f825a#498 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 498      |
+| 0x1401f825a | member           | 0x1401f825a#506 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 506      |
+| 0x1401f825a | member           | 0x1401f825a#540 | [object Object]                                                 | true    | CAST         | [object Object] | 540      |
+| 0x1401f825c | member           | 0x1401f825c#232 | [object Object],[object Object]                                 | true    | CALLOTHER    | [object Object] | 232      |
+| 0x1401f825c | member           | 0x1401f825c#233 | [object Object]                                                 | true    | CALLIND      |                 | 233      |
+| 0x1401f825c | member           | 0x1401f825c#234 | [object Object]                                                 | true    | RETURN       |                 | 234      |
+| 0x1401f825c | member           | 0x1401f825c#449 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 449      |
+| 0x1401f825c | member           | 0x1401f825c#452 | [object Object]                                                 | true    | COPY         | [object Object] | 452      |
+| 0x1401f825c | member           | 0x1401f825c#475 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 475      |
+| 0x1401f825c | member           | 0x1401f825c#483 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 483      |
+| 0x1401f825c | member           | 0x1401f825c#491 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 491      |
+| 0x1401f825c | member           | 0x1401f825c#499 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 499      |
+| 0x1401f825c | member           | 0x1401f825c#507 | [object Object],[object Object]                                 | true    | INDIRECT     | [object Object] | 507      |
+| 0x1401f825c | member           | 0x1401f825c#541 | [object Object]                                                 | true    | CAST         | [object Object] | 541      |
+
+## normalized_result.native_value_flow.parameter_uses
+
+| input_index | ordinal | use             |
+|-------------|---------|-----------------|
+| 0           | 0       | 0x1401f817c#29  |
+| 0           | 0       | 0x1401f818a#44  |
+| 0           | 0       | 0x1401f81ee#116 |
+
+## normalized_result.native_value_flow.parameters
+
+| data_type | name    | ordinal |
+|-----------|---------|---------|
+| /longlong | param_1 | 0       |
+
+## normalized_result.native_value_flow.provenance
+
+ghidra-high-pcode
+
+## normalized_result.native_value_flow.truncated
+
+false
+
+## normalized_result.outgoing_references
+
+| kind            | source_address | source_procedure | target_address           | target_procedure |
+|-----------------|----------------|------------------|--------------------------|------------------|
+| [object Object] | 0x1401f8160    | [object Object]  | stack:0x10               |                  |
+| [object Object] | 0x1401f816a    | [object Object]  | 0x1404c7ac0              |                  |
+| [object Object] | 0x1401f8174    | [object Object]  | stack:0xfffffffffffffff0 |                  |
+| [object Object] | 0x1401f8184    | [object Object]  | 0x1401f823d              | [object Object]  |
+| [object Object] | 0x1401f8191    | [object Object]  | 0x1401f5c70              | [object Object]  |
+| [object Object] | 0x1401f8196    | [object Object]  | 0x14041cbe0              |                  |
+| [object Object] | 0x1401f819d    | [object Object]  | 0x14037c310              |                  |
+| [object Object] | 0x1401f81ad    | [object Object]  | stack:0xffffffffffffffd0 |                  |
+| [object Object] | 0x1401f81b2    | [object Object]  | stack:0xffffffffffffffe0 |                  |
+| [object Object] | 0x1401f81bb    | [object Object]  | stack:0xffffffffffffffe8 |                  |
+| [object Object] | 0x1401f81c4    | [object Object]  | 0x14037c310              |                  |
+| [object Object] | 0x1401f81c4    | [object Object]  | 0x14041cbe0              |                  |
+| [object Object] | 0x1401f81c7    | [object Object]  | 0x140335100              | [object Object]  |
+| [object Object] | 0x1401f81cf    | [object Object]  | 0x14041cbe0              |                  |
+| [object Object] | 0x1401f81d2    | [object Object]  | stack:0xffffffffffffffd0 |                  |
+| [object Object] | 0x1401f81d7    | [object Object]  | 0x1400017a0              | [object Object]  |
+| [object Object] | 0x1401f81dd    | [object Object]  | stack:0xffffffffffffffd0 |                  |
+| [object Object] | 0x1401f81e2    | [object Object]  | stack:0xffffffffffffffe8 |                  |
+| [object Object] | 0x1401f81e8    | [object Object]  | stack:0xffffffffffffffd0 |                  |
+| [object Object] | 0x1401f81f5    | [object Object]  | 0x14003b170              | [object Object]  |
+| [object Object] | 0x1401f81fb    | [object Object]  | stack:0xffffffffffffffe8 |                  |
+| [object Object] | 0x1401f8204    | [object Object]  | 0x1401f823d              | [object Object]  |
+| [object Object] | 0x1401f820e    | [object Object]  | stack:0xffffffffffffffd0 |                  |
+| [object Object] | 0x1401f821a    | [object Object]  | 0x1401f8238              | [object Object]  |
+| [object Object] | 0x1401f822b    | [object Object]  | 0x1401f8255              | [object Object]  |
+| [object Object] | 0x1401f8238    | [object Object]  | 0x1403272f0              | [object Object]  |
+| [object Object] | 0x1401f823d    | [object Object]  | stack:0xfffffffffffffff0 |                  |
+| [object Object] | 0x1401f8245    | [object Object]  | 0x140327740              | [object Object]  |
+| [object Object] | 0x1401f824a    | [object Object]  | stack:0x8                |                  |
+
+## normalized_result.procedure.address
+
+0x1401f8160
+
+## normalized_result.procedure.body.available
+
+true
+
+## normalized_result.procedure.body.contains_entry
+
+true
+
+## normalized_result.procedure.body.non_contiguous
+
+false
+
+## normalized_result.procedure.body.provenance
+
+ghidra-function-body-address-set
+
+## normalized_result.procedure.body.ranges
+
+| end         | start       |
+|-------------|-------------|
+| 0x1401f825c | 0x1401f8160 |
+
+## normalized_result.procedure.body.span_bytes
+
+253
+
+## normalized_result.procedure.body.total_bytes
+
+253
+
+## normalized_result.procedure.classification
+
+| Key          | Value                   |
+|--------------|-------------------------|
+| external     | false                   |
+| provenance   | ghidra-function-manager |
+| thunk        | false                   |
+| thunk_target | null                    |
+
+## normalized_result.procedure.locals
+
+| description                               | provenance               |
+|-------------------------------------------|--------------------------|
+| undefined8 local_10 @ Stack[-0x10]:8      | ghidra-function-database |
+| undefined8 local_18 @ Stack[-0x18]:8      | ghidra-function-database |
+| undefined8 local_20 @ Stack[-0x20]:8      | ghidra-function-database |
+| undefined1[16] local_30 @ Stack[-0x30]:16 | ghidra-function-database |
+| undefined8 local_res10 @ Stack[0x10]:8    | ghidra-function-database |
+| undefined8 local_res8 @ Stack[0x8]:8      | ghidra-function-database |
+
+## normalized_result.procedure.name
+
+FUN_1401f8160
+
+## normalized_result.procedure.signature
+
+undefined FUN_1401f8160()
+
+## normalized_result.pseudocode
+
+
+/* WARNING: Function: __security_check_cookie replaced with injection: security_check_cookie */
+
+void FUN_1401f8160(longlong param_1)
+
+{
+  code *pcVar1;
+  char cVar2;
+  undefined8 uVar3;
+  undefined8 ****ppppuVar4;
+  ulonglong uVar5;
+  wchar_t *pwVar6;
+  undefined1 auStack_58 [40];
+  undefined8 ***local_30;
+  undefined8 uStack_28;
+  undefined8 local_20;
+  ulonglong local_18;
+  ulonglong local_10;
+  
+  local_10 = DAT_1404c7ac0 ^ (ulonglong)auStack_58;
+  if (*(longlong *)(param_1 + 0x230) != 0) {
+    cVar2 = FUN_1401f5c70(param_1 + 0x1a38);
+    pwVar6 = L"Task Manager TMOG";
+    if (cVar2 != '\0') {
+      pwVar6 = L"Task Manager TMOG PRO";
+    }
+    local_30 = (undefined8 ****)0x0;
+    uStack_28 = 0;
+    local_20 = 0;
+    local_18 = 0;
+    uVar3 = FUN_140335100(pwVar6);
+    FUN_1400017a0(&local_30,pwVar6,uVar3);
+    ppppuVar4 = &local_30;
+    if (7 < local_18) {
+      ppppuVar4 = (undefined8 ****)local_30;
+    }
+    FUN_14003b170(*(undefined8 *)(param_1 + 0x230),ppppuVar4);
+    if (7 < local_18) {
+      uVar5 = local_18 * 2 + 2;
+      ppppuVar4 = (undefined8 ****)local_30;
+      if (0xfff < uVar5) {
+        ppppuVar4 = (undefined8 ****)local_30[-1];
+        if (0x1f < (ulonglong)((longlong)local_30 + (-8 - (longlong)ppppuVar4))) {
+          pcVar1 = (code *)swi(0x29);
+          (*pcVar1)(5);
+          pcVar1 = (code *)swi(3);
+          (*pcVar1)();
+          return;
+        }
+        uVar5 = local_18 * 2 + 0x29;
+      }
+      thunk_FUN_140327e20(ppppuVar4,uVar5);
+    }
+  }
+  return;
+}
+
+
+
+## normalized_result.referenced_names
+
+| address     | source_address | value                             |
+|-------------|----------------|-----------------------------------|
+| 0x1400017a0 | 0x1401f81d7    | FUN_1400017a0                     |
+| 0x14003b170 | 0x1401f81f5    | FUN_14003b170                     |
+| 0x1401f5c70 | 0x1401f8191    | FUN_1401f5c70                     |
+| 0x1401f8238 | 0x1401f821a    | LAB_1401f8238                     |
+| 0x1401f823d | 0x1401f8184    | LAB_1401f823d                     |
+| 0x1401f823d | 0x1401f8204    | LAB_1401f823d                     |
+| 0x1401f8255 | 0x1401f822b    | LAB_1401f8255                     |
+| 0x1403272f0 | 0x1401f8238    | thunk_FUN_140327e20               |
+| 0x140327740 | 0x1401f8245    | __security_check_cookie           |
+| 0x140335100 | 0x1401f81c7    | FUN_140335100                     |
+| 0x14037c310 | 0x1401f819d    | u_Task_Manager_TMOG_14037c310     |
+| 0x14037c310 | 0x1401f81c4    | u_Task_Manager_TMOG_14037c310     |
+| 0x14041cbe0 | 0x1401f8196    | u_Task_Manager_TMOG_PRO_14041cbe0 |
+| 0x14041cbe0 | 0x1401f81c4    | u_Task_Manager_TMOG_PRO_14041cbe0 |
+| 0x14041cbe0 | 0x1401f81cf    | u_Task_Manager_TMOG_PRO_14041cbe0 |
+| 0x1404c7ac0 | 0x1401f816a    | DAT_1404c7ac0                     |
+
+## normalized_result.referenced_strings
+
+| address     | source_address | value                 |
+|-------------|----------------|-----------------------|
+| 0x14037c310 | 0x1401f819d    | Task Manager TMOG     |
+| 0x14037c310 | 0x1401f81c4    | Task Manager TMOG     |
+| 0x14041cbe0 | 0x1401f8196    | Task Manager TMOG PRO |
+| 0x14041cbe0 | 0x1401f81c4    | Task Manager TMOG PRO |
+| 0x14041cbe0 | 0x1401f81cf    | Task Manager TMOG PRO |
+
+## confidence
+
+observed
+
+## authority
+
+shipped-artifact
+
+## environment
+
+null
+
+## limitations
+
+The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.,The imported Program and temporary project are ephemeral and deleted on close. Annotation operations edit session database metadata; original executable bytes are never written.,Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.,Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.,References cover the complete Ghidra function-body AddressSet and exact entry. Dossier incoming edges omit sources owned by that function; procedure_references also retains those internal edges.,The dossier combines Ghidra FunctionManager, Listing, ReferenceManager, BasicBlockModel, and decompiler observations; provider-specific pseudocode and assembly are not cross-provider text invariants.,Resolved reference metadata identifies computed, indirect, external, call, jump, and data edges; unresolved targetless flows remain unknown, and function classifications distinguish thunks and externals.,Synthetic Ghidra entry-point references without actionable memory sources are omitted.,The Java bridge serializes one function request per Program and lets each decompilation run until it completes or the caller cancels.,Ghidra Listing reports a terminal call at 0x1401f825c with no resolved callee; its no-return basis is unknown.,Windows Ghidra P0 accepts approved native x86 and x86-64 PE applications and DLLs; managed, hostile, sensitive, and mutable-path targets are unsupported.,The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.,Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.
+
+## locations
+
+
+
+## evidence_links
+

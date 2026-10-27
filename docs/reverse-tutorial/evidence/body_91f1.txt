@@ -1,0 +1,308 @@
+## raw_result.value.pseudocode
+
+
+/* WARNING: Function: __security_check_cookie replaced with injection: security_check_cookie */
+/* WARNING: Type propagation algorithm not settling */
+
+LRESULT FUN_1401f8cd0(HWND param_1,UINT param_2,WPARAM param_3,longlong param_4)
+
+{
+  code *pcVar1;
+  COLORREF color;
+  COLORREF color_00;
+  COLORREF color_01;
+  undefined4 uVar2;
+  int iVar3;
+  int iVar4;
+  int iVar5;
+  LONG_PTR LVar6;
+  LRESULT LVar7;
+  HDC hdc;
+  HBRUSH h;
+  HPEN h_00;
+  HGDIOBJ pvVar8;
+  HGDIOBJ h_01;
+  HFONT h_02;
+  wchar_t *pwVar9;
+  longlong lVar10;
+  int extraout_var;
+  undefined8 *******pppppppuVar11;
+  ulonglong uVar12;
+  undefined1 auStackY_208 [32];
+  COLORREF local_198;
+  undefined8 *******local_188;
+  undefined8 local_180;
+  HBRUSH local_178;
+  longlong local_170;
+  HBRUSH *local_168;
+  HBRUSH **local_160;
+  int local_158;
+  tagRECT local_148;
+  int local_138;
+  int iStack_134;
+  LONG LStack_130;
+  LONG LStack_12c;
+  int local_128;
+  LONG LStack_124;
+  LONG LStack_120;
+  int iStack_11c;
+  undefined8 *******local_118 [2];
+  undefined8 local_108;
+  ulonglong local_100;
+  int local_f8;
+  LONG local_f4;
+  int local_f0;
+  LONG local_ec;
+  undefined **local_e8;
+  LONG_PTR local_e0;
+  undefined ***local_b0;
+  tagPAINTSTRUCT local_a8;
+  ulonglong local_58;
+  
+  local_58 = DAT_1404c7ac0 ^ (ulonglong)auStackY_208;
+  LVar6 = GetWindowLongPtrW(param_1,-0x15);
+  if (param_2 == 0xf) {
+    local_a8.hdc = (HDC)0x0;
+    local_a8.fErase = 0;
+    local_a8.rcPaint.left = 0;
+    local_a8.rcPaint.top = 0;
+    local_a8.rcPaint.right = 0;
+    local_a8.rcPaint.bottom = 0;
+    local_a8.fRestore = 0;
+    local_a8.fIncUpdate = 0;
+    local_a8.rgbReserved[0] = '\0';
+    local_a8.rgbReserved[1] = '\0';
+    local_a8.rgbReserved[2] = '\0';
+    local_a8.rgbReserved[3] = '\0';
+    local_a8.rgbReserved[4] = '\0';
+    local_a8.rgbReserved[5] = '\0';
+    local_a8.rgbReserved[6] = '\0';
+    local_a8.rgbReserved[7] = '\0';
+    local_a8.rgbReserved[8] = '\0';
+    local_a8.rgbReserved[9] = '\0';
+    local_a8.rgbReserved[10] = '\0';
+    local_a8.rgbReserved[0xb] = '\0';
+    local_a8.rgbReserved[0xc] = '\0';
+    local_a8.rgbReserved[0xd] = '\0';
+    local_a8.rgbReserved[0xe] = '\0';
+    local_a8.rgbReserved[0xf] = '\0';
+    local_a8.rgbReserved[0x10] = '\0';
+    local_a8.rgbReserved[0x11] = '\0';
+    local_a8.rgbReserved[0x12] = '\0';
+    local_a8.rgbReserved[0x13] = '\0';
+    local_a8.rgbReserved[0x14] = '\0';
+    local_a8.rgbReserved[0x15] = '\0';
+    local_a8.rgbReserved[0x16] = '\0';
+    local_a8.rgbReserved[0x17] = '\0';
+    local_a8.rgbReserved[0x18] = '\0';
+    local_a8.rgbReserved[0x19] = '\0';
+    local_a8.rgbReserved[0x1a] = '\0';
+    local_a8.rgbReserved[0x1b] = '\0';
+    local_a8.rgbReserved[0x1c] = '\0';
+    local_a8.rgbReserved[0x1d] = '\0';
+    local_a8.rgbReserved[0x1e] = '\0';
+    local_a8.rgbReserved[0x1f] = '\0';
+    local_a8._68_4_ = 0;
+    hdc = BeginPaint(param_1,&local_a8);
+    if (hdc == (HDC)0x0) {
+      return 0;
+    }
+    local_148.left = 0;
+    local_148.top = 0;
+    local_148.right = 0;
+    local_148.bottom = 0;
+    GetClientRect(param_1,&local_148);
+    if (LVar6 == 0) {
+      local_198 = 0xb0b0b0;
+      color_00 = 0x484848;
+      color = 0x262626;
+      color_01 = 0xf0f0f0;
+    }
+    else {
+      color = FUN_1400e4700(LVar6,0x262626,0xfafafa);
+      color_00 = FUN_1400e4700(LVar6,0x484848,0xcecece);
+      color_01 = FUN_1400e4700(LVar6,0xf0f0f0,0x181818);
+      local_198 = FUN_1400e4700(LVar6,0xb0b0b0,0x606060);
+    }
+    h = CreateSolidBrush(color);
+    local_178 = h;
+    h_00 = CreatePen(0,1,color_00);
+    if (h != (HBRUSH)0x0) {
+      if (h_00 != (HPEN)0x0) {
+        pvVar8 = SelectObject(hdc,h);
+        h_01 = SelectObject(hdc,h_00);
+        Rectangle(hdc,local_148.left,local_148.top,local_148.right,local_148.bottom);
+        SelectObject(hdc,pvVar8);
+        SelectObject(hdc,h_01);
+        h = local_178;
+      }
+      DeleteObject(h);
+    }
+    if (h_00 != (HPEN)0x0) {
+      DeleteObject(h_00);
+    }
+    SetBkMode(hdc,1);
+    uVar2 = FUN_140026ad0(param_1);
+    iVar3 = FUN_140026ac0(0x96,uVar2);
+    iVar4 = FUN_140026ac0(0x76,uVar2);
+    iVar5 = FUN_140026ac0(10,uVar2);
+    iVar4 = local_148.right - (iVar3 + iVar4 + iVar5);
+    iVar3 = FUN_140026ac0(0x12,uVar2);
+    iVar4 = iVar4 - iVar3;
+    local_158 = FUN_140026ac0(0xc,uVar2);
+    if (local_158 < iVar4) {
+      local_158 = iVar4;
+    }
+    local_f8 = FUN_140026ac0(0x12,uVar2);
+    local_f8 = local_f8 + local_148.left;
+    local_f4 = local_148.top;
+    local_f0 = FUN_140026ac0(0x32,uVar2);
+    local_f0 = local_f0 + local_148.left;
+    local_ec = local_148.bottom;
+    iVar3 = FUN_140026ac0(0x16,uVar2);
+    pvVar8 = (HGDIOBJ)0x0;
+    h_02 = CreateFontW(-iVar3,0,0,0,400,0,0,0,1,0,0,5,0,L"Segoe MDL2 Assets");
+    local_178 = (HBRUSH)0x0;
+    if (h_02 != (HFONT)0x0) {
+      local_178 = SelectObject(hdc,h_02);
+    }
+    SetTextColor(hdc,local_198);
+    local_168 = (HBRUSH *)&DAT_14043c618;
+    local_160 = (HBRUSH **)0x1;
+    FUN_140028240(hdc,&local_168,&local_f8,0x825);
+    if (local_178 != (HBRUSH)0x0) {
+      SelectObject(hdc,local_178);
+    }
+    if (h_02 != (HFONT)0x0) {
+      DeleteObject(h_02);
+    }
+    local_138 = local_148.left;
+    iStack_134 = local_148.top;
+    LStack_130 = local_148.right;
+    LStack_12c = local_148.bottom;
+    iVar3 = FUN_140026ac0(0xe,uVar2);
+    iStack_134 = iStack_134 + iVar3;
+    iVar3 = FUN_140026ac0(0x3a,uVar2);
+    local_138 = local_138 + iVar3;
+    iVar3 = FUN_140026ac0(0x10,uVar2);
+    LStack_130 = local_138;
+    if (local_138 < local_158 - iVar3) {
+      LStack_130 = local_158 - iVar3;
+    }
+    if (LVar6 == 0) {
+      SetTextColor(hdc,color_01);
+      pwVar9 = L"This";
+    }
+    else {
+      if (*(HGDIOBJ *)(LVar6 + 0x548) != (HGDIOBJ)0x0) {
+        pvVar8 = SelectObject(hdc,*(HGDIOBJ *)(LVar6 + 0x548));
+      }
+      SetTextColor(hdc,color_01);
+      pwVar9 = (wchar_t *)FUN_1401fa770(LVar6);
+    }
+    lVar10 = FUN_140335100(pwVar9);
+    if ((lVar10 == 10) && (iVar3 = FUN_140005730(pwVar9,L"Benchmarks",10), iVar3 == 0)) {
+      local_168 = (HBRUSH *)0x1403f9e60;
+      local_160 = (HBRUSH **)0x21;
+      FUN_14003ad30(local_118,&local_168);
+    }
+    else {
+      local_168 = &local_178;
+      local_160 = &local_168;
+      local_188 = (undefined8 *******)0x1403ee5a0;
+      local_180 = 0x18;
+      local_178 = (HBRUSH)pwVar9;
+      local_170 = lVar10;
+      FUN_14003a830(local_118,&local_188,&local_168);
+    }
+    local_188 = local_118;
+    if (7 < local_100) {
+      local_188 = local_118[0];
+    }
+    local_180 = local_108;
+    FUN_1400286a0(hdc,&local_188,LStack_130 - local_138,0x8820);
+    local_188 = local_118;
+    if (7 < local_100) {
+      local_188 = local_118[0];
+    }
+    local_180 = local_108;
+    FUN_140028240(hdc,&local_188,&local_138,0x8820);
+    local_128 = local_148.left;
+    LStack_124 = local_148.top;
+    LStack_120 = local_148.right;
+    iStack_11c = local_148.bottom;
+    iVar3 = FUN_140026ac0(3,uVar2);
+    LStack_124 = iVar3 + extraout_var + iStack_134;
+    iVar3 = FUN_140026ac0(0x3a,uVar2);
+    local_128 = local_128 + iVar3;
+    LStack_120 = LStack_130;
+    iVar3 = FUN_140026ac0(8,uVar2);
+    iStack_11c = iStack_11c - iVar3;
+    if ((LVar6 != 0) && (*(HGDIOBJ *)(LVar6 + 0x518) != (HGDIOBJ)0x0)) {
+      SelectObject(hdc,*(HGDIOBJ *)(LVar6 + 0x518));
+    }
+    SetTextColor(hdc,local_198);
+    local_188 = (undefined8 *******)0x140416120;
+    local_180 = 0x6d;
+    FUN_140028240(hdc,&local_188,&local_128,0x8820);
+    if (pvVar8 != (HGDIOBJ)0x0) {
+      SelectObject(hdc,pvVar8);
+    }
+    EndPaint(param_1,&local_a8);
+    if (local_100 < 8) {
+      return 0;
+    }
+    uVar12 = local_100 * 2 + 2;
+    pppppppuVar11 = local_118[0];
+    if (0xfff < uVar12) {
+      pppppppuVar11 = (undefined8 *******)local_118[0][-1];
+      if (0x1f < (ulonglong)((longlong)local_118[0] + (-8 - (longlong)pppppppuVar11))) {
+        pcVar1 = (code *)swi(0x29);
+        (*pcVar1)(5);
+        pcVar1 = (code *)swi(3);
+        LVar7 = (*pcVar1)();
+        return LVar7;
+      }
+      uVar12 = local_100 * 2 + 0x29;
+    }
+    thunk_FUN_140327e20(pppppppuVar11,uVar12);
+    return 0;
+  }
+  if (param_2 == 0x14) {
+    return 1;
+  }
+  if (param_2 == 0x2b) {
+    if (((LVar6 != 0) && (param_4 != 0)) && (*(int *)(param_4 + 4) - 1U < 2)) {
+      FUN_1401f8570(LVar6,param_4);
+      return 1;
+    }
+  }
+  else if (((param_2 == 0x111) && (LVar6 != 0)) && ((short)(param_3 >> 0x10) == 0)) {
+    if ((short)param_3 == 1) {
+      ShellExecuteW(*(HWND *)(LVar6 + 0x230),L"open",L"https://www.tmog.org/pro.html",(LPCWSTR)0x0,
+                    (LPCWSTR)0x0,1);
+    }
+    else {
+      if ((short)param_3 != 2) goto LAB_1401f8e1a;
+      local_e8 = std::
+                 _Func_impl_no_alloc<`private:_void___cdecl_tmog::host::WindowsApplication::ShowEnterLicense(void)___ptr64'::`2'::<lambda_1>,void,HWND__*___ptr64>
+                 ::vftable;
+      local_b0 = &local_e8;
+      local_e0 = LVar6;
+      FUN_1401fe210(*(undefined8 *)(LVar6 + 0x230),LVar6 + 0x1a38,*(undefined1 *)(LVar6 + 0x15a0),
+                    &local_e8);
+      if (local_b0 != (undefined ***)0x0) {
+        (*(code *)(*local_b0)[4])
+                  (local_b0,CONCAT71((int7)((ulonglong)&local_e8 >> 8),local_b0 != &local_e8));
+      }
+    }
+    return 0;
+  }
+LAB_1401f8e1a:
+  LVar7 = DefWindowProcW(param_1,param_2,param_3,param_4);
+  return LVar7;
+}
+
+
+
+## raw_result.value.assembly

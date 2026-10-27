@@ -1,0 +1,128 @@
+## raw_result.value.pseudocode
+
+
+/* WARNING: Function: __security_check_cookie replaced with injection: security_check_cookie */
+
+void FUN_1401f9fb0(longlong param_1)
+
+{
+  code *pcVar1;
+  char cVar2;
+  int iVar3;
+  BOOL BVar4;
+  undefined8 ****ppppuVar5;
+  ulonglong uVar6;
+  wchar_t *pwVar7;
+  undefined8 uVar8;
+  undefined *puVar9;
+  undefined1 auStack_d8 [40];
+  undefined8 ***local_b0;
+  undefined8 local_a8;
+  undefined1 local_a0 [8];
+  undefined8 ***local_98;
+  undefined1 *local_90;
+  undefined *local_88;
+  undefined8 local_80;
+  undefined8 ***local_78;
+  undefined8 uStack_70;
+  undefined8 local_68;
+  ulonglong local_60;
+  undefined8 ***local_58 [3];
+  ulonglong local_40;
+  ulonglong local_38;
+  
+  local_38 = DAT_1404c7ac0 ^ (ulonglong)auStack_d8;
+  if (*(HMENU *)(param_1 + 0x1f60) != (HMENU)0x0) {
+    iVar3 = GetMenuItemCount(*(HMENU *)(param_1 + 0x1f60));
+    while ((0 < iVar3 && (BVar4 = DeleteMenu(*(HMENU *)(param_1 + 0x1f60),0,0x400), BVar4 != 0))) {
+      iVar3 = GetMenuItemCount(*(HMENU *)(param_1 + 0x1f60));
+    }
+    cVar2 = FUN_1401f4920(param_1 + 0x1a38);
+    if (cVar2 == '\0') {
+      FUN_14003a410(*(undefined8 *)(param_1 + 0x1f60),0,0x1bb,&DAT_1403efe68);
+      uVar8 = 0x1bc;
+      puVar9 = &DAT_1403f0458;
+    }
+    else {
+      uVar8 = 0x1bd;
+      puVar9 = &DAT_1403f0110;
+    }
+    FUN_14003a410(*(undefined8 *)(param_1 + 0x1f60),0,uVar8,puVar9);
+    FUN_14003a410(*(undefined8 *)(param_1 + 0x1f60),0x800,0,0);
+    FUN_14003a410(*(undefined8 *)(param_1 + 0x1f60),*(char *)(param_1 + 0x1f59) != '\0',0x1be,
+                  &DAT_1403fbd50);
+    FUN_14003a410(*(undefined8 *)(param_1 + 0x1f60),0x800,0,0);
+    FUN_14003a410(*(undefined8 *)(param_1 + 0x1f60),0,0x1b8,&DAT_1403f0ed8);
+    FUN_14003a410(*(undefined8 *)(param_1 + 0x1f60),0,0x1bf,&DAT_1404052d8);
+    FUN_14003a410(*(undefined8 *)(param_1 + 0x1f60),0,0x1b9,&DAT_140416888);
+    FUN_14003a410(*(undefined8 *)(param_1 + 0x1f60),0x800,0,0);
+    cVar2 = FUN_1401f5c70(param_1 + 0x1a38);
+    pwVar7 = L"Task Manager TMOG";
+    if (cVar2 != '\0') {
+      pwVar7 = L"Task Manager TMOG PRO";
+    }
+    local_78 = (undefined8 ****)0x0;
+    uStack_70 = 0;
+    local_68 = 0;
+    local_60 = 0;
+    uVar8 = FUN_140335100(pwVar7);
+    FUN_1400017a0(&local_78,pwVar7,uVar8);
+    local_b0 = &local_78;
+    if (7 < local_60) {
+      local_b0 = local_78;
+    }
+    local_a8 = local_68;
+    local_98 = &local_b0;
+    local_90 = local_a0;
+    local_88 = &DAT_1403ef9b0;
+    local_80 = 10;
+    FUN_14003a830(local_58,&local_88,&local_98);
+    if (7 < local_60) {
+      uVar6 = local_60 * 2 + 2;
+      ppppuVar5 = (undefined8 ****)local_78;
+      if (0xfff < uVar6) {
+        ppppuVar5 = (undefined8 ****)local_78[-1];
+        if (0x1f < (ulonglong)((longlong)local_78 + (-8 - (longlong)ppppuVar5))) {
+          pcVar1 = (code *)swi(0x29);
+          (*pcVar1)(5);
+          goto LAB_1401fa2b1;
+        }
+        uVar6 = local_60 * 2 + 0x29;
+      }
+      thunk_FUN_140327e20(ppppuVar5,uVar6);
+    }
+    local_68 = 0;
+    local_60 = 7;
+    local_78 = (undefined8 ***)((ulonglong)local_78 & 0xffffffffffff0000);
+    ppppuVar5 = local_58;
+    if (7 < local_40) {
+      ppppuVar5 = (undefined8 ****)local_58[0];
+    }
+    FUN_14003a410(*(undefined8 *)(param_1 + 0x1f60),0,0x1ba,ppppuVar5);
+    if ((*(HWND *)(param_1 + 0x230) != (HWND)0x0) && (*(longlong *)(param_1 + 0x150) != 0)) {
+      DrawMenuBar(*(HWND *)(param_1 + 0x230));
+    }
+    if (7 < local_40) {
+      uVar6 = local_40 * 2 + 2;
+      ppppuVar5 = (undefined8 ****)local_58[0];
+      if (0xfff < uVar6) {
+        ppppuVar5 = (undefined8 ****)local_58[0][-1];
+        if (0x1f < (ulonglong)((longlong)local_58[0] + (-8 - (longlong)ppppuVar5))) {
+LAB_1401fa2b1:
+          pcVar1 = (code *)swi(0x29);
+          (*pcVar1)(5);
+          pcVar1 = (code *)swi(3);
+          (*pcVar1)();
+          return;
+        }
+        uVar6 = local_40 * 2 + 0x29;
+      }
+      thunk_FUN_140327e20(ppppuVar5,uVar6);
+    }
+  }
+  return;
+}
+
+
+
+## raw_result.value.assembly

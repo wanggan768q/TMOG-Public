@@ -1,0 +1,167 @@
+## raw_result.value.pseudocode
+
+
+/* WARNING: Function: __security_check_cookie replaced with injection: security_check_cookie */
+
+undefined8 FUN_1401f7bb0(undefined8 *param_1,undefined8 param_2,undefined4 param_3)
+
+{
+  longlong lVar1;
+  longlong lVar2;
+  code *pcVar3;
+  uint uVar4;
+  LONG LVar5;
+  CRYPT_PROVIDER_DATA *pProvData;
+  CRYPT_PROVIDER_SGNR *pSgnr;
+  CRYPT_PROVIDER_CERT *pCVar6;
+  undefined8 *puVar7;
+  undefined8 *puVar8;
+  undefined8 *puVar9;
+  undefined8 *puVar10;
+  longlong lVar11;
+  longlong lVar12;
+  undefined8 uVar13;
+  ulonglong uVar14;
+  undefined8 *puVar15;
+  undefined8 uVar16;
+  undefined1 auStack_1c8 [32];
+  char *local_1a8;
+  undefined8 local_1a0;
+  undefined8 local_188;
+  undefined8 uStack_180;
+  undefined8 local_178;
+  ulonglong uStack_170;
+  undefined8 local_168;
+  undefined8 *puStack_160;
+  undefined8 local_158;
+  HANDLE pvStack_150;
+  undefined8 local_148;
+  ulonglong uStack_140;
+  undefined8 local_138;
+  undefined8 local_128;
+  undefined8 *local_120;
+  undefined8 local_118;
+  undefined8 local_110;
+  undefined8 *local_108;
+  GUID *local_100;
+  GUID local_f8;
+  longlong local_e8 [3];
+  ulonglong local_d0;
+  undefined1 local_c8 [32];
+  undefined1 local_a8 [32];
+  undefined1 local_88 [32];
+  undefined1 local_68 [32];
+  ulonglong local_48;
+  
+  local_48 = DAT_1404c7ac0 ^ (ulonglong)auStack_1c8;
+  uVar13 = 0;
+  FUN_1401f74c0(local_e8);
+  local_128 = 0x20;
+  if (7 < (ulonglong)param_1[3]) {
+    param_1 = (undefined8 *)*param_1;
+  }
+  uStack_180 = 0;
+  local_178 = 0;
+  pvStack_150 = (HANDLE)0x0;
+  local_148 = 0;
+  local_138 = 0;
+  local_188 = 0x58;
+  uStack_170 = CONCAT44(param_3,2) & 0xffffffffff;
+  local_168 = 1;
+  puStack_160 = &local_128;
+  local_158 = 1;
+  uVar4 = 0x1000;
+  if ((char)param_3 != '\0') {
+    uVar4 = 0x80;
+  }
+  uStack_140 = (ulonglong)uVar4;
+  local_f8.Data1 = 0xaac56b;
+  local_f8.Data2 = 0xcd44;
+  local_f8.Data3 = 0x11d0;
+  local_f8.Data4[0] = 0x8c;
+  local_f8.Data4[1] = 0xc2;
+  local_f8.Data4[2] = '\0';
+  local_f8.Data4[3] = 0xc0;
+  local_f8.Data4[4] = 'O';
+  local_f8.Data4[5] = 0xc2;
+  local_f8.Data4[6] = 0x95;
+  local_f8.Data4[7] = 0xee;
+  local_108 = &local_188;
+  local_100 = &local_f8;
+  uVar16 = 0;
+  local_120 = param_1;
+  local_118 = param_2;
+  local_110 = uVar13;
+  LVar5 = WinVerifyTrust((HWND)0x0,&local_f8,&local_188);
+  if ((((LVar5 == 0) &&
+       (pProvData = WTHelperProvDataFromStateData(pvStack_150),
+       pProvData != (CRYPT_PROVIDER_DATA *)0x0)) &&
+      (pSgnr = WTHelperGetProvSignerFromChain(pProvData,0,0,0), pSgnr != (CRYPT_PROVIDER_SGNR *)0x0)
+      ) && ((pCVar6 = WTHelperGetProvCertFromChain(pSgnr,0), pCVar6 != (CRYPT_PROVIDER_CERT *)0x0 &&
+            (pCVar6->pCert != (PCCERT_CONTEXT)0x0)))) {
+    puVar7 = (undefined8 *)FUN_1401f7900(local_68,pCVar6->pCert,"2.5.4.10");
+    puVar15 = puVar7;
+    if (7 < (ulonglong)puVar7[3]) {
+      puVar15 = (undefined8 *)*puVar7;
+    }
+    lVar12 = puVar7[2];
+    puVar8 = (undefined8 *)FUN_1401f7900(local_88,pCVar6->pCert,"2.5.4.3");
+    puVar7 = puVar8;
+    if (7 < (ulonglong)puVar8[3]) {
+      puVar7 = (undefined8 *)*puVar8;
+    }
+    lVar11 = puVar8[2];
+    local_1a8 = "David Plummer";
+    local_1a0 = 0xd;
+    puVar9 = (undefined8 *)FUN_1401f7eb0(local_a8,&local_1a8);
+    puVar8 = puVar9;
+    if (7 < (ulonglong)puVar9[3]) {
+      puVar8 = (undefined8 *)*puVar9;
+    }
+    lVar1 = puVar9[2];
+    local_1a8 = "David Plummer";
+    local_1a0 = 0xd;
+    puVar10 = (undefined8 *)FUN_1401f7eb0(local_c8,&local_1a8);
+    puVar9 = puVar10;
+    if (7 < (ulonglong)puVar10[3]) {
+      puVar9 = (undefined8 *)*puVar10;
+    }
+    lVar2 = puVar10[2];
+    if (((lVar2 == 0) || (lVar1 == 0)) ||
+       ((lVar2 != lVar11 ||
+        (((lVar11 = thunk_FUN_140322f10(puVar9,puVar7,lVar2), lVar11 != lVar2 || (lVar1 != lVar12))
+         || (lVar12 = thunk_FUN_140322f10(puVar8,puVar15,lVar1), lVar12 != lVar1)))))) {
+      uVar16 = 0;
+    }
+    else {
+      uVar16 = 1;
+    }
+    thunk_FUN_1400055b0(local_c8);
+    thunk_FUN_1400055b0(local_a8);
+    thunk_FUN_1400055b0(local_88);
+    thunk_FUN_1400055b0();
+  }
+  local_158 = CONCAT44(local_158._4_4_,2);
+  WinVerifyTrust((HWND)0x0,&local_f8,&local_188);
+  if (0xf < local_d0) {
+    uVar14 = local_d0 + 1;
+    lVar12 = local_e8[0];
+    if (0xfff < uVar14) {
+      lVar12 = *(longlong *)(local_e8[0] + -8);
+      if (0x1f < (local_e8[0] - lVar12) - 8U) {
+        pcVar3 = (code *)swi(0x29);
+        (*pcVar3)(5);
+        pcVar3 = (code *)swi(3);
+        uVar13 = (*pcVar3)();
+        return uVar13;
+      }
+      uVar14 = local_d0 + 0x28;
+    }
+    thunk_FUN_140327e20(lVar12,uVar14);
+  }
+  return uVar16;
+}
+
+
+
+## raw_result.value.assembly
