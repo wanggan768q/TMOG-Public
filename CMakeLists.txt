@@ -18,6 +18,7 @@ endif()
 add_library(tmog_core STATIC
     src/ProcessSnapshot.cpp
     src/ProcessSampler.cpp
+    src/BenchAlgo.cpp
 )
 target_include_directories(tmog_core PUBLIC src)
 
@@ -41,6 +42,11 @@ enable_testing()
 add_executable(process_checks tests/process_checks.cpp)
 target_link_libraries(process_checks PRIVATE tmog_core)
 add_test(NAME process_checks COMMAND process_checks)
+
+# #10 Benchmarks 算法检查（受控小输入，普通权限，不要求满负载）
+add_executable(benchmark_algo_checks tests/benchmark_algo_checks.cpp)
+target_link_libraries(benchmark_algo_checks PRIVATE tmog_core)
+add_test(NAME benchmark_algo_checks COMMAND benchmark_algo_checks)
 
 if(WIN32)
     add_executable(smoke_enumerate tests/smoke_enumerate.cpp)
