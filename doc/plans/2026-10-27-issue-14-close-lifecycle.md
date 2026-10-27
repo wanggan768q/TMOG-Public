@@ -2,13 +2,17 @@
 
 日期：2026-10-27 ｜ 分支：`issue-14-close-lifecycle`（基线 main `767553a`，不含 #13 未验收改动）｜ 环境：Windows 11 Pro 10.0.26200，MinGW 13.1.0（Qt Tools）/ Ninja / CMake 3.31.2 / Qt 6.12
 
+**修订 v2**（集成暂停后按协调者/Review 质疑补验）：新增 >2s 用例（F/G 组，2500/3000ms）与失败恢复语义验证；修复 shutdown 失败路径 `closing_` 永久置位 bug（原"恢复 timer"实际不恢复采样）；修正注释与记录表述。检查为场景样例非穷举，未测排列不作全测声明。
+
 ## 源码核查发现的缺陷（修复前）
 
 旧 `closeEvent`（MainWindow.cpp）三处生命周期语义缺陷：
 
 1. **超时后伪报安全**：`wait(2000)` 失败时仍 `event->accept()` → 窗口销毁 → `enumerator_` 析构 → 在途线程 `take_sample` 仍持有 `enumerator_.get()` → **悬空引用（UAF）**。旧提示语"程序即将退出"掩盖了枚举器已随窗口析构的事实。
-2. **`in_flight_` 标识不清空**：超时路径不清空；正常路径 `finished → deleteLater` 异步清理，wait 返回时（同步阻塞）清理回调尚未投递，标识滞后；`finished` 连接无 receiver owner（线程对象自连），窗口销毁后投递行为不确定。
-3. **迟到回调访问已销毁资源**：`closing_` 置位在 wait 之后；超时路径下线程稍后完成采样 → `done` 队列回调 → 访问已析构的窗口成员（lambda 捕获 `this`）。
+2. **`in_flight_` 标识不清空**：超时路径不清空；正常路径 `finished → deleteLater` 异步清理，wait 返回时（同步阻塞）清理回调尚未投递，标识滞后。
+3. **迟到回调访问已销毁资源**：`closing_` 置位在 wait 之后；超时路径下线程稍后完成采样 → `done` 队列回调 → 访问已析构的窗口成员。
+
+**第 4 处缺陷（v2 补验发现，集成暂停触发）**：初版修复的 `shutdown` 失败路径 `closing_ = true` **永久置位**（无复位），而 `start` 守卫拒绝 closing 状态——closeEvent 拒绝关闭后恢复 timer，但每秒 tick 被 worker 内部静默拒绝，**采样停摆不恢复**，"请稍后重试"承诺不成立。修复：失败路径 `closing_` 复位回运行态（窗口未销毁，迟到结果应用安全）；成功路径 closing_ 保持终态（线程已确认退出，accept 后迟到回调丢弃）。检查 A/B 断言随之修正（旧断言基于"closing 永久"的错误语义），新增 F/G 组覆盖票面 >2s 要求与恢复序列。
 
 ## 修复（src/SamplingWorker.{h,cpp} 新增 + MainWindow 改用）
 
@@ -22,23 +26,23 @@
 
 ## 受控生命周期检查（新增 tests/close_lifecycle_checks.cpp，CMake `close_lifecycle_checks`，需 Qt Core）
 
-注入 `SlowEnumerator`（take_sample 内 `QThread::msleep`，**sleep 注入非生产系统慢载荷**）：
+注入 `SlowEnumerator`（take_sample 内 `QThread::msleep`，**sleep 注入非生产系统慢载荷**）。**以下为场景样例，非穷举**：
 
-| 检查 | 验证 |
+| 组 | 验证 |
 |---|---|
-| A | 1.5s 慢枚举在途时 `shutdown(100ms)` 返回 **false**（不伪报安全），`busy()` 仍 true（所有权保留） |
-| B | closing 期间迟到结果被丢弃：`done_calls == 0`（无 UAF 回调）；线程随后自行退出（不强杀） |
+| A | 1.5s 慢枚举在途时 `shutdown(100ms)` 返回 **false**（不伪报安全），`busy()` 仍 true（所有权保留）；失败后 `closing_` 复位（可恢复）；迟到结果在恢复运行态下安全应用（窗口未销毁）；线程随后自然退出（不强杀） |
 | C | `shutdown(5000)` 确认线程实际退出返回 true，状态清空，枚举器此后析构无悬空 |
-| D | 正常完成顺序：恰好一次 done 回调；完成后 shutdown 立即成功 |
-| E | closing 后 `start` 被拒绝（关闭期不接受新采样） |
+| D | 正常完成顺序：恰好一次 done 回调；完成后 shutdown 立即成功；closing 终态下 start 被拒绝 |
+| **F（>2s 票面用例）** | **2500ms** 慢枚举完整序列：`shutdown(300ms)` false → 所有权保留 → `closing_` 自动复位 → 线程自然 finished（finished 队列清理与旧 queued 结果交错，守卫防错清）→ 迟到结果安全应用 → **重新 start 实际接受**（恢复采样循环成立）→ 再次 `shutdown(8000)` 成功（closing 终态、busy 清空） |
+| **G（>2s 票面用例）** | **3000ms** 慢枚举 + 充足超时一次收束成功、状态清空 |
 
-**检查驱动出修复**：首跑 C 场景 `FAIL: state cleared after successful shutdown`——暴露了上述缺陷 2 的 wait 同步/队列清理时序 bug；修复（shutdown 成功直接清标识 + finished 回调守卫）后全绿。
+**检查两次驱动出修复**：首跑暴露缺陷 2（wait 同步/队列清理时序）；v2 首跑暴露缺陷 4（closing 永久置位 → F8 初版断言按错误语义写，修正实现后按正确语义断言通过）。
 
 ## 检查命令与实际结果
 
-构建：`build/`（Release）、`build-debug/`（Debug，补 `-DCMAKE_PREFIX_PATH` 指向 Qt）。
+构建：`build/`（Release）、`build-debug/`（Debug，需 `-DCMAKE_PREFIX_PATH` 指向 Qt）。
 
-- **Release**：close_lifecycle_checks **ALL PASS(12)** / process_checks ALL PASS(16) / process_ops_checks ALL PASS(10) / smoke PASS（846 matched），全 0 error
+- **Release**：close_lifecycle_checks **ALL PASS(22)** / process_checks ALL PASS(16) / process_ops_checks ALL PASS(10) / smoke PASS，全 0 error
 - **Debug**：四检查同 ALL PASS / PASS
 - #5 检查全部保留并通过
 

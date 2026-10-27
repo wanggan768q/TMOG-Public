@@ -205,8 +205,10 @@ void MainWindow::show_kill_outcome(const KillOutcome& outcome) {
 void MainWindow::closeEvent(QCloseEvent* event) {
     sample_timer_.stop();
     // #14：区分采样完成、线程实际退出与资源销毁。shutdown 等待在途线程
-    // 实际退出；超时不伪报安全——拒绝本次关闭（closing_ 未置位，下个 tick
-    // 正常重试），枚举器等资源所有权保持，绝不带着在途线程销毁。
+    // 实际退出；超时不伪报安全——拒绝本次关闭，枚举器等资源所有权保持，
+    // 绝不带着在途线程销毁。失败路径 worker 内部恢复运行态，timer 重启后
+    // 下个 tick 采样真正恢复（"请稍后重试"承诺成立）；成功路径 closing_
+    // 为终态，accept 后迟到的队列回调被丢弃。
     if (!worker_.shutdown(2000)) {
         QMessageBox::warning(this, tr("退出"),
             tr("后台采样未能在 2 秒内结束，已取消关闭。请稍后重试。"));

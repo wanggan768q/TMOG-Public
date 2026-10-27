@@ -71,8 +71,15 @@ bool SamplingWorker::shutdown(int timeout_ms) {
     // 不强杀。未退出时保持所有权：in_flight_ 不清空，枚举器不可销毁（调用方据此拒绝关闭）。
     // 成功路径：wait 已确认线程终止；finished 的队列清理回调（receiver=owner）此刻
     // 尚未投递，因此这里直接清标识——finished 回调里的 in_flight_==thread 守卫防重复。
-    if (exited && in_flight_ == thread)
-        in_flight_ = nullptr;
+    // 失败路径：收束未完成，恢复 closing_=false 回到正常运行态——否则 closeEvent
+    // 拒绝关闭后 start 会被 closing_ 永久拒绝，"可重试"实际变成采样永久停止。
+    // 此后迟到的采样结果正常应用（窗口未销毁，模型存活）；真正的销毁后回调
+    // 由收束成功（closing_ 终态）或 GUI accept 顺序排除。
+    if (exited) {
+        if (in_flight_ == thread) in_flight_ = nullptr;
+    } else {
+        closing_ = false;
+    }
     return exited;
 }
 

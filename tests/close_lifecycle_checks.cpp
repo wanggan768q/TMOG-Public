@@ -68,15 +68,17 @@ int main(int argc, char** argv) {
         const bool exited = worker.shutdown(100);
         check(!exited, "shutdown(100ms) with 1.5s sample returns false (no fake-safe)");
         check(worker.busy(), "ownership retained after timeout (busy still true)");
+        // 失败路径恢复运行态（否则 closeEvent 拒绝关闭后采样永久停摆）
+        check(!worker.closing(), "closing reverted after failed shutdown (recoverable)");
 
-        // 等慢采样自然完成；closing 期间 on_done 不得被调用
+        // 等慢采样自然完成；窗口未销毁（shutdown 失败=拒绝关闭），迟到结果
+        // 在恢复运行态下安全应用（apply_sample 访问的模型存活）
         QThread::msleep(2000);
         QCoreApplication::processEvents();
-        check(done_calls == 0, "late result discarded during closing (no UAF callback)");
+        check(done_calls == 1, "late-but-safe result applied (window alive after reject)");
         check(!worker.busy(), "thread eventually exited on its own (no kill)");
 
-        // 此后枚举器可安全销毁（unique_ptr 析构于此作用域）——无悬空引用
-        check(worker.closing(), "worker stays in closing state");
+        // 恢复运行态：枚举器仍在所有权内（线程已退出，可安全销毁或复用）
         owner->deleteLater();
     }
 
@@ -122,6 +124,58 @@ int main(int argc, char** argv) {
         QCoreApplication::processEvents();
         check(second_calls == 0 && !worker.busy(),
               "start rejected after closing (no new samples during shutdown)");
+        owner->deleteLater();
+    }
+
+    // F. >2s 慢枚举（2500ms）完整交错序列（对应票面要求 + 拒绝关闭后可恢复）：
+    //    shutdown(短超时) false → closing 自动恢复运行态 → 线程自然 finished
+    //    → 重新采样可用 → 再次 shutdown 成功。
+    {
+        auto* owner = new QObject(&app);
+        auto enumr = std::make_unique<SlowEnumerator>(2500);
+        SamplingWorker worker;
+
+        int done_calls = 0;
+        worker.start(owner, enumr.get(), [&](SampleResult) { ++done_calls; }, [] {});
+        QThread::msleep(200);   // 进入 take_sample
+
+        const bool first = worker.shutdown(300);
+        check(!first, "F1: shutdown(300ms) with 2.5s sample returns false");
+        check(worker.busy(), "F2: ownership retained after timeout");
+        check(!worker.closing(), "F3: closing auto-reverted after failed shutdown");
+
+        // 线程自然 finished（不强杀）：等 2.5s 采样完成 + finished 投递
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+        while (worker.busy() && std::chrono::steady_clock::now() < deadline) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            QThread::msleep(20);
+        }
+        check(!worker.busy(), "F4: in-flight thread finished naturally (no kill)");
+        // 迟到结果在恢复运行态下正常应用（窗口未销毁 → apply_sample 安全）
+        check(done_calls == 1, "F5: late-but-safe result applied after revert (window alive)");
+
+        // 重新采样可用（拒绝关闭后恢复采样循环的实际验证）
+        worker.start(owner, enumr.get(), [](SampleResult) {}, [] {});
+        check(worker.busy(), "F6: start accepted after failed-shutdown revert");
+        const bool second = worker.shutdown(8000);
+        check(second, "F7: second shutdown succeeds");
+        // 成功 shutdown 的 closing_=true 是设计终态（线程已确认退出，资源可销毁）；
+        // busy 已清。closing 复位只发生在失败路径（F3 已验证）。
+        check(!worker.busy() && worker.closing(),
+              "F8: thread exited (busy clear), closing terminal after success");
+        owner->deleteLater();
+    }
+
+    // G. 3s 慢枚举 + 充足超时一次收束（票面 >2s 场景的直接证据）
+    {
+        auto* owner = new QObject(&app);
+        auto enumr = std::make_unique<SlowEnumerator>(3000);
+        SamplingWorker worker;
+        worker.start(owner, enumr.get(), [](SampleResult) {}, [] {});
+        QThread::msleep(200);
+        const bool ok = worker.shutdown(8000);
+        check(ok, "G1: 3s sample shutdown with 8s timeout succeeds (>2s direct evidence)");
+        check(!worker.busy(), "G2: state cleared after long-sample shutdown");
         owner->deleteLater();
     }
 
