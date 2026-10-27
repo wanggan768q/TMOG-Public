@@ -8,13 +8,24 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 # Qt 为可选：未安装时仅构建核心库与检查，GUI 目标自动跳过
-find_package(Qt6 COMPONENTS Widgets QUIET)
+find_package(Qt6 COMPONENTS Core Widgets QUIET)
+
+# AUTOMOC 必须在 target 创建前设置（SamplingWorker.cpp 内含 Q_OBJECT 桥）
+if(TARGET Qt6::Core)
+    set(CMAKE_AUTOMOC ON)
+endif()
 
 add_library(tmog_core STATIC
     src/ProcessSnapshot.cpp
     src/ProcessSampler.cpp
 )
 target_include_directories(tmog_core PUBLIC src)
+
+# 采样生命周期（#14）依赖 Qt Core；Qt 可用时才编译（核心检查不受影响）
+if(TARGET Qt6::Core)
+    target_sources(tmog_core PRIVATE src/SamplingWorker.cpp)
+    target_link_libraries(tmog_core PUBLIC Qt6::Core)
+endif()
 
 if(WIN32)
     target_sources(tmog_core PRIVATE src/platform/WindowsProcesses.cpp
@@ -39,10 +50,16 @@ if(WIN32)
     add_executable(process_ops_checks tests/process_ops_checks.cpp)
     target_link_libraries(process_ops_checks PRIVATE tmog_core)
     add_test(NAME process_ops_checks COMMAND process_ops_checks)
+
+    # #14 采样生命周期检查（需 Qt Core：QThread/事件循环交错）
+    if(TARGET Qt6::Core)
+        add_executable(close_lifecycle_checks tests/close_lifecycle_checks.cpp)
+        target_link_libraries(close_lifecycle_checks PRIVATE tmog_core)
+        add_test(NAME close_lifecycle_checks COMMAND close_lifecycle_checks)
+    endif()
 endif()
 
 if(TARGET Qt6::Widgets)
-    set(CMAKE_AUTOMOC ON)
     add_executable(TmogReplica
         src/main.cpp
         src/MainWindow.cpp

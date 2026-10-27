@@ -6,6 +6,7 @@
 #include "ProcessSampler.h"
 #include "IProcessEnumerator.h"
 #include "IProcessOps.h"
+#include "SamplingWorker.h"
 
 class QTableView;
 class QSortFilterProxyModel;
@@ -16,8 +17,8 @@ namespace tmog {
 class ProcessTableModel;
 
 // 主窗口：单一后台采样循环 + 共享表格。
-// 采样在 worker 线程执行，结果经队列连接投递回 UI 线程，禁止重叠采样。
-// 选择保持：重置模型前捕获选中身份，重置后按身份经代理恢复。
+// 采样生命周期由 SamplingWorker 管理（#14）：完成结果、线程实际退出与资源
+// 销毁分离；关窗时 shutdown 确认线程退出才销毁，超时拒绝关闭不伪报安全。
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -28,14 +29,13 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private slots:
-    void on_sample_tick();          // 定时器触发：若无在途采样则启动 worker
+    void on_sample_tick();          // 定时器触发：空闲时启动一次采样
     void on_pause_toggled(bool paused);
     void on_selection_changed();
     void on_refresh_now();
     void on_end_task();             // 确认框 + 安全结束
 
 private:
-    void start_worker();
     void apply_sample(SampleResult result);
     void restore_selection();
     void invalidate_baseline();     // 基线作废：下帧整表"待采样"
@@ -50,14 +50,13 @@ private:
 
     std::unique_ptr<IProcessEnumerator> enumerator_;
     std::unique_ptr<IProcessOps> process_ops_;
+    SamplingWorker worker_;         // 采样线程所有权与收束（#14）
     std::uint32_t core_count_ = 0;
 
     // 采样管线状态
     std::optional<SampleResult> last_sample_;     // 上一帧快照（差分基线）；nullopt = 无基线
-    bool sampling_ = false;                        // 禁止重叠采样
     bool paused_ = false;                          // 暂停时不启动采样
     bool closing_ = false;
-    QThread* in_flight_ = nullptr;                 // 在途采样线程（关窗时等待）
 
     // 选择保持：按 (pid, creation_tick) 身份
     std::optional<ProcessIdentity> selected_identity_;

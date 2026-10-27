@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "ProcessTableModel.h"
+#include "SamplingWorker.h"
 #include "platform/WindowsProcesses.h"
 #include "platform/WindowsProcessOps.h"
 #include <QTableView>
@@ -7,34 +8,12 @@
 #include <QAction>
 #include <QHeaderView>
 #include <QCloseEvent>
-#include <QThread>
 #include <QSortFilterProxyModel>
 #include <QMessageBox>
 #include <QDateTime>
 #include <utility>
 
 namespace tmog {
-
-namespace {
-// 采样 worker：在独立线程执行 take_sample，完成后经队列连接回到 UI 线程。
-// 用 QObject 桥而不是 QThread 子类，保持核心平台无关。
-class WorkerBridge : public QObject {
-    Q_OBJECT
-public:
-    IProcessEnumerator* enumerator = nullptr;
-public slots:
-    void run() {
-        auto result = enumerator->take_sample();
-        if (result) emit done(std::move(*result));
-        else emit failed();
-    }
-signals:
-    void done(SampleResult result);
-    void failed();
-};
-} // namespace
-
-#include "MainWindow.moc" // WorkerBridge 的 moc 由此展开
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     model_ = new ProcessTableModel(this);
@@ -89,41 +68,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 MainWindow::~MainWindow() = default;
 
 void MainWindow::on_sample_tick() {
-    if (!paused_ && !sampling_ && enumerator_ && !closing_)
-        start_worker();
-}
-
-void MainWindow::start_worker() {
-    sampling_ = true;
-    auto* bridge = new WorkerBridge();
-    bridge->enumerator = enumerator_.get();
-    auto* thread = new QThread(/*无 parent：生命周期由 in_flight_ 显式管理*/);
-    in_flight_ = thread;
-    // done 信号跨线程 → 队列连接自动切回 UI 线程
-    connect(bridge, &WorkerBridge::done, this,
-            [this, bridge](SampleResult result) {
-                bridge->deleteLater();
-                sampling_ = false;
-                in_flight_ = nullptr;
-                if (closing_) return;
-                if (paused_) return;   // 暂停瞬间在途的采样：丢弃，不回填基线
-                apply_sample(std::move(result));
-            },
-            Qt::QueuedConnection);
-    connect(bridge, &WorkerBridge::failed, this,
-            [this, bridge]() {
-                bridge->deleteLater();
-                sampling_ = false;
-                in_flight_ = nullptr;
-                // 采样失败：跳过本帧，下个 tick 重试；错误语义在状态栏后续补充
-            },
-            Qt::QueuedConnection);
-    bridge->moveToThread(thread);
-    connect(thread, &QThread::started, bridge, &WorkerBridge::run);
-    connect(bridge, &WorkerBridge::done, thread, &QThread::quit);
-    connect(bridge, &WorkerBridge::failed, thread, &QThread::quit);
-    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
-    thread->start();
+    if (!paused_ && enumerator_ && !closing_)
+        worker_.start(this, enumerator_.get(),
+                      [this](SampleResult result) { apply_sample(std::move(result)); },
+                      [] {
+                          // 采样失败：跳过本帧，下个 tick 重试；错误语义在状态栏后续补充
+                      });
 }
 
 void MainWindow::apply_sample(SampleResult result) {
@@ -253,17 +203,18 @@ void MainWindow::show_kill_outcome(const KillOutcome& outcome) {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    closing_ = true;
     sample_timer_.stop();
-    // 等待在途采样收尾（take_sample 是有限操作），避免窗口销毁时线程仍引用枚举器。
-    // ponytail: wait 超时（2s）时仍 accept，理论 UAF 窗口；take_sample 实测 <100ms，
-    // 正常不可能超时。若未来引入长阻塞枚举，改为拒绝关闭或强杀线程池。
-    if (in_flight_) {
-        in_flight_->quit();
-        if (!in_flight_->wait(2000))
-            QMessageBox::warning(this, tr("退出"),
-                tr("后台采样未能在 2 秒内结束，程序即将退出。"));
+    // #14：区分采样完成、线程实际退出与资源销毁。shutdown 等待在途线程
+    // 实际退出；超时不伪报安全——拒绝本次关闭（closing_ 未置位，下个 tick
+    // 正常重试），枚举器等资源所有权保持，绝不带着在途线程销毁。
+    if (!worker_.shutdown(2000)) {
+        QMessageBox::warning(this, tr("退出"),
+            tr("后台采样未能在 2 秒内结束，已取消关闭。请稍后重试。"));
+        sample_timer_.start(1000);   // 恢复采样循环，用户可再次关闭
+        event->ignore();
+        return;
     }
+    closing_ = true;   // 线程已确认退出，迟到回调（若有）由 closing_ 丢弃
     event->accept();
 }
 
