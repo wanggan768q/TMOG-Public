@@ -85,8 +85,8 @@ SMOKE: terminated cleanly
 ## 6. 支持限制
 
 - Windows only（票面范围）；Linux/macOS 不在本票。
-- #13 按值冻结未实现（独立分支待 GUI 验收，票面排除项）。
-- 枚举器实现（WindowsProcesses.cpp）"单进程失败只影响该字段"原已满足，未改动。
+- **#13 关系澄清**（修正早期交付报告"要点4修UAF vs 要点5未实现#13"的表述矛盾）：本票为结束操作异步化所做的**按值捕获**（`on_end_task` 中 `const ProcessSnapshot snap = row->snapshot;`、kill lambda 值捕获 identity）与 #13 按值冻结存在**代码技术重叠**——两者都是消除模型行引用生命周期的值语义拷贝。但 #13 的修复、检查与人工验收**未在本票交付**：#13 分支未合入本树、其检查套件未运行、其 GUI 验收未执行。**#13 保持 OPEN**，冲突由协调者处理；本票安全拷贝不回退。
+- 枚举器内部 API 失败路径（见 §8）已修复，但**真实 Win32 API 失败无法受控注入**（无 mock/detour 框架，票面禁止引入）：证据为静态代码核对（§8 行号）+ 正常路径 smoke_enumerate 运行通过；注入式检查如 Review 认为必要，需维护者批准 mock 手段，现**如实标注为代码级证据**。
 - kill 线程收束：closeEvent 等待 ≤4s，超时拒绝关闭（与 #14 拒绝关闭合同一致）；无强杀。
 
 ## 7. 变更清单
@@ -95,3 +95,20 @@ SMOKE: terminated cleanly
 - `src/MainWindow.{h,cpp}`：start_sample 代际捕获+回调比对；失败反馈+基线作废+恢复提示；on_refresh_now 暂停采一次/忙碌反馈/关闭忽略；on_end_task 值拷贝身份+terminate 工作线程化+kill_thread_ 收束；closeEvent kill 线程有限等待；析构防御等待。
 - `tests/sampling_recovery_checks.cpp` 新增；`tests/close_lifecycle_checks.cpp` 失败回调签名适配；`CMakeLists.txt` 注册新检查。
 - `doc/plans/2026-10-27-issue-16-sampling-recovery.md`（计划）+ 本文件（验收）。
+
+## 8. 补验（协调者同票反馈，2026-10-27 第二轮）
+
+### 8.1 枚举器 API 失败静默假成功缺口（已修复）
+
+协调者指出：Bridge 的 ok 检查只能拦截枚举器如实上报的失败；`WindowsProcessEnumerator::take_sample` 自身无条件标 `ok=true`，`Process32FirstW/NextW` 真失败时半帧/空列表照样假成功 → 表格清空假零。静态核对确认属实（原 `src/platform/WindowsProcesses.cpp:47-77`：无失败分支）。
+
+修复（同文件）：
+
+- `Process32NextW` 返回 FALSE 时按 `GetLastError()` 区分：`ERROR_NO_MORE_FILES` = 正常枚举终止（标成功）；其他错误码 = 真失败，`ok=false` + 错误描述，丢弃半帧（不进入差分）。
+- `Process32FirstW` 失败同理区分：`ERROR_NO_MORE_FILES`（API 对空快照的正常回答）如实返回空列表标成功；其他错误码 `ok=false`。
+
+证据边界（如实标注）：真实 Win32 枚举 API 失败无法在本票受控注入（无 mock 框架、票面禁止引入测试服务/钩子）；证据 = 静态代码核对（错误码分支 + ok 语义）+ 正常路径 `smoke_enumerate` 运行通过（失败分支不影响正常枚举）。注入式失败检查未交付，如 Review 判定必要需维护者批准 mock 手段。
+
+### 8.2 #13 表述矛盾澄清（记录修正，无代码变更）
+
+见 §6"#13 关系澄清"：按值捕获为 #16 异步操作所必需（修模态框期间 `replace_snapshot` 重分配导致的悬空引用），与 #13 修复代码重叠但 #13 分支/检查/验收未在本票交付，#13 保持 OPEN。

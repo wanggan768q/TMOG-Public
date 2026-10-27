@@ -71,6 +71,22 @@ std::optional<SampleResult> WindowsProcessEnumerator::take_sample() {
             }
             result.processes.push_back(std::move(ps));
         } while (Process32NextW(snap, &entry));
+        // #16：Next 以 FALSE 结束仅当 ERROR_NO_MORE_FILES 才是正常终止；
+        // 其他错误码是真 API 失败——半帧数据不标成功（否则绕过 Bridge 的
+        // ok 检查，表格清空成假零）。失败走 failed 路径：UI 保留上次数据。
+        if (const DWORD err = GetLastError(); err != ERROR_NO_MORE_FILES) {
+            CloseHandle(snap);
+            result.ok = false;
+            result.error = "Process32NextW failed mid-enumeration (error " +
+                           std::to_string(err) + ", partial list discarded)";
+            return result;
+        }
+    } else if (const DWORD err = GetLastError(); err != ERROR_NO_MORE_FILES) {
+        // First 失败：ERROR_NO_MORE_FILES 是 API 对空快照的正常回答（如实
+        // 空列表标成功）；其他错误码是真 API 失败，不标成功。
+        CloseHandle(snap);
+        result.error = "Process32FirstW failed (error " + std::to_string(err) + ")";
+        return result;   // ok 保持 false
     }
     CloseHandle(snap);
 
