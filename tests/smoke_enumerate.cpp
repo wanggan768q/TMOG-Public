@@ -1,7 +1,6 @@
 // 真实 Windows 枚举的冒烟检查：枚举本机进程、两次采样、算出至少一个非零 CPU%。
 // 禁止假数据：失败即退出非零。
 #include <iostream>
-#include <map>
 #include <windows.h>
 #include "platform/WindowsProcesses.h"
 #include "ProcessSampler.h"
@@ -31,22 +30,16 @@ int main() {
         std::cerr << "FAIL: second sample: " << (second ? second->error : "nullopt") << "\n";
         return 1;
     }
-    const auto wall_delta = second->wall_clock_ns - first->wall_clock_ns;
 
-    std::map<std::uint32_t, const ProcessSnapshot*> prev_by_pid;
-    for (const auto& p : first->processes) prev_by_pid[p.identity.pid] = &p;
+    // 复用核心层的 diff_samples（与 GUI 同一配对/差分路径）
+    const auto rows = diff_samples(*first, *second, core_count);
 
-    int matched = 0, computed = 0, nonzero = 0, first_sample = 0;
-    for (const auto& cur : second->processes) {
-        auto it = prev_by_pid.find(cur.identity.pid);
-        if (it == prev_by_pid.end()) continue;
-        ++matched;
-        std::optional<int> pct;
-        auto st = compute_cpu_percent(*it->second, cur, wall_delta, core_count, pct);
-        if (st == ProcessStatus::FirstSample) ++first_sample;
-        if (st == ProcessStatus::Ok) {
+    int matched = 0, computed = 0, nonzero = 0;
+    for (const auto& row : rows) {
+        if (row.status == ProcessStatus::Ok) {
+            ++matched;
             ++computed;
-            if (*pct > 0) ++nonzero;
+            if (row.cpu_percent && *row.cpu_percent > 0) ++nonzero;
         }
     }
 
