@@ -5,6 +5,10 @@
 //
 // 合同文档：doc/plans/2026-10-27-issue-10-benchmark-contract.md
 // 边界：纯计算零 IO；单线程；不提权；chunk 边界外不检查取消。
+// 语义限定：kWallLimitSeconds 是协作式上限（chunk 边界检查，单 chunk 内不可
+// 中断）；ops_per_second 是 hash-steps/s（非通用 CPU 指令数）；
+// mem_bandwidth 的 GB/s 是 "TRIAD 内核吞吐"（24 MiB 工作集可能落在 LLC 内，
+// 不是主内存带宽认证）。
 
 #include <array>
 #include <atomic>
@@ -53,7 +57,7 @@ public:
 
 struct CpuResult {
     BenchStatus status;
-    std::optional<double> ops_per_second;   // Completed 时有值
+    std::optional<double> ops_per_second;   // Completed 时有值；hash-steps/s（非通用指令数）
     std::uint64_t steps_done = 0;           // 已完成哈希步（含部分）
     std::uint32_t passes_done = 0;
     double duration_seconds = 0.0;
@@ -62,7 +66,7 @@ struct CpuResult {
 
 struct MemResult {
     BenchStatus status;
-    std::optional<double> gigabytes_per_second;  // Completed 时有值；GB/s（10^9）
+    std::optional<double> gigabytes_per_second;  // Completed 时有值；GB/s（10^9）；TRIAD 内核吞吐（非主内存带宽认证）
     std::uint64_t bytes_done = 0;                // 已完成字节（含部分；24 B/元素）
     std::uint32_t trials_done = 0;
     double best_trial_seconds = 0.0;             // 最佳 trial 时长
