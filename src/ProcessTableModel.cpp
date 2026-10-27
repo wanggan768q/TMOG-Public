@@ -71,9 +71,7 @@ QVariant ProcessTableModel::headerData(int section, Qt::Orientation orientation,
     return {};
 }
 
-void ProcessTableModel::replace_snapshot(std::vector<SampledRow> rows,
-                                         std::vector<SampledRow>* old_rows_out) {
-    if (old_rows_out) *old_rows_out = std::move(rows_);
+void ProcessTableModel::replace_snapshot(std::vector<SampledRow> rows) {
     beginResetModel();
     rows_ = std::move(rows);
     endResetModel();

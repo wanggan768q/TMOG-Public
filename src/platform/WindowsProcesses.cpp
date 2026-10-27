@@ -1,4 +1,5 @@
 #include "WindowsProcesses.h"
+#include "WinTime.h"
 #include <windows.h>
 #include <tlhelp32.h>
 #include <psapi.h>
@@ -55,9 +56,7 @@ std::optional<SampleResult> WindowsProcessEnumerator::take_sample() {
             if (h) {
                 FILETIME create{}, exit_t{}, kernel{}, user{};
                 if (GetProcessTimes(h, &create, &exit_t, &kernel, &user)) {
-                    ps.identity.creation_tick =
-                        static_cast<std::uint64_t>(create.dwHighDateTime) << 32 |
-                        create.dwLowDateTime;
+                    ps.identity.creation_tick = win::filetime_to_tick(create);
                     ps.cpu_time_ns = filetime_to_ns(kernel) + filetime_to_ns(user);
                     ps.cpu_time_available = true;
                 }

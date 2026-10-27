@@ -38,12 +38,12 @@ signals:
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     model_ = new ProcessTableModel(this);
-    auto* proxy = new QSortFilterProxyModel(this);
-    proxy->setSourceModel(model_);
-    proxy->setSortRole(Qt::UserRole);
+    proxy_ = new QSortFilterProxyModel(this);
+    proxy_->setSourceModel(model_);
+    proxy_->setSortRole(Qt::UserRole);
 
     table_ = new QTableView(this);
-    table_->setModel(proxy);
+    table_->setModel(proxy_);
     table_->setSortingEnabled(true);
     table_->horizontalHeader()->setStretchLastSection(true);
     table_->verticalHeader()->setVisible(false);
@@ -106,6 +106,7 @@ void MainWindow::start_worker() {
                 sampling_ = false;
                 in_flight_ = nullptr;
                 if (closing_) return;
+                if (paused_) return;   // 暂停瞬间在途的采样：丢弃，不回填基线
                 apply_sample(std::move(result));
             },
             Qt::QueuedConnection);
@@ -127,40 +128,28 @@ void MainWindow::start_worker() {
 
 void MainWindow::apply_sample(SampleResult result) {
     std::vector<SampledRow> rows;
-
     if (last_sample_) {
         // 正常帧：与基线配对差分
         rows = diff_samples(*last_sample_, result, core_count_);
     } else {
-        // 无基线（首帧/暂停恢复后）：全部显示"待采样"，基线在本帧建立
-        rows.reserve(result.processes.size());
-        for (const auto& cur : result.processes) {
-            SampledRow row;
-            row.snapshot = cur;
-            row.status = ProcessStatus::FirstSample;
-            rows.push_back(std::move(row));
-        }
+        // 无基线（首帧/暂停恢复后）：空基线自差分 → 全表"待采样"，本帧建立基线
+        static const SampleResult kEmpty{};
+        rows = diff_samples(kEmpty, result, core_count_);
     }
 
-    // 重置会抹掉视图选择：先取走旧行用于恢复，重置后按身份还原
-    std::vector<SampledRow> old_rows;
-    model_->replace_snapshot(std::move(rows), &old_rows);
-    if (!old_rows.empty())
-        last_sample_ = std::move(result);   // 有基线意义才更新
-    else
-        last_sample_ = std::move(result);   // 首帧也是有效基线
+    model_->replace_snapshot(std::move(rows));
+    last_sample_ = std::move(result);
     restore_selection();
 }
 
 void MainWindow::restore_selection() {
     if (!selected_identity_) return;
     const auto& identity = *selected_identity_;
-    auto* proxy = static_cast<QSortFilterProxyModel*>(table_->model());
     for (int r = 0; r < model_->rowCount(); ++r) {
         const auto* row = model_->row_at(r);
         if (row && row->snapshot.identity == identity) {
             const QModelIndex proxy_index =
-                proxy->mapFromSource(model_->index(r, 0));
+                proxy_->mapFromSource(model_->index(r, 0));
             if (proxy_index.isValid()) {
                 table_->selectionModel()->select(
                     proxy_index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
@@ -169,6 +158,13 @@ void MainWindow::restore_selection() {
             break;
         }
     }
+}
+
+const SampledRow* MainWindow::current_source_row() const {
+    const QModelIndex proxy_index = table_->currentIndex();
+    if (!proxy_index.isValid()) return nullptr;
+    const QModelIndex source_index = proxy_->mapToSource(proxy_index);
+    return model_->row_at(source_index.row());
 }
 
 void MainWindow::on_pause_toggled(bool paused) {
@@ -184,14 +180,18 @@ void MainWindow::invalidate_baseline() { last_sample_.reset(); }
 void MainWindow::on_refresh_now() { on_sample_tick(); }
 
 void MainWindow::on_selection_changed() {
-    const auto* row = model_->row_at(table_->currentIndex().row());
+    const auto* row = current_source_row();
     if (row)
         selected_identity_ = row->snapshot.identity;
-    // 索引无效（重置清空选择）时不清身份：身份是恢复锚点，恢复流程会用它
+    else
+        selected_identity_.reset();
+        // 无效索引 = 用户取消选择或重置清空。重置期恢复流程随后会按锚点重选；
+        // 若此前锚点已被清（用户主动点空白），恢复自然不发生——两语义由此区分：
+        // 重置不清锚点靠的是 restore_selection 在 selectionChanged 之后执行。
 }
 
 void MainWindow::on_end_task() {
-    const auto* row = model_->row_at(table_->currentIndex().row());
+    const auto* row = current_source_row();
     if (!row || !process_ops_) return;
     const ProcessSnapshot& snap = row->snapshot;
 
@@ -249,10 +249,14 @@ void MainWindow::show_kill_outcome(const KillOutcome& outcome) {
 void MainWindow::closeEvent(QCloseEvent* event) {
     closing_ = true;
     sample_timer_.stop();
-    // 等待在途采样收尾（take_sample 是有限操作），避免窗口销毁时线程仍引用枚举器
+    // 等待在途采样收尾（take_sample 是有限操作），避免窗口销毁时线程仍引用枚举器。
+    // ponytail: wait 超时（2s）时仍 accept，理论 UAF 窗口；take_sample 实测 <100ms，
+    // 正常不可能超时。若未来引入长阻塞枚举，改为拒绝关闭或强杀线程池。
     if (in_flight_) {
         in_flight_->quit();
-        in_flight_->wait(2000);
+        if (!in_flight_->wait(2000))
+            QMessageBox::warning(this, tr("退出"),
+                tr("后台采样未能在 2 秒内结束，程序即将退出。"));
     }
     event->accept();
 }

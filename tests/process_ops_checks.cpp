@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include "platform/WindowsProcessOps.h"
+#include "platform/WinTime.h"
 
 using namespace tmog;
 
@@ -23,7 +24,7 @@ bool spawn_victim(ProcessIdentity& out, HANDLE& out_process) {
     out.pid = pi.dwProcessId;
     FILETIME c{}, e{}, k{}, u{};
     GetProcessTimes(pi.hProcess, &c, &e, &k, &u);
-    out.creation_tick = (static_cast<std::uint64_t>(c.dwHighDateTime) << 32) | c.dwLowDateTime;
+    out.creation_tick = win::filetime_to_tick(c);
     out_process = pi.hProcess;
     CloseHandle(pi.hThread);
     return true;
@@ -46,7 +47,7 @@ int main() {
         self.pid = GetCurrentProcessId();
         FILETIME c{}, e{}, k{}, u{};
         GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u);
-        self.creation_tick = (static_cast<std::uint64_t>(c.dwHighDateTime) << 32) | c.dwLowDateTime;
+        self.creation_tick = win::filetime_to_tick(c);
         auto r = ops.terminate(self, 0);
         check(r.result == KillResult::SelfTarget, "reject self (SelfTarget)");
     }
@@ -128,9 +129,7 @@ int main() {
                 FILETIME c{}, e{}, k{}, u{};
                 GetProcessTimes(probe, &c, &e, &k, &u);
                 CloseHandle(probe);
-                ProcessIdentity target{
-                    csrss_pid,
-                    (static_cast<std::uint64_t>(c.dwHighDateTime) << 32) | c.dwLowDateTime};
+                ProcessIdentity target{csrss_pid, win::filetime_to_tick(c)};
                 auto r = ops.terminate(target, 0);
                 check(r.result == KillResult::CriticalTarget ||
                           r.result == KillResult::AccessDenied,

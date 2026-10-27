@@ -8,6 +8,7 @@
 #include "IProcessOps.h"
 
 class QTableView;
+class QSortFilterProxyModel;
 class QThread;
 
 namespace tmog {
@@ -39,9 +40,12 @@ private:
     void restore_selection();
     void invalidate_baseline();     // 基线作废：下帧整表"待采样"
     void show_kill_outcome(const KillOutcome& outcome);
+    // 视图当前行 → 源模型行（经代理 mapToSource；排序激活时视图行≠源行）
+    const SampledRow* current_source_row() const;
 
     QTableView* table_ = nullptr;
     ProcessTableModel* model_ = nullptr;
+    QSortFilterProxyModel* proxy_ = nullptr;
     QTimer sample_timer_;
 
     std::unique_ptr<IProcessEnumerator> enumerator_;

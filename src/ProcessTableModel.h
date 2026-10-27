@@ -22,9 +22,8 @@ public:
     QVariant data(const QModelIndex& index, int role) const override;
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
 
-    // 整表替换为新快照。返回被重置抹掉的旧行（供调用方恢复选中/基线决策）。
-    void replace_snapshot(std::vector<SampledRow> rows,
-                          std::vector<SampledRow>* old_rows_out = nullptr);
+    // 整表替换为新快照
+    void replace_snapshot(std::vector<SampledRow> rows);
 
     const SampledRow* row_at(int row) const;
 
