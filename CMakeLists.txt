@@ -56,6 +56,11 @@ if(WIN32)
         add_executable(close_lifecycle_checks tests/close_lifecycle_checks.cpp)
         target_link_libraries(close_lifecycle_checks PRIVATE tmog_core)
         add_test(NAME close_lifecycle_checks COMMAND close_lifecycle_checks)
+
+        # #16 采样失败区分/代际/忙碌检查（同 #14，Qt Core 事件循环）
+        add_executable(sampling_recovery_checks tests/sampling_recovery_checks.cpp)
+        target_link_libraries(sampling_recovery_checks PRIVATE tmog_core)
+        add_test(NAME sampling_recovery_checks COMMAND sampling_recovery_checks)
     endif()
 endif()
 

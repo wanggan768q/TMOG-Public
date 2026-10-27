@@ -3,3 +3,5 @@ build/
 build-debug/
 artifacts/
 *.png.orig
+build-16/
+build-16-debug/

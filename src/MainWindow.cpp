@@ -11,6 +11,8 @@
 #include <QSortFilterProxyModel>
 #include <QMessageBox>
 #include <QDateTime>
+#include <QStatusBar>
+#include <QThread>
 #include <utility>
 
 namespace tmog {
@@ -65,15 +67,41 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     QMetaObject::invokeMethod(this, &MainWindow::on_sample_tick, Qt::QueuedConnection);
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+    // #16 防御：正常路径 closeEvent 已确认两线程退出；若构造后未走
+    // closeEvent（如测试直接销毁），尽力等待在途结束线程（terminate 有限）。
+    if (kill_thread_) kill_thread_->wait(4000);
+}
 
 void MainWindow::on_sample_tick() {
-    if (!paused_ && enumerator_ && !closing_)
-        worker_.start(this, enumerator_.get(),
-                      [this](SampleResult result) { apply_sample(std::move(result)); },
-                      [] {
-                          // 采样失败：跳过本帧，下个 tick 重试；错误语义在状态栏后续补充
-                      });
+    // 定时器路径：暂停/关闭中不采样（手动刷新路径见 on_refresh_now）
+    if (!paused_ && !closing_) start_sample();
+}
+
+// #16：启动一次采样，捕获当前代际。结果回调先比对代际——暂停（代际递增）
+// 前发出的在途结果到达后被直接丢弃，不进入差分、不建立基线。
+void MainWindow::start_sample() {
+    if (worker_.busy() || closing_ || !enumerator_) return;   // 忙碌/关闭中不重入
+    const auto generation = sample_generation_;
+    worker_.start(this, enumerator_.get(),
+                  [this, generation](SampleResult result) {
+                      if (generation != sample_generation_) return;   // 跨代际旧结果：丢弃
+                      apply_sample(std::move(result));
+                      if (sample_failed_) {
+                          sample_failed_ = false;
+                          statusBar()->showMessage(tr("采样已恢复，基线已重建"), 3000);
+                      }
+                  },
+                  [this, generation](const std::string& error) {
+                      if (generation != sample_generation_) return;   // 跨代际失败：静默丢弃
+                      // 失败：保留上次数据显示（模型不动），基线作废——下个成功帧
+                      // 重建基线（不跨失败期差分稀释 CPU%），状态栏给出可见反馈。
+                      sample_failed_ = true;
+                      invalidate_baseline();
+                      statusBar()->showMessage(
+                          tr("采样失败：%1（保留上次数据）")
+                              .arg(QString::fromStdString(error)), 5000);
+                  });
 }
 
 void MainWindow::apply_sample(SampleResult result) {
@@ -122,15 +150,31 @@ const SampledRow* MainWindow::current_source_row() const {
 void MainWindow::on_pause_toggled(bool paused) {
     paused_ = paused;
     if (paused) {
-        // 暂停：基线作废，恢复后首帧整表"待采样"，差分不跨暂停期
+        // 暂停：代际递增——暂停前所有在途采样结果作废（快速暂停→恢复场景下
+        // 旧结果到达即被拒绝）；基线作废，恢复后首帧整表"待采样"。
+        ++sample_generation_;
+        invalidate_baseline();
+    } else {
+        // 恢复：基线也作废（暂停期手动刷新帧建立的基线不跨恢复差分），
+        // 下个 tick 正常采样并建立新基线
         invalidate_baseline();
     }
-    // 恢复：无额外动作，下个 tick 正常采样并建立新基线
 }
 
 void MainWindow::invalidate_baseline() { last_sample_.reset(); }
 
-void MainWindow::on_refresh_now() { on_sample_tick(); }
+// #16 手动刷新闭环：
+//  - 忙碌：拒绝重入并明确反馈（不叠加 worker，worker 内部也还有防线）。
+//  - 暂停：仍允许采一次（显示+可建立暂停期基线），paused_ 保持不变。
+//  - 关闭中：忽略。
+void MainWindow::on_refresh_now() {
+    if (closing_) return;
+    if (worker_.busy()) {
+        statusBar()->showMessage(tr("正在采样，请稍候…"), 2000);
+        return;
+    }
+    start_sample();
+}
 
 void MainWindow::on_selection_changed() {
     const auto* row = current_source_row();
@@ -147,9 +191,17 @@ void MainWindow::on_selection_changed() {
 }
 
 void MainWindow::on_end_task() {
-    const auto* row = current_source_row();
-    if (!row || !process_ops_) return;
-    const ProcessSnapshot& snap = row->snapshot;
+    if (!process_ops_) return;
+    // #16：先值拷贝目标身份——模态确认框期间 sample_timer_ 继续采样并
+    // replace_snapshot 重分配模型行，原 row/snap 指针会悬空；身份以值语义
+    // 持有，终止时再由平台层核实创建时间未变（PID 复用防御不受影响）。
+    const SampledRow* row = current_source_row();
+    if (!row) return;
+    const ProcessSnapshot snap = row->snapshot;
+    if (kill_thread_) {   // 已有结束操作在途：不叠加线程，给用户反馈
+        statusBar()->showMessage(tr("已有结束操作进行中，请稍候…"), 2000);
+        return;
+    }
 
     // 确认框：名称、PID、创建身份、未保存数据警告；取��不得执行
     const QDateTime created = QDateTime::fromMSecsSinceEpoch(
@@ -166,10 +218,25 @@ void MainWindow::on_end_task() {
         return;
     }
 
-    const auto outcome = process_ops_->terminate(snap.identity, /*wait_timeout_ms=*/3000);
-    show_kill_outcome(outcome);
-    if (outcome.result == KillResult::Ok || outcome.result == KillResult::Requested)
-        on_refresh_now();   // 立即刷新反映结果
+    // #16：terminate（含 WaitForSingleObject 退出确认，最多 3s）在一次性
+    // 工作线程执行，等待期间 GUI 保持响应（不冻结）。结果经队列连接回
+    // UI 线程展示；线程实际退出后由 finished 回调清指针。
+    statusBar()->showMessage(tr("正在结束进程…"));
+    auto* thread = QThread::create([this, identity = snap.identity]() {
+        const auto outcome = process_ops_->terminate(identity, /*wait_timeout_ms=*/3000);
+        QMetaObject::invokeMethod(this, [this, outcome]() {
+            statusBar()->clearMessage();
+            show_kill_outcome(outcome);
+            if (outcome.result == KillResult::Ok || outcome.result == KillResult::Requested)
+                on_refresh_now();   // 立即刷新反映结果
+        }, Qt::QueuedConnection);
+    });
+    kill_thread_ = thread;
+    connect(thread, &QThread::finished, this, [this, thread]() {
+        if (kill_thread_ == thread) kill_thread_ = nullptr;
+        thread->deleteLater();
+    });
+    thread->start();
 }
 
 void MainWindow::show_kill_outcome(const KillOutcome& outcome) {
@@ -213,6 +280,15 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         QMessageBox::warning(this, tr("退出"),
             tr("后台采样未能在 2 秒内结束，已取消关闭。请稍后重试。"));
         sample_timer_.start(1000);   // 恢复采样循环，用户可再次关闭
+        event->ignore();
+        return;
+    }
+    // #16：结束操作在途时同样有限等待（terminate 最长 3s + 余量）；超时
+    // 拒绝关闭，绝不带在途线程销毁（线程 lambda 捕获 this）。
+    if (kill_thread_ && !kill_thread_->wait(4000)) {
+        QMessageBox::warning(this, tr("退出"),
+            tr("结束进程操作未能在 4 秒内完成，已取消关闭。请稍后重试。"));
+        sample_timer_.start(1000);
         event->ignore();
         return;
     }
