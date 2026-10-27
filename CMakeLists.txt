@@ -36,6 +36,7 @@ if(WIN32)
 endif()
 
 if(TARGET Qt6::Widgets)
+    set(CMAKE_AUTOMOC ON)
     add_executable(TmogReplica
         src/main.cpp
         src/MainWindow.cpp
