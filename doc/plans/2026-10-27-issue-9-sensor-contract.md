@@ -7,8 +7,9 @@
 - **工作树**：`E:/Git/TMOG-Public-WorkTree/issue-9-sensor-contract`，分支 `issue-9-sensor-contract`，基线 `origin/main@246be01`
 - **执行**：TMOG-Dev 会话（#9 研究执行者）+ 后台官方文档研究代理
 - **详细 API 证据**：见同目录 [`2026-10-27-issue-9-sensor-contract-api-research.md`](./2026-10-27-issue-9-sensor-contract-api-research.md)（每条结论附官方 URL 与原文引用）
-- **硬约束遵守**：
+- **硬约束遵守（含一项例外，见 §8）**：
   - 未安装任何内核驱动或工具；未提权；未干预硬件；未运行原版 exe/补丁；未联系厂商授权服务或遥测
+  - **例外**：一次用户级环境变量写入（`GHIDRA_INSTALL_DIR`，属配置修改越界，详见 §8 环境事件；修改前旧值未核实）
   - CPU% 与瓦数严格分离；功耗不按 CPU% 估算
   - 不猜测 Intel P/E-core 品牌归属（官方 EfficiencyClass 语义与品牌名的差异见 §5.2）
 - **证据分层标记**：
@@ -46,7 +47,7 @@ v1.0.1 历史证据要点（不能当作 v1.1.0 已证明）：
 | 实测方式 | 只读 PowerShell：`CallNtPowerInformation` P/Invoke、`Get-Counter`、`Get-CimInstance`、结构体解析；未安装任何东西 |
 
 关键实测结果（详见 api-research.md §2/§4/§5）：
-1. `CurrentMhz` 全部 20 逻辑核钉死 = `MaxMhz`(3600)，同一时刻计数器 `Actual Frequency = 4545 MHz` → **CurrentMhz 不反映实测瞬时频率**【官方确认·行为有偏差】
+1. `CurrentMhz` 全部 20 逻辑核钉死 = `MaxMhz`(3600)，同一时刻计数器 `Actual Frequency = 4545 MHz` → **本机实测中 CurrentMhz 不反映实测瞬时频率**（该偏差仅证实于本测试机与本次采样场景，其他机型/负载/电源方案下行为未验证，见 §7）【官方确认·行为有偏差】
 2. 有效频率公式 `MaxMhz × %ProcessorPerformance/100` 与计数器读数吻合（3600×1.2625≈4545）【本机实测】
 3. `Energy Meter` 计数器集存在（RAPL 域，pkg≈75.5W 量级），但**无官方文档**【未知】
 4. `MSAcpi_ThermalZoneTemperature` 本机存在 1 个主板热区实例（TZ00 = 27.85°C），**非 CPU 专属**【本机实测存在】
@@ -69,10 +70,15 @@ v1.0.1 历史证据要点（不能当作 v1.1.0 已证明）：
 | P/E 等级区分 | `GetLogicalProcessorInformationEx(RelationProcessorCore).EfficiencyClass` | 等级 0..N | 静态 | 标准用户 | 高 | Win10+ | 官方文档确认 + 本机实测 |
 | SMT | 同上 `.Flags & LTP_PC_SMT` | 位 | 静态 | 标准用户 | 高 | Win7+ | 官方文档确认 |
 | **CPU 瓦数** | 无安全文档来源；唯一技术候选 = 未文档化 `\Energy Meter(rapl_package0_pkg)\Power` | 疑为 mW（未确认） | — | 未验证 | **低**（无官方承诺） | Intel RAPL only；VM 可能无实例 | **未知**（存在性本机实测，文档缺口） |
-| **GPU 瓦数** | DXGI 无接口；NVAPI/ADLX 厂商专有不采用 | — | — | — | — | — | **明确不可用（无安全来源）** |
+| **GPU 瓦数** | 标准 API（DXGI）无接口；NVML/ADLX 厂商 SDK 客观存在但被约束排除 | — | — | — | — | — | 本项目合同范围不可用（标准 API 无来源；不宣称全平台不可测） |
 | **CPU 温度** | WMI `MSAcpi_ThermalZoneTemperature`（root\WMI）`.CurrentTemperature` | 0.1 K → ÷10−273.15 | 慢速 5–10s | **可能需管理员**（官方无文档） | 低-中（OEM `_TZ` 依赖；本机只有主板热区） | 部分 OEM 机器 | 未知（本机实测存在，官方文档缺失→404） |
-| **GPU 温度** | DXGI 确认无；NVAPI/ADLX 不采用 | — | — | — | — | — | **明确不可用（无通用安全来源）** |
+| **GPU 温度** | 同上（DXGI 无接口；厂商 SDK 约束排除） | — | — | — | — | — | 本项目合同范围不可用（同上） |
 | CPU per-core 温度 | 需 MSR（Ring0）→ 内核驱动 | — | — | — | — | — | **明确不可用（违反约束）** |
+
+**术语与权限标注**：
+- **术语严格区分**：基准频率 = `MaxMhz`（标称最大）；上限频率 = `MhzLimit`（节流限制，本合同未单列展示）；有效频率 = `Actual Frequency`（动态实测口径）；报告频率 = `CurrentMhz`（P-state 请求口径）。四者不混用。
+- 矩阵中"标准用户"权限均为**官方文档承诺**（文档无特权要求即视为标准用户可用）；本会话为管理员会话，**标准用户会话行为未实测**（见 §7 限制 2）。
+- GPU 行"不可用"指**本项目合同范围**：标准 API 无来源 + 厂商 SDK 被"不访问厂商授权"约束排除；不宣称全平台/任何条件下都不可测。
 
 驱动路线排除证据：LibreHardwareMonitor/PawnIO/WinRing0 均依赖内核驱动执行 MSR 读取（api-research.md §4.7 引用其源码与 README）。
 
@@ -100,7 +106,7 @@ v1.0.1 历史证据要点（不能当作 v1.1.0 已证明）：
 
 ### 5.3 明确不可用（W23 显示"不可用"，不实现）
 
-- GPU 瓦数、GPU 温度、CPU per-core 温度：无安全来源，永不可用（除非未来出现官方新 API，另行修订合同）
+- GPU 瓦数、GPU 温度：本项目合同范围不可用（标准 API 无来源；厂商 SDK 客观存在但被约束排除，非"客观不存在"）；CPU per-core 温度：需 MSR/Ring0，架构上必须内核驱动，明确不可用。若未来出现官方新 API 或维护者修订约束，另行修订合同
 - CPU 瓦数：无文档化安全来源 → 默认不可用；是否启用实验字段见决策项 3
 
 ### 5.4 尽力而为字段（默认关闭，需决策）

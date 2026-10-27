@@ -55,7 +55,7 @@ typedef struct _PROCESSOR_POWER_INFORMATION {
 
 - 同一时刻：`CallNtPowerInformation` 返回全部 20 个逻辑核 `CurrentMhz = 3600 = MaxMhz`（数值钉死）；
 - 同期性能计数器 `\Processor Information(_Total)\Actual Frequency = 4545.12 MHz`、`% Processor Performance = 126.25`。
-- 结论：**CurrentMhz 实际反映的是请求的 P-state/标称节流值，不是实测瞬时频率**。文档中 "multiplied by the current processor throttle" 的字面含义与 Win11 实际行为不符——它基本不随负载波动。与任务书假设"是否实际只反映请求的 P-state"一致：**确认**。
+- 结论：**在本机（Win11 26200，该 Intel 平台，本次采样场景）CurrentMhz 实际反映的是请求的 P-state/标称节流值，不是实测瞬时频率**。文档中 "multiplied by the current processor throttle" 的字面含义与本机实测行为不符——它基本不随负载波动。该行为偏差仅证实于本测试机与本次采样场景；其他机型/负载/电源方案下是否一致为【未知】。与任务书假设"是否实际只反映请求的 P-state"在本机一致：**确认（限本机实测）**。
 - 另实测首次调用缓冲区不足返回 `0xC0000023` (STATUS_BUFFER_TOO_SMALL)，缓冲区需 `24 × 逻辑核数` 字节（6×ULONG）。
 
 ### 2.2 PowerInformation(ProcessorInformation) 与 CallNtPowerInformation 的区别 【官方文档确认】
@@ -301,7 +301,7 @@ ACPI\ThermalZone\TZ00_0               3010    → 301.0 K = 27.85 °C
 
 - per-core 温度读数依赖 MSR（IA32_THERM_STATUS 0x19C、MSR_TEMPERATURE_TARGET 等），用户态不可直接访问（Ring0 指令 RDMSR）。LibreHardwareMonitor 源码证实其 per-core 温度走 `ioctl_read_msr` 内核模块（见 4.7）。
 - Intel DPTF（Dynamic Tuning Framework）是 OEM/驱动侧方案，无用户态公开 API。
-- → **明确不可用（无安全来源）**。
+- → **明确不可用（架构上必须内核驱动，违反约束）**。per-core 温度在用户态无标准 API 是架构事实（RDMSR 为 Ring0 指令）；不涉及厂商 SDK 存在性判断。
 
 ### 5.4 GPU 温度 【官方文档确认：DXGI 无温度接口】
 
@@ -351,9 +351,9 @@ ACPI\ThermalZone\TZ00_0               3010    → 301.0 K = 27.85 °C
 | 睡眠/恢复通知 | PowerRegisterSuspendResumeNotification（回调，Win8+）或 WM_POWERBROADCAST(PBT_APMSUSPEND/RESUME) | 事件 | 注册即得 | 无 | 高 | 全平台 Win8+ | 【官方文档确认】 |
 | 电源源变更通知 | RegisterPowerSettingNotification(GUID_ACDC_POWER_SOURCE) → WM_POWERBROADCAST | 事件（PoAc/PoDc/PoHot） | 注册即得 | 无 | 高 | 全平台 Vista+ | 【官方文档确认】 |
 | CPU 瓦数 | **无安全来源**；唯一候选 = `\Energy Meter(rapl_package0_pkg)\Power`（未文档化） | 实测值疑为 mW（未确认） | 若做：1–2s，可降级 | 管理员未验证（本机管理员下可读） | **低**（未文档化，Microsoft 不承诺） | Intel-only（RAPL）、VM 可能无实例 | 【本机实测存在】【官方文档缺口】 |
-| GPU 瓦数 | **无安全来源**（DXGI 无接口；NVAPI/ADLX 厂商专有不采用） | — | — | — | — | — | 【明确不可用（无安全来源）】 |
+| GPU 瓦数 | 标准 API（DXGI）无接口；NVML/ADLX 厂商 SDK 客观存在但被本项目约束排除 | — | — | — | — | — | 本项目合同范围不可用（不宣称全平台不可测） |
 | CPU 温度 | WMI `MSAcpi_ThermalZoneTemperature`(root\WMI).CurrentTemperature | 十分之一开尔文 → ÷10−273.15 得 °C | 慢速（5–10s），温度变化慢 | 可能需管理员（官方无文档） | 低-中（OEM 依赖，多数机器只有主板热区或缺失） | OEM ACPI _TZ 支持的机器；Win32_TemperatureProbe 官方声明不填充 | 【本机实测存在】【官方文档缺失】 |
-| GPU 温度 | **无通用来源**（DXGI 确认无；NVAPI/ADLX 厂商专有不采用） | — | — | — | — | — | 【明确不可用（无通用来源）】 |
+| GPU 温度 | 同上（DXGI 无接口；厂商 SDK 约束排除） | — | — | — | — | — | 本项目合同范围不可用（同上） |
 | P/E-core 区分 | GetLogicalProcessorInformationEx(RelationProcessorCore).EfficiencyClass（Win10+） | 等级值（0=highest efficiency） | 静态 | 无 | 高（官方语义 + 本机 8P+4E 实测吻合） | Win10+；语义是性能等级，非 Intel 品牌名 | 【官方文档确认】【本机实测】 |
 | SMT/超线程 | 同上 .Flags & LTP_PC_SMT | 位 | 静态 | 无 | 高 | 全平台 Win7+ | 【官方文档确认】 |
 
