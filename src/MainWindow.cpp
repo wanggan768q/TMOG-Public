@@ -170,6 +170,7 @@ const SampledRow* MainWindow::current_source_row() const {
 }
 
 void MainWindow::on_pause_toggled(bool paused) {
+    paused_ = paused;
     if (paused) {
         // 暂停：基线作废，恢复后首帧整表"待采样"，差分不跨暂停期
         invalidate_baseline();
