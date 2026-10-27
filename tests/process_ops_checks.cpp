@@ -1,5 +1,7 @@
-// M3 检查：结束进程安全语义。成功路径只针对专门创建的可丢弃子进程，
-// 绝不实际结束系统关键进程。验证：拒绝自身、身份变化拒绝、正常结束+退出确认。
+// M3 检查（#5 修订）：结束进程安全语义。成功路径只针对专门创建的可丢弃子进程，
+// 绝不对真实关键系统进程调用终止。验证：拒绝自身、受控身份变化精确 IdentityChanged
+// 且子进程存活、关键性拒绝（注入判定 + csrss 只读核实）、正常结束+退出确认、
+// 不存在 PID 优雅失败。全部用例失败路径均清理子进程。
 #include <windows.h>
 #include <tlhelp32.h>
 #include <iostream>
@@ -30,19 +32,58 @@ bool spawn_victim(ProcessIdentity& out, HANDLE& out_process) {
     return true;
 }
 
+struct VictimGuard {
+    ProcessIdentity identity{};
+    HANDLE handle = nullptr;
+    bool alive = false;
+
+    bool spawn() {
+        alive = spawn_victim(identity, handle);
+        return alive;
+    }
+    // 任何退出路径清理：还活着就结束并等待，避免遗留测试进程
+    ~VictimGuard() {
+        if (handle) {
+            if (alive) {
+                TerminateProcess(handle, 1);
+                WaitForSingleObject(handle, 5000);
+            }
+            CloseHandle(handle);
+        }
+    }
+};
+
+// 只读确认子进程仍存活（WAIT_TIMEOUT = 未退出）
+bool still_alive(HANDLE h) {
+    return WaitForSingleObject(h, 0) == WAIT_TIMEOUT;
+}
+
+// 测试注入：恒判为关键 → 验证拒绝分支，不触碰任何真实系统进程
+bool always_critical(HANDLE) { return true; }
+
 int failures = 0;
 void check(bool ok, const char* what) {
     std::cout << (ok ? "PASS" : "FAIL") << ": " << what << "\n";
     if (!ok) ++failures;
 }
 
+// 关键性只读核实：csrss 的 BreakOnTermination 标志应恒为真（不打扰进程本身）
+bool read_critical_flag(HANDLE h) {
+    using NtQIPFn = LONG(WINAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) return false;
+    auto fn = reinterpret_cast<NtQIPFn>(GetProcAddress(ntdll, "NtQueryInformationProcess"));
+    if (!fn) return false;
+    ULONG flag = 0;
+    return fn(h, 29, &flag, sizeof(flag), nullptr) == 0 && flag != 0;
+}
+
 } // namespace
 
 int main() {
-    WindowsProcessOps ops;
-
     // 1. 拒绝自身
     {
+        WindowsProcessOps ops;
         ProcessIdentity self{};
         self.pid = GetCurrentProcessId();
         FILETIME c{}, e{}, k{}, u{};
@@ -52,62 +93,46 @@ int main() {
         check(r.result == KillResult::SelfTarget, "reject self (SelfTarget)");
     }
 
-    // 2. 身份变化拒绝：用真 PID + 错误创建时间
+    // 2. 身份变化拒绝（受控）：自建子进程 + 错误创建身份 → 精确 IdentityChanged，
+    //    且子进程仍存活（终止未发生）；随后用正确身份正常清理。
     {
-        ProcessIdentity fake{GetCurrentProcessId(), 12345};
-        auto r = ops.terminate(fake, 0);
-        // 自身检查先命中也可能（同一 pid 但身份不匹配 → 先 SelfTarget? 顺序：SelfTarget 在先）
-        // 用一个非自身的真实进程更纯粹——用 explorer 或任一进程 + 伪造时间
-        DWORD pid = 0;
-        // 找任意非自身进程
-        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (snap != INVALID_HANDLE_VALUE) {
-            PROCESSENTRY32W e32{};
-            e32.dwSize = sizeof(e32);
-            if (Process32FirstW(snap, &e32)) {
-                do {
-                    if (e32.th32ProcessID != GetCurrentProcessId()) { pid = e32.th32ProcessID; break; }
-                } while (Process32NextW(snap, &e32));
-            }
-            CloseHandle(snap);
-        }
-        if (pid) {
-            ProcessIdentity wrong{pid, 1};   // 创建时间必然不匹配
-            auto r2 = ops.terminate(wrong, 0);
-            check(r2.result == KillResult::IdentityChanged || r2.result == KillResult::AccessDenied,
-                  "identity mismatch rejected (IdentityChanged or AccessDenied)");
-        }
-    }
-
-    // 3. 正常结束可丢弃子进程 + 退出确认
-    {
-        ProcessIdentity victim{};
-        HANDLE victim_handle = nullptr;
-        if (spawn_victim(victim, victim_handle)) {
-            // CREATE_SUSPENDED 创建；挂起进程同样可被 TerminateProcess 结束
-            auto r = ops.terminate(victim, 5000);
-            check(r.result == KillResult::Ok, "terminate disposable child confirmed Ok");
-            DWORD code = 0;
-            GetExitCodeProcess(victim_handle, &code);
-            check(code == 1, "exit code is the termination code (1)");
-            CloseHandle(victim_handle);
+        WindowsProcessOps ops;
+        VictimGuard victim;
+        if (victim.spawn()) {
+            ProcessIdentity wrong = victim.identity;
+            wrong.creation_tick += 1;   // 必然不匹配
+            auto r = ops.terminate(wrong, 0);
+            check(r.result == KillResult::IdentityChanged,
+                  "wrong identity on disposable child returns exactly IdentityChanged");
+            check(still_alive(victim.handle),
+                  "child still alive after identity-mismatch rejection");
+            // 恢复正确身份后可正常清理（走 terminate 确认路径）
+            auto ok = ops.terminate(victim.identity, 5000);
+            check(ok.result == KillResult::Ok, "correct identity terminates child Ok");
+            victim.alive = false;   // 已被 terminate 结束，析构不再重复终止
         } else {
-            check(false, "spawn victim process");
+            check(false, "spawn victim for identity test");
         }
     }
 
-    // 4. 不存在的 PID → Failed（不是崩溃、不是 Ok）
+    // 3. 关键性拒绝（受控边界）：注入"恒为关键"判定 → 对自建子进程精确返回
+    //    CriticalTarget 且子进程存活。真实关键进程（csrss）仅做只读标志核实，
+    //    从不调用 terminate / OpenProcess(PROCESS_TERMINATE)。
     {
-        ProcessIdentity ghost{0x7FFFFFFF, 1};
-        auto r = ops.terminate(ghost, 0);
-        check(r.result == KillResult::Failed || r.result == KillResult::AccessDenied,
-              "nonexistent pid fails gracefully");
-    }
+        VictimGuard victim;
+        if (victim.spawn()) {
+            WindowsProcessOps critical_ops(&always_critical);
+            auto r = critical_ops.terminate(victim.identity, 0);
+            check(r.result == KillResult::CriticalTarget,
+                  "critical-injected rejection returns exactly CriticalTarget");
+            check(still_alive(victim.handle),
+                  "child still alive after critical rejection");
+            // 子进程保留存活，交给析构清理（覆盖失败路径清理）
+        } else {
+            check(false, "spawn victim for critical rejection test");
+        }
 
-    // 5. 关键进程检测：查 csrss.exe（Windows 会话管理器，必定 critical）→ CriticalTarget
-    //    或 OpenProcess 被拒（受保护进程）→ AccessDenied；两者都是"拒绝"语义。
-    //    不实际尝试结束它——��验证我们会在终止前拒绝。
-    {
+        // csrss 只读核实：BreakOnTermination 为真，证明关键性查询边界真实有效
         DWORD csrss_pid = 0;
         HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (snap != INVALID_HANDLE_VALUE) {
@@ -123,22 +148,44 @@ int main() {
             CloseHandle(snap);
         }
         if (csrss_pid) {
-            // 拿真实创建时间：如果连身份核实都过不了，说明身份防线先拦住（也算拒绝）
+            // 仅 QUERY_LIMITED_INFORMATION，无终止权限，对进程无副作用
             HANDLE probe = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, csrss_pid);
             if (probe) {
-                FILETIME c{}, e{}, k{}, u{};
-                GetProcessTimes(probe, &c, &e, &k, &u);
+                check(read_critical_flag(probe),
+                      "csrss BreakOnTermination verified read-only (no terminate call)");
                 CloseHandle(probe);
-                ProcessIdentity target{csrss_pid, win::filetime_to_tick(c)};
-                auto r = ops.terminate(target, 0);
-                check(r.result == KillResult::CriticalTarget ||
-                          r.result == KillResult::AccessDenied,
-                      "critical process (csrss) rejected before terminate");
             } else {
-                check(true, "critical process (csrss) not even openable (denied)");
+                check(GetLastError() == ERROR_ACCESS_DENIED,
+                      "csrss query denied (protected surface, not terminated)");
             }
         } else {
-            std::cout << "NOTE: csrss not found, critical test skipped\n";
+            std::cout << "NOTE: csrss not found; read-only verification unavailable this run\n";
+            check(false, "csrss present for read-only critical verification");
+        }
+    }
+
+    // 4. 不存在的 PID → Failed（不是崩溃、不是 Ok）
+    {
+        WindowsProcessOps ops;
+        ProcessIdentity ghost{0x7FFFFFFF, 1};
+        auto r = ops.terminate(ghost, 0);
+        check(r.result == KillResult::Failed || r.result == KillResult::AccessDenied,
+              "nonexistent pid fails gracefully");
+    }
+
+    // 5. 正常结束可丢弃子进程 + 退出确认（回归既有受控终止检查）
+    {
+        WindowsProcessOps ops;
+        VictimGuard victim;
+        if (victim.spawn()) {
+            auto r = ops.terminate(victim.identity, 5000);
+            check(r.result == KillResult::Ok, "terminate disposable child confirmed Ok");
+            DWORD code = 0;
+            GetExitCodeProcess(victim.handle, &code);
+            check(code == 1, "exit code is the termination code (1)");
+            victim.alive = false;
+        } else {
+            check(false, "spawn victim for terminate test");
         }
     }
 

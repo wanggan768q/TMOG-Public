@@ -16,10 +16,10 @@ bool get_self_identity(ProcessIdentity& out) {
     return true;
 }
 
-bool is_critical_process(HANDLE h) {
-    // 关键进程检测：NtQueryInformationProcess(ProcessBreakOnTermination)。
-    // 注：IsProcessCritical 在本机 Win11 26200 的 ntdll 导出表中不存在，
-    // 改用底层等价查询；查询失败（status != 0）视为无法核实 → 拒绝（M3.3 规则）。
+// 关键性判定：NtQueryInformationProcess(ProcessBreakOnTermination)。
+// 注：IsProcessCritical 在本机 Win11 26200 的 ntdll 导出表中不存在，
+// 改用底层等价查询；查询失败（status != 0）视为无法核实 → 拒绝（M3.3 规则）。
+bool query_critical_impl(HANDLE h) {
     using NtQIPFn = LONG(WINAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
     static NtQIPFn fn = []() -> NtQIPFn {
         HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -36,6 +36,11 @@ bool is_critical_process(HANDLE h) {
 }
 
 } // namespace
+
+bool is_process_critical(HANDLE process) { return query_critical_impl(process); }
+
+WindowsProcessOps::WindowsProcessOps(CriticalityFn criticality_override)
+    : criticality_(criticality_override ? criticality_override : query_critical_impl) {}
 
 KillOutcome WindowsProcessOps::terminate(const ProcessIdentity& target, int wait_timeout_ms) {
     // 1. 拒绝自身
@@ -66,8 +71,8 @@ KillOutcome WindowsProcessOps::terminate(const ProcessIdentity& target, int wait
                 "creation time mismatch: PID was reused since snapshot"};
     }
 
-    // 3. 拒绝关键/受保护进程
-    if (is_critical_process(h)) {
+    // 3. 拒绝关键/受保护进程（判定可注入，默认真实查询）
+    if (criticality_(h)) {
         CloseHandle(h);
         return {KillResult::CriticalTarget, "process is critical or protected"};
     }
