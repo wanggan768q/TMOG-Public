@@ -1,0 +1,439 @@
+{
+  "repository": "wanggan768q/TMOG-Public",
+  "tickets": {
+    "W01": {
+      "number": 5,
+      "title": "[Windows W01] Windows Release 有效检查与安全测试目标",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/5"
+    },
+    "W02": {
+      "number": 6,
+      "title": "[Windows W02] Windows 便携包许可证与干净环境检查",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/6"
+    },
+    "W11": {
+      "number": 7,
+      "title": "[Windows W11] 进程网络指标可行性与权限合同",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/7"
+    },
+    "W20": {
+      "number": 8,
+      "title": "[Windows W20] Connections 页面证据与范围合同",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/8"
+    },
+    "W22": {
+      "number": 9,
+      "title": "[Windows W22] Power & Freq 传感器能力与范围合同",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/9"
+    },
+    "W24": {
+      "number": 10,
+      "title": "[Windows W24] Benchmarks 行为与安全测试合同",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/10"
+    },
+    "W10": {
+      "number": 11,
+      "title": "[Windows W10] 进程磁盘 I/O 指标",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/11"
+    },
+    "W30": {
+      "number": 12,
+      "title": "[Windows W30] Windows ARM64 构建与实机验收",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/12"
+    },
+    "W32": {
+      "number": 13,
+      "title": "[Windows W32] 结束确认跨刷新时冻结目标身份",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/13"
+    },
+    "W33": {
+      "number": 14,
+      "title": "[Windows W33] 关闭窗口收束后台采样生命周期",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/14"
+    },
+    "W35": {
+      "number": 15,
+      "title": "[Windows W35] MSVC x64 构建与发布验证",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/15"
+    },
+    "W34": {
+      "number": 16,
+      "title": "[Windows W34] 采样失败、快速暂停恢复与手动刷新闭环",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/16"
+    },
+    "W03": {
+      "number": 17,
+      "title": "[Windows W03] 页面导航与本地显示设置",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/17"
+    },
+    "W09": {
+      "number": 18,
+      "title": "[Windows W09] 进程搜索、树形层级与详情",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/18"
+    },
+    "W04": {
+      "number": 19,
+      "title": "[Windows W04] 系统 CPU／内存实时性能页",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/19"
+    },
+    "W13": {
+      "number": 20,
+      "title": "[Windows W13] System Info 只读系统信息页",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/20"
+    },
+    "W14": {
+      "number": 21,
+      "title": "[Windows W14] Startup apps 只读启动项页",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/21"
+    },
+    "W15": {
+      "number": 22,
+      "title": "[Windows W15] Users 只读会话页",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/22"
+    },
+    "W16": {
+      "number": 23,
+      "title": "[Windows W16] Services 只读服务页",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/23"
+    },
+    "W18": {
+      "number": 24,
+      "title": "[Windows W18] Installed Apps 只读应用清单",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/24"
+    },
+    "W19": {
+      "number": 25,
+      "title": "[Windows W19] Disk Space 容量页",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/25"
+    },
+    "W21": {
+      "number": 26,
+      "title": "[Windows W21] Connections 本机连接查看",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/26"
+    },
+    "W23": {
+      "number": 27,
+      "title": "[Windows W23] Power & Freq 真实数据页",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/27"
+    },
+    "W25": {
+      "number": 28,
+      "title": "[Windows W25] Benchmarks 有界运行与结果页",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/28"
+    },
+    "W28": {
+      "number": 29,
+      "title": "[Windows W28] 系统外观与六种显示主题",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/29"
+    },
+    "W36": {
+      "number": 30,
+      "title": "[Windows W36] Drivers 只读驱动信息页",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/30"
+    },
+    "W05": {
+      "number": 31,
+      "title": "[Windows W05] 逻辑处理器与 NUMA 性能视图",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/31"
+    },
+    "W06": {
+      "number": 32,
+      "title": "[Windows W06] 磁盘活动性能视图",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/32"
+    },
+    "W07": {
+      "number": 33,
+      "title": "[Windows W07] 网络接口性能视图",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/33"
+    },
+    "W17": {
+      "number": 34,
+      "title": "[Windows W17] 服务启动／停止的安全交互",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/34"
+    },
+    "W29": {
+      "number": 35,
+      "title": "[Windows W29] 自监控与开销验证",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/35"
+    },
+    "W08": {
+      "number": 36,
+      "title": "[Windows W08] Summary 系统总览",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/36"
+    },
+    "W12": {
+      "number": 37,
+      "title": "[Windows W12] 进程网络活动展示",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/37"
+    },
+    "W26": {
+      "number": 38,
+      "title": "[Windows W26] Flight Recorder 录制与安全保存",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/38"
+    },
+    "W27": {
+      "number": 39,
+      "title": "[Windows W27] Flight Recorder 打开、定位与回放",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/39"
+    },
+    "W31": {
+      "number": 40,
+      "title": "[Windows W31] Windows 完整功能矩阵与发布验收",
+      "url": "https://github.com/wanggan768q/TMOG-Public/issues/40"
+    }
+  },
+  "edges": [
+    "W10<-W01",
+    "W30<-W01",
+    "W30<-W02",
+    "W32<-W01",
+    "W33<-W01",
+    "W35<-W01",
+    "W35<-W02",
+    "W34<-W01",
+    "W34<-W33",
+    "W03<-W34",
+    "W09<-W32",
+    "W09<-W34",
+    "W04<-W01",
+    "W04<-W03",
+    "W13<-W03",
+    "W14<-W03",
+    "W15<-W03",
+    "W16<-W03",
+    "W18<-W03",
+    "W19<-W03",
+    "W21<-W03",
+    "W21<-W20",
+    "W23<-W03",
+    "W23<-W22",
+    "W25<-W03",
+    "W25<-W24",
+    "W28<-W03",
+    "W36<-W03",
+    "W05<-W04",
+    "W06<-W04",
+    "W07<-W04",
+    "W17<-W16",
+    "W17<-W01",
+    "W29<-W04",
+    "W08<-W04",
+    "W08<-W06",
+    "W08<-W07",
+    "W12<-W01",
+    "W12<-W07",
+    "W12<-W11",
+    "W26<-W04",
+    "W26<-W06",
+    "W26<-W07",
+    "W26<-W23",
+    "W27<-W26",
+    "W31<-W02",
+    "W31<-W05",
+    "W31<-W08",
+    "W31<-W09",
+    "W31<-W10",
+    "W31<-W12",
+    "W31<-W13",
+    "W31<-W14",
+    "W31<-W15",
+    "W31<-W17",
+    "W31<-W18",
+    "W31<-W19",
+    "W31<-W21",
+    "W31<-W23",
+    "W31<-W25",
+    "W31<-W27",
+    "W31<-W28",
+    "W31<-W29",
+    "W31<-W30",
+    "W31<-W32",
+    "W31<-W33",
+    "W31<-W34",
+    "W31<-W35",
+    "W31<-W36"
+  ],
+  "edge_errors": [],
+  "verification": [
+    {
+      "id": "W01",
+      "number": 5,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W02",
+      "number": 6,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W11",
+      "number": 7,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W20",
+      "number": 8,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W22",
+      "number": 9,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W24",
+      "number": 10,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W10",
+      "number": 11,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W30",
+      "number": 12,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W32",
+      "number": 13,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W33",
+      "number": 14,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W35",
+      "number": 15,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W34",
+      "number": 16,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W03",
+      "number": 17,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W09",
+      "number": 18,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W04",
+      "number": 19,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W13",
+      "number": 20,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W14",
+      "number": 21,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W15",
+      "number": 22,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W16",
+      "number": 23,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W18",
+      "number": 24,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W19",
+      "number": 25,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W21",
+      "number": 26,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W23",
+      "number": 27,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W25",
+      "number": 28,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W28",
+      "number": 29,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W36",
+      "number": 30,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W05",
+      "number": 31,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W06",
+      "number": 32,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W07",
+      "number": 33,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W17",
+      "number": 34,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W29",
+      "number": 35,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W08",
+      "number": 36,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W12",
+      "number": 37,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W26",
+      "number": 38,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W27",
+      "number": 39,
+      "native_dependencies_verified": true
+    },
+    {
+      "id": "W31",
+      "number": 40,
+      "native_dependencies_verified": true
+    }
+  ]
+}
