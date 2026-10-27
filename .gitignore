@@ -1,1 +1,4 @@
 .*/
+build/
+artifacts/
+*.png.orig
