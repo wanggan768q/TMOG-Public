@@ -53,4 +53,17 @@ if(TARGET Qt6::Widgets)
         WIN32_EXECUTABLE ON
         MACOSX_BUNDLE ON
     )
+
+    # M4：Windows 便携目录（windeployqt 收集 Qt 运行库与插件）
+    if(WIN32)
+        find_program(WINDEPLOYQT_EXE windeployqt HINTS "${Qt6_DIR}/../../../bin")
+        if(WINDEPLOYQT_EXE)
+            add_custom_command(TARGET TmogReplica POST_BUILD
+                COMMAND "${WINDEPLOYQT_EXE}" --no-translations
+                        --no-system-d3d-compiler --no-opengl-sw
+                        "$<TARGET_FILE:TmogReplica>"
+                COMMENT "windeployqt: collecting Qt runtime for portable dir"
+            )
+        endif()
+    endif()
 endif()
