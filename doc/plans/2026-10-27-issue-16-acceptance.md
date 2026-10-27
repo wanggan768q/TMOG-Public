@@ -82,7 +82,7 @@ SMOKE: terminated cleanly
 | 暂停+忙碌 | 拒绝重入，状态栏反馈 | — |
 | 关闭中 | 忽略 | 不启动 |
 
-失败语义：失败帧保留上次数据（模型不动）+ 状态栏错误 5s；下个成功帧重建基线 + "采样已恢复" 3s。暂停/恢复均作废基线；暂停额外递增代际使在途结果作废。
+失败语义（G5 修订，替代早期"5s toast"语义）：失败帧保留上次数据（模型不动）+ **状态栏持久 widget 标注"数据已陈旧（采样失败：<错误>）"**（`QStatusBar::addPermanentWidget`，不被 busy/"正在结束进程…"等临时 showMessage 隐藏），**持续到当前代际真实成功帧清除**——worker 迟缓/挂起时标注不消失，旧表不冒充当前数据。旧代际成功帧不清除陈旧（代际守卫）；恢复成功帧立即清除陈旧，**无"恢复3秒"延时 timer**（避免延时回调误清后续新失败的竞态，协调者确认的简化）。暂停/恢复均作废基线；暂停额外递增代际使在途结果作废。
 
 ## 6. 支持限制
 
@@ -114,3 +114,36 @@ SMOKE: terminated cleanly
 ### 8.2 #13 表述矛盾澄清（记录修正，无代码变更）
 
 见 §6"#13 关系澄清"：按值捕获为 #16 异步操作所必需（修模态框期间 `replace_snapshot` 重分配导致的悬空引用），与 #13 修复代码重叠但 #13 分支/检查/验收未在本票交付，#13 保持 OPEN。
+
+## 9. G5 修复：持久陈旧标注（审查记录 2162ad5 同票门槛，2026-10-27 第三轮）
+
+### 9.1 实现变更
+
+- `MainWindow`：状态栏新增持久 `QLabel`（`addPermanentWidget`）。失败回调置"数据已陈旧（采样失败：<错误>）"并显示；**当前代际真实成功帧立即清除**（无延时 timer）。临时消息（busy "正在采样，请稍候…"、"正在结束进程…"）走 `showMessage`，不隐藏/覆盖持久 widget。
+- 移除早期"采样已恢复 3s"toast（协调者确认简化：真实成功即清陈旧，避免延时回调误清后续新失败）。
+- `MainWindow` 构造函数新增 `enumerator_override` 参数（仅检查注入用；生产路径默认值不受影响）。
+- 复查遗留：G5 前的失败 toast（5s showMessage）已整体替换为持久标注。
+
+### 9.2 运行检查 C6（`tests/stale_persistence_checks.cpp`，新增）
+
+离屏**真实 MainWindow**（`QT_QPA_PLATFORM=offscreen`，ctest 环境注入）+ **生产 SamplingWorker** + 受控枚举器注入（Hang 步真实阻塞，时间由检查主线程实测推进）——走生产状态呈现路径（widget text/visible 属性），非静态布尔模拟。Debug+Release 均通过：
+
+```
+PASS: D1: stale label exists in status bar
+PASS: D1: stale annotation visible right after failure
+PASS: D1: real time advanced >=5s (measured)          ← 实测推进≥5s（真实时间）
+PASS: D1: stale still visible after >5s with no callback (persistent)
+PASS: D2: permanent stale widget visible during busy temp message
+PASS: D3: stale visible after failure
+PASS: D3: pause action found (production path)
+PASS: D3: stale NOT cleared by out-of-generation success  ← 暂停窗口释放旧代际帧（时序确定）
+PASS: D4: stale cleared by current-generation real success (no timer)
+```
+
+ctest 全套：Debug 6/6、Release 6/6 通过（新增 stale_persistence_checks；既有 5 项无回归）。
+
+### 9.3 证据边界与已知事项
+
+- C6 为**离屏运行检查**（真实 MainWindow/SamplingWorker/事件循环/真实时间推进），不充当**物理桌面视觉验收**——状态栏标注的人工视觉确认仍在 §4 人工清单。
+- 检查启动依赖 `qoffscreen.dll`：该插件由 windeployqt 为 TmogReplica 部署时未包含（仅 windows 插件），构建后需复制 `Qt/6.12.0/mingw_64/plugins/platforms/qoffscreen.dll` 到构建目录 `platforms/`（本次 Debug/Release 均已手动复制；缺失时进程静默挂起——已在开发过程如实定位）。
+- 早期 D3 首版 FAIL 原因（记录）：旧代际成功帧与恢复后当前代际帧的投递时序竞争；修正为"暂停窗口内释放旧代际帧"（暂停中 tick 不起帧，断言窗口无当前代际成功）——非产品缺陷，检查时序设计问题。

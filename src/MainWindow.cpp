@@ -11,13 +11,16 @@
 #include <QSortFilterProxyModel>
 #include <QMessageBox>
 #include <QDateTime>
+#include <QLabel>
 #include <QStatusBar>
 #include <QThread>
 #include <utility>
 
 namespace tmog {
 
-MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+MainWindow::MainWindow(QWidget* parent,
+                       std::unique_ptr<IProcessEnumerator> enumerator_override)
+    : QMainWindow(parent) {
     model_ = new ProcessTableModel(this);
     proxy_ = new QSortFilterProxyModel(this);
     proxy_->setSourceModel(model_);
@@ -47,11 +50,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     // 平台枚举器与进程操作：编译期选择
     core_count_ = 0;
+    if (enumerator_override) {
+        // 检查注入（G5）：受控枚举器驱动生产采样路径（真实 worker/事件循环）。
+        core_count_ = 4;   // 注入路径无平台枚举器可询，取常数（检查不依赖核数）
+        enumerator_ = std::move(enumerator_override);
+    }
 #if defined(_WIN32)
-    auto* we = new WindowsProcessEnumerator();
-    core_count_ = we->logical_processor_count();
-    enumerator_.reset(we);
-    process_ops_ = std::make_unique<WindowsProcessOps>();
+    if (!enumerator_) {
+        auto* we = new WindowsProcessEnumerator();
+        core_count_ = we->logical_processor_count();
+        enumerator_.reset(we);
+        process_ops_ = std::make_unique<WindowsProcessOps>();
+    }
 #elif defined(__APPLE__)
     enumerator_ = std::make_unique<MacProcessEnumerator>();
     process_ops_ = std::make_unique<MacProcessOps>();
@@ -62,6 +72,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(&sample_timer_, &QTimer::timeout, this, &MainWindow::on_sample_tick);
     sample_timer_.start(1000);   // 1/sec，对应原版 Normal — 1/sec
+
+    // #16 G5：持久陈旧标注。addPermanentWidget 的 widget 不被临时 showMessage
+    // 隐藏——失败标注在 busy/"正在结束进程…"等短时消息期间持续可见。
+    stale_label_ = new QLabel(this);
+    stale_label_->setVisible(false);
+    statusBar()->addPermanentWidget(stale_label_);
 
     // 触发首次采样
     QMetaObject::invokeMethod(this, &MainWindow::on_sample_tick, Qt::QueuedConnection);
@@ -88,19 +104,24 @@ void MainWindow::start_sample() {
                       if (generation != sample_generation_) return;   // 跨代际旧结果：丢弃
                       apply_sample(std::move(result));
                       if (sample_failed_) {
+                          // #16 G5：真实新样本成功才清陈旧——立即清除，无延时
+                          // timer（避免延时回调误清后续新失败）。旧代际成功
+                          // 在上方代际守卫已被丢弃，到此必为当前代际。
                           sample_failed_ = false;
-                          statusBar()->showMessage(tr("采样已恢复，基线已重建"), 3000);
+                          stale_label_->setVisible(false);
                       }
                   },
                   [this, generation](const std::string& error) {
                       if (generation != sample_generation_) return;   // 跨代际失败：静默丢弃
-                      // 失败：保留上次数据显示（模型不动），基线作废——下个成功帧
-                      // 重建基线（不跨失败期差分稀释 CPU%），状态栏给出可见反馈。
+                      // 失败：保留上次数据显示（模型不动），基线作废。陈旧标注
+                      // 为持久 widget（addPermanentWidget），持续到当前代际真实
+                      // 成功帧清除——worker 迟缓/挂起时不消失，旧表不冒充当前。
                       sample_failed_ = true;
                       invalidate_baseline();
-                      statusBar()->showMessage(
-                          tr("采样失败：%1（保留上次数据）")
-                              .arg(QString::fromStdString(error)), 5000);
+                      stale_label_->setText(
+                          tr("数据已陈旧（采样失败：%1）")
+                              .arg(QString::fromStdString(error)));
+                      stale_label_->setVisible(true);
                   });
 }
 

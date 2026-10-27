@@ -9,6 +9,7 @@
 #include "SamplingWorker.h"
 
 class QTableView;
+class QLabel;
 class QSortFilterProxyModel;
 class QThread;
 
@@ -22,7 +23,10 @@ class ProcessTableModel;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    // enumerator_override 仅检查用（G5）：注入受控枚举器驱动生产采样路径；
+    // 生产路径传默认值，编译期平台选择不受影响。
+    explicit MainWindow(QWidget* parent = nullptr,
+                        std::unique_ptr<IProcessEnumerator> enumerator_override = nullptr);
     ~MainWindow() override;
 
 protected:
@@ -48,6 +52,9 @@ private:
     ProcessTableModel* model_ = nullptr;
     QSortFilterProxyModel* proxy_ = nullptr;
     QTimer sample_timer_;
+    // #16 G5：持久陈旧标注（addPermanentWidget，不被临时 showMessage 隐藏/覆盖）。
+    // 失败置位，持续到当前代际真实成功帧清除；无"恢复3秒"timer。
+    QLabel* stale_label_ = nullptr;
 
     std::unique_ptr<IProcessEnumerator> enumerator_;
     std::unique_ptr<IProcessOps> process_ops_;

@@ -76,6 +76,20 @@ if(TARGET Qt6::Widgets)
         MACOSX_BUNDLE ON
     )
 
+    # #16 G5 检查：持久陈旧标注走生产呈现路径（离屏真实 MainWindow +
+    # 生产 SamplingWorker；GUI 目标可用时才有意义）。MainWindow.cpp 与
+    # TmogReplica 同源编入（非镜像）。
+    add_executable(stale_persistence_checks
+        tests/stale_persistence_checks.cpp
+        src/MainWindow.cpp
+        src/ProcessTableModel.cpp
+    )
+    target_link_libraries(stale_persistence_checks PRIVATE tmog_core Qt6::Widgets)
+    add_test(NAME stale_persistence_checks
+             COMMAND stale_persistence_checks)
+    set_tests_properties(stale_persistence_checks PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # M4：Windows 便携目录（windeployqt 收集 Qt 运行库与插件）
     if(WIN32)
         find_program(WINDEPLOYQT_EXE windeployqt HINTS "${Qt6_DIR}/../../../bin")
