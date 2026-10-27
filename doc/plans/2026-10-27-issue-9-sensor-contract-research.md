@@ -34,7 +34,7 @@
 | 睡眠/恢复 | `PowerRegisterSuspendResumeNotification`（PBT_APMSUSPEND / PBT_APMRESUMESUSPEND / PBT_APMRESUMEAUTOMATIC） | 【官方文档确认】Win8+，回调机制，无特权要求 |
 | 系统空闲/冷却模式 | `CallNtPowerInformation(SystemPowerInformation=12).CoolingMode` | 【官方文档确认】PO_TZ_INVALID_MODE 可作"无 ACPI 热区"官方探测信号 |
 | CPU 瓦数 | **无文档化来源**；唯一候选 = 未文档化计数器 `\Energy Meter(*)\Power`（RAPL） | 【本机实测存在】【官方文档缺口】Intel-only，单位未确认（实测 pkg≈75.5，若 mW 则量级合理） |
-| GPU 瓦数/温度 | DXGI 1.6 全接口无任何温度/功耗方法（IDXGIAdapter4 仅 GetDesc3）；NVML/ADLX 厂商 SDK 客观存在但被"不访问厂商授权"约束排除 | 【官方文档确认：标准 API 无来源】+【约束排除】（本项目合同范围不可用，不宣称全平台不可测） |
+| GPU 瓦数/温度 | DXGI 1.6 全接口无任何温度/功耗方法（IDXGIAdapter4 仅 GetDesc3）；NVML/ADLX 厂商 SDK 存在但本轮选择不纳入（依赖/驱动/权限与范围选择，非禁止性约束） | 【官方文档确认：标准 API 无来源】+【本轮范围选择】（本项目合同范围不可用，不宣称全平台不可测） |
 | CPU 温度 | WMI `MSAcpi_ThermalZoneTemperature`(root\WMI)，单位十分之一开尔文 | 【官方文档缺失】【本机实测存在】TZ00=301.0K；OEM 依赖；官方权限文档缺失 |
 | CPU 温度（备选） | `Win32_TemperatureProbe` | 【官方文档确认：不可用】"current implementations of WMI do not populate the CurrentReading property" |
 | per-core 温度/瓦数 | MSR（0x19C、RAPL 0x6xx） | 【明确不可用】RDMSR 是 Ring0 指令，必然内核驱动 |
@@ -82,7 +82,7 @@ CPU 瓦数字符串全部绑定厂商 SDK，无任何系统 API 佐证：
 | 0x140445290 | `ADLX GPUPower` |
 | 0x140407ac0 | `GPU Power: %1`（UI 格式串） |
 
-→ GPU 功耗走 **NVML / ADLX 厂商 SDK**。NVML 随驱动分发（nvml.dll），ADLX 为 AMD SDK——均属"厂商授权/专有依赖"，Issue 约束"不连接厂商授权"与"研究没有访问厂商授权"→ **不复刻**。
+→ GPU 功耗走 **NVML / ADLX 厂商 SDK**。NVML 随驱动分发（nvml.dll），ADLX 为 AMD SDK——厂商 SDK 本身合法；本轮**选择不纳入**（依赖/驱动/权限与范围选择：避免引入厂商分发链与厂商绑定覆盖），故原版 GPU 功耗路径**本轮不复刻**。
 
 ### 3.4 原版温度来源 【原版静态证据 + 缺口】
 
@@ -125,14 +125,15 @@ CPU 瓦数字符串全部绑定厂商 SDK，无任何系统 API 佐证：
 | CPU 温度 | `MSAcpi_ThermalZoneTemperature`(root\WMI) | 0.1 K（÷10−273.15→°C） | 慢速（5–10s） | **可能需管理员（官方无文档，本机管理员实测通过）** | **低** | OEM ACPI _TZ 依赖；多数机器缺失或仅主板热区；随时可能消失 | 【本机实测存在】【官方文档缺失】 |
 | CPU 温度（备选探测） | `Win32_TemperatureProbe`(root\CIMV2) | — | — | — | **不可用** | 官方声明不填充 CurrentReading | 【明确不可用】 |
 | CPU 瓦数 | 无安全来源；实验候选 `\Energy Meter(*)\Power`（RAPL） | 疑似 mW（未确认） | 若做：2s+，可降级隐藏 | 未验证标准用户 | **低**（未文档化、Microsoft 不承诺） | Intel-only；VM/AMD/旧平台无实例 | 【本机实测存在】【官方文档缺口】 |
-| GPU 瓦数 | 标准 API 无来源（NVML/ADLX 厂商 SDK 约束排除） | — | — | — | — | — | 本项目合同范围不可用（不宣称全平台不可测） |
+| GPU 瓦数 | 标准 API 无来源（NVML/ADLX 本轮选择不纳入） | — | — | — | — | — | 本项目合同范围不可用（不宣称全平台不可测） |
 | GPU 温度 | 同上 | — | — | — | — | — | 本项目合同范围不可用（同上） |
 | per-core 温度 | 无（MSR Ring0） | — | — | — | — | — | 【明确不可用】 |
 
 **矩阵标注说明**：
-- 权限列"无"指**官方文档无特权要求**（文档承诺标准用户可用）；本会话为管理员会话，标准用户实际行为未实测——MSAcpi/Energy Meter 行已单独标"未验证标准用户"。
+- 权限列"无"指**官方文档未说明特权限制**——这不等于文档担保标准用户可调用；本会话为管理员会话，标准用户实际行为未实测——MSAcpi/Energy Meter 行已单独标"未验证标准用户"。
 - CurrentMhz 钉死 MaxMhz 的实测偏差**仅限本测试机与本次采样场景**，不外推为该 API 在所有机型上的行为。
-- GPU 行"不可用"指本项目合同范围（标准 API 无来源 + 厂商 SDK 约束排除），不宣称全平台不可测。
+- GPU 行"不可用"指本项目合同范围（标准 API 无来源 + 厂商 SDK 本轮选择不纳入），不宣称全平台不可测。
+- per-core 温度行：本轮无驱动约束下 MSR（Ring0）不可达 + 所选标准 API 无已确认来源；不排除厂商已有来源（本轮未纳入）。
 
 ## 5. 候选能力合同（供维护者确认）
 
@@ -157,8 +158,8 @@ CPU 瓦数字符串全部绑定厂商 SDK，无任何系统 API 佐证：
 | --- | --- | --- |
 | CPU 温度（MSAcpi） | **实现为尽力而为行**：查询成功→显示；类缺失/无实例→"不可用"。不因它提权；标准用户失败时按权限不足显示 | 唯一无驱动的 CPU 温度来源，但覆盖碎片化；有官方 CoolingMode 探测信号辅助 |
 | CPU 瓦数（Energy Meter 计数器） | **不进 v1 合同**；可作为后续实验票（标注：未文档化、Intel-only、单位未确认、随时可消失） | 违反"未知不估算"的风险最低做法是不承诺；数据源本质未获 Microsoft 承诺 |
-| GPU 温度/瓦数 | **明确不可用行**（固定显示"无安全来源"） | DXGI 官方无接口；NVML/ADLX 违反厂商授权约束 |
-| per-core 温度 | **明确不可用** | MSR=Ring0，硬约束排除 |
+| GPU 温度/瓦数 | **合同范围不可用行**（固定显示"本轮范围无来源"） | DXGI 官方无接口；NVML/ADLX 本轮选择不纳入（依赖/范围选择） |
+| per-core 温度 | **本轮合同范围不可用** | 本轮无驱动约束下 MSR(Ring0) 不可达；不排除厂商已有来源 |
 
 ### 5.4 需用户（维护者）决策项
 

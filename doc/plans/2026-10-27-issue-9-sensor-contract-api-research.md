@@ -258,7 +258,7 @@ CallNtPowerInformation 文档页确认 `SystemBatteryState (5)` 输出 SYSTEM_BA
   - `LibreHardwareMonitorLib/PawnIo/PawnIo.cs`：通过 `CreateFile` 打开驱动设备 + `IOCTL_PIO_EXECUTE_FN (0x841<<2)` / `IOCTL_PIO_LOAD_BINARY (0x821<<2)` 执行内核侧代码。
   - `LibreHardwareMonitorLib/PawnIo/IntelMsr.cs`：`ReadMsr(uint index, out ulong value)` — CPU 温度与能耗均通过 **MSR 读取**（`ioctl_read_msr`），包括 `MSR_PKG_ENERGY_STATUS` 等。
 - PawnIO（https://github.com/namazso/PawnIO，GPL-2.0）自述 "Input-output driver"，是加载沙盒模块的**内核驱动**；旧版 LHM/OHM 用 WinRing0（同样是内核驱动，需驱动签名）。
-- **结论**：MSR 路线必然经过内核驱动（Ring0），违反工程硬约束"不使用内核驱动、不绕过保护"→ **明确排除**。
+- **结论**：MSR 直读路线需内核驱动（Ring0）承载——本轮工程约束"不新增内核驱动、不绕过保护"，故**本轮不采用**（属范围选择；MSR 需 Ring0 这一事实不排除厂商已有带驱动的来源，本轮未纳入评估）。
 
 ---
 
@@ -301,7 +301,7 @@ ACPI\ThermalZone\TZ00_0               3010    → 301.0 K = 27.85 °C
 
 - per-core 温度读数依赖 MSR（IA32_THERM_STATUS 0x19C、MSR_TEMPERATURE_TARGET 等），用户态不可直接访问（Ring0 指令 RDMSR）。LibreHardwareMonitor 源码证实其 per-core 温度走 `ioctl_read_msr` 内核模块（见 4.7）。
 - Intel DPTF（Dynamic Tuning Framework）是 OEM/驱动侧方案，无用户态公开 API。
-- → **明确不可用（架构上必须内核驱动，违反约束）**。per-core 温度在用户态无标准 API 是架构事实（RDMSR 为 Ring0 指令）；不涉及厂商 SDK 存在性判断。
+- → **本轮合同范围不可用**：所选标准 API 无已确认来源；per-core 直读需 MSR（RDMSR 为 Ring0 指令），本轮无驱动约束下不可达。MSR 需 Ring0 这一架构事实**不排除厂商已有 per-core 来源**（如厂商 SDK/驱动栈，本轮未纳入评估）。
 
 ### 5.4 GPU 温度 【官方文档确认：DXGI 无温度接口】
 
@@ -321,11 +321,11 @@ ACPI\ThermalZone\TZ00_0               3010    → 301.0 K = 27.85 °C
 | PowerRegisterSuspendResumeNotification | 无 | 官方页无权限段 |
 | RegisterPowerSettingNotification | 无 | 官方页无权限段 |
 | PowerSettingRegisterNotification | 无 | 官方页无权限段 |
-| PDH 性能计数器（Processor Information / Energy Meter） | 标准用户可读（本机管理员下验证；PDH 默认无提权要求） | 本机实测 |
+| PDH 性能计数器（Processor Information / Energy Meter） | 文档未说明特权限制；本机管理员下验证可读，标准用户未实测 | 本机实测 + 文档缺口 |
 | MSAcpi_ThermalZoneTemperature | **官方无文档**；二手来源普遍称需管理员；本机管理员下成功 | 见 5.1 |
-| MSR/RAPL 直读 | 必然内核驱动 | 见 4.7/5.3 |
+| MSR/RAPL 直读 | 需内核驱动承载（本轮不采用） | 见 4.7/5.3 |
 
-注��本会话为管理员会话，"标准用户可用"仅对**官方文档无权限段**的 API 成立（文档即承诺）；MSAcpi 的标准用户行为未实测，合同中按"可能需要管理员"保守处理。
+注：本会话为管理员会话。对官方文档未列权限段的 API，本报告表述为"文档未说明特权限制、标准用户未实测"——这**不是文档担保**；MSAcpi 的标准用户行为未实测，合同中按"可能需要管理员"保守处理。
 
 ---
 
@@ -351,9 +351,9 @@ ACPI\ThermalZone\TZ00_0               3010    → 301.0 K = 27.85 °C
 | 睡眠/恢复通知 | PowerRegisterSuspendResumeNotification（回调，Win8+）或 WM_POWERBROADCAST(PBT_APMSUSPEND/RESUME) | 事件 | 注册即得 | 无 | 高 | 全平台 Win8+ | 【官方文档确认】 |
 | 电源源变更通知 | RegisterPowerSettingNotification(GUID_ACDC_POWER_SOURCE) → WM_POWERBROADCAST | 事件（PoAc/PoDc/PoHot） | 注册即得 | 无 | 高 | 全平台 Vista+ | 【官方文档确认】 |
 | CPU 瓦数 | **无安全来源**；唯一候选 = `\Energy Meter(rapl_package0_pkg)\Power`（未文档化） | 实测值疑为 mW（未确认） | 若做：1–2s，可降级 | 管理员未验证（本机管理员下可读） | **低**（未文档化，Microsoft 不承诺） | Intel-only（RAPL）、VM 可能无实例 | 【本机实测存在】【官方文档缺口】 |
-| GPU 瓦数 | 标准 API（DXGI）无接口；NVML/ADLX 厂商 SDK 客观存在但被本项目约束排除 | — | — | — | — | — | 本项目合同范围不可用（不宣称全平台不可测） |
+| GPU 瓦数 | 标准 API（DXGI）无接口；NVML/ADLX 厂商 SDK 存在但本轮选择不纳入（依赖/范围选择） | — | — | — | — | — | 本项目合同范围不可用（不宣称全平台不可测） |
 | CPU 温度 | WMI `MSAcpi_ThermalZoneTemperature`(root\WMI).CurrentTemperature | 十分之一开尔文 → ÷10−273.15 得 °C | 慢速（5–10s），温度变化慢 | 可能需管理员（官方无文档） | 低-中（OEM 依赖，多数机器只有主板热区或缺失） | OEM ACPI _TZ 支持的机器；Win32_TemperatureProbe 官方声明不填充 | 【本机实测存在】【官方文档缺失】 |
-| GPU 温度 | 同上（DXGI 无接口；厂商 SDK 约束排除） | — | — | — | — | — | 本项目合同范围不可用（同上） |
+| GPU 温度 | 同上（DXGI 无接口；厂商 SDK 本轮不纳入） | — | — | — | — | — | 本项目合同范围不可用（同上） |
 | P/E-core 区分 | GetLogicalProcessorInformationEx(RelationProcessorCore).EfficiencyClass（Win10+） | 等级值（0=highest efficiency） | 静态 | 无 | 高（官方语义 + 本机 8P+4E 实测吻合） | Win10+；语义是性能等级，非 Intel 品牌名 | 【官方文档确认】【本机实测】 |
 | SMT/超线程 | 同上 .Flags & LTP_PC_SMT | 位 | 静态 | 无 | 高 | 全平台 Win7+ | 【官方文档确认】 |
 
