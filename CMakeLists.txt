@@ -17,11 +17,13 @@ add_library(tmog_core STATIC
 target_include_directories(tmog_core PUBLIC src)
 
 if(WIN32)
-    target_sources(tmog_core PRIVATE src/platform/WindowsProcesses.cpp)
+    target_sources(tmog_core PRIVATE src/platform/WindowsProcesses.cpp
+                                     src/platform/WindowsProcessOps.cpp)
 elseif(APPLE)
     target_sources(tmog_core PRIVATE src/platform/MacProcesses.cpp)
 elseif(UNIX)
-    target_sources(tmog_core PRIVATE src/platform/LinuxProcesses.cpp)
+    target_sources(tmog_core PRIVATE src/platform/LinuxProcesses.cpp
+                                     src/platform/LinuxProcessOps.cpp)
 endif()
 
 enable_testing()
@@ -33,6 +35,10 @@ if(WIN32)
     add_executable(smoke_enumerate tests/smoke_enumerate.cpp)
     target_link_libraries(smoke_enumerate PRIVATE tmog_core)
     add_test(NAME smoke_enumerate COMMAND smoke_enumerate)
+
+    add_executable(process_ops_checks tests/process_ops_checks.cpp)
+    target_link_libraries(process_ops_checks PRIVATE tmog_core)
+    add_test(NAME process_ops_checks COMMAND process_ops_checks)
 endif()
 
 if(TARGET Qt6::Widgets)

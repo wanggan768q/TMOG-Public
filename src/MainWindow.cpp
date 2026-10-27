@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "ProcessTableModel.h"
 #include "platform/WindowsProcesses.h"
+#include "platform/WindowsProcessOps.h"
 #include <QTableView>
 #include <QToolBar>
 #include <QAction>
@@ -8,6 +9,7 @@
 #include <QCloseEvent>
 #include <QThread>
 #include <QSortFilterProxyModel>
+#include <QMessageBox>
 #include <utility>
 
 namespace tmog {
@@ -56,17 +58,25 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(pause_act, &QAction::toggled, this, &MainWindow::on_pause_toggled);
     auto* refresh_act = toolbar->addAction(tr("刷新"));
     connect(refresh_act, &QAction::triggered, this, &MainWindow::on_refresh_now);
+    auto* end_act = toolbar->addAction(tr("结束任务"));
+    end_act->setEnabled(true);
+    connect(end_act, &QAction::triggered, this, &MainWindow::on_end_task);
+    connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged,
+            this, &MainWindow::on_selection_changed);
 
-    // 平台枚举器：编译期选择
+    // 平台枚举器与进程操作：编译期选择
     core_count_ = 0;
 #if defined(_WIN32)
     auto* we = new WindowsProcessEnumerator();
     core_count_ = we->logical_processor_count();
     enumerator_.reset(we);
+    process_ops_ = std::make_unique<WindowsProcessOps>();
 #elif defined(__APPLE__)
     enumerator_ = std::make_unique<MacProcessEnumerator>();
+    process_ops_ = std::make_unique<MacProcessOps>();
 #elif defined(__unix__)
     enumerator_ = std::make_unique<LinuxProcessEnumerator>();
+    process_ops_ = std::make_unique<LinuxProcessOps>();
 #endif
 
     connect(&sample_timer_, &QTimer::timeout, this, &MainWindow::on_sample_tick);
@@ -162,6 +172,59 @@ void MainWindow::on_selection_changed() {
     selected_identity_.reset();
     const auto* row = model_->row_at(table_->currentIndex().row());
     if (row) selected_identity_ = row->snapshot.identity;
+}
+
+void MainWindow::on_end_task() {
+    const auto* row = model_->row_at(table_->currentIndex().row());
+    if (!row || !process_ops_) return;
+    const auto& snap = row->snapshot;
+
+    // 确认框：名称、PID、目标身份、未保存数据警告；取消不得执行
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this, tr("结束任务"),
+        tr("确定结束进程“%1”（PID %2）吗？\n\n该进程可能有未保存的数据，结束将导致数据丢失。")
+            .arg(QString::fromStdString(snap.name),
+                 QString::number(snap.identity.pid)),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        show_kill_outcome({KillResult::Cancelled, {}});
+        return;
+    }
+
+    const auto outcome = process_ops_->terminate(snap.identity, /*wait_timeout_ms=*/3000);
+    show_kill_outcome(outcome);
+    if (outcome.result == KillResult::Ok || outcome.result == KillResult::Requested)
+        on_refresh_now();   // 立即刷新反映结果
+}
+
+void MainWindow::show_kill_outcome(const KillOutcome& outcome) {
+    switch (outcome.result) {
+    case KillResult::Ok:            return;  // 静默成功，列表刷新即反馈
+    case KillResult::Cancelled:     return;  // 用户取消无需提示
+    case KillResult::Requested:
+        QMessageBox::information(this, tr("结束任务"),
+            tr("终止请求已发出，但在超时内未确认退出。进程可能很快退出或需要管理员权限。"));
+        return;
+    case KillResult::SelfTarget:
+        QMessageBox::warning(this, tr("结束任务"), tr("不能结束自身进程。"));
+        return;
+    case KillResult::CriticalTarget:
+        QMessageBox::warning(this, tr("结束任务"),
+            tr("该进程是系统关键或受保护进程，已拒绝操作。"));
+        return;
+    case KillResult::IdentityChanged:
+        QMessageBox::warning(this, tr("结束任务"),
+            tr("目标进程身份已变化（PID 可能被复用），操作已取消。请刷新后重试。"));
+        return;
+    case KillResult::AccessDenied:
+        QMessageBox::warning(this, tr("结束任务"),
+            tr("访问被拒绝。可能需要以管理员身份运行。"));
+        return;
+    case KillResult::Failed:
+        QMessageBox::warning(this, tr("结束任务"),
+            tr("操作失败：") + QString::fromStdString(outcome.error));
+        return;
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

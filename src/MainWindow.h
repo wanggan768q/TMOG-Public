@@ -4,6 +4,7 @@
 #include <memory>
 #include "ProcessTableModel.h"
 #include "IProcessEnumerator.h"
+#include "IProcessOps.h"
 
 class QTableView;
 class QAbstractItemModel;
@@ -27,16 +28,19 @@ private slots:
     void on_pause_toggled();
     void on_selection_changed();
     void on_refresh_now();
+    void on_end_task();             // 确认框 + 安全结束
 
 private:
     void start_worker();
     void apply_sample(SampleResult result);
+    void show_kill_outcome(const KillOutcome& outcome);
 
     QTableView* table_ = nullptr;
     ProcessTableModel* model_ = nullptr;
     QTimer sample_timer_;
 
     std::unique_ptr<IProcessEnumerator> enumerator_;
+    std::unique_ptr<IProcessOps> process_ops_;
     std::uint32_t core_count_ = 0;
 
     // 采样管线状态
