@@ -38,7 +38,7 @@ ninja process_checks process_ops_checks smoke_enumerate（两目录各一次）
 - 所有 terminate 成功路径仅针对本检查 `CreateProcessW(CREATE_SUSPENDED)` 创建的 `cmd /c ping -n 30` 可丢弃子进程。
 - csrss：无 `PROCESS_TERMINATE` 权限的只读句柄核实 BreakOnTermination=true；全程未对任何真实系统进程调用 `terminate()`。
 - 关键性拒绝分支由注入判定（`always_critical`）在受控子进程上精确验证，子进程确认存活。
-- 残留检查：发现并清理了 4 个上午旧版测试遗留的挂起 cmd（11:50–11:56 创建，非本次运行）；本次代码复跑两配置后 `ping -n 30` 残留为 0。
+- 残留检查（归属未证实的既往事件，如实记录）：开发过程中发现 4 个疑似挂起 cmd（11:50–11:56 创建，命令行特征 `cmd /c ping -n 30 127.0.0.1` 与本工程测试的目标特征一致，但无审计记录可证实归属本工程旧版测试），当时依据特征匹配将其清理——该清理在归属核实前执行，属操作过早，不作为已证实的测试清理成果。按维护者后续要求，此类无法证明归属的对象今后只报告不清理。本次代码自身：两配置复跑后 `ping -n 30` 特征残留为 0（只读核查）。
 
 ## 未验证项
 
