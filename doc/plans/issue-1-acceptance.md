@@ -26,7 +26,7 @@
 | 便携目录自包含 | ✅ | windeployqt 产物复制到独立目录启动成功（无 PATH 依赖） |
 | 排序/暂停/恢复/选择保持/键盘操作 | ⚠️ 人工项 | 构建+自动化检查通过；**交互项需人工点验**（本轮以截屏辅助，见 §5） |
 | 与 Windows 任务管理器口径对照 | ⚠️ 未做 | 待人工并排比对（进程 CPU/内存趋势、排序口径） |
-| 结束系统关键进程的拒绝行为 | ✅（代码路径） | 单元级验证 is_critical 查询失败→拒绝；未实测结束真实关键进程（按计划禁止） |
+| 结束系统关键进程的拒绝行为 | ✅ | process_ops_checks 第 5 项：csrss.exe 真实身份 → CriticalTarget/AccessDenied（不实际终止）；另 is_critical 查询失败→拒绝为代码路径 review 确认 |
 
 ## 3. 口径定义（已实现）
 
@@ -55,6 +55,17 @@
 
 ## 6. 交付物清单
 
-- 源码：`CMakeLists.txt`、`src/`（核心 6 文件 + 平台适配 5 文件 + GUI 5 文件）、`tests/`（3 个检查）
+- 源码：`CMakeLists.txt`、`src/`（核心 + 平台适配 + GUI）、`tests/`（3 个检查）
 - 构建产物：`build/`（不入库）；便携包 = build 目录剔除构建中间物，或按 §1 重新构建
 - 文档：`doc/plans/issue-1-behavior-matrix.md`（M0）、本文件（M4）
+
+## 7. 许可证义务（M4 要求，本机核查）
+
+| 项 | 结果 |
+|---|---|
+| Qt 许可证 | LGPLv3 开源版（安装时已勾选接受，`E:\InstallApplication\Qt\Licenses\`） |
+| 链接方式 | 动态链接（windeployqt 部署 Qt6*.dll），满足 LGPL 重链接要求 |
+| 发布包义务 | 随包附带：a) LGPLv3 文本副本 b) Qt 版权声明 c) 指向 Qt 源码获取方式的说明（https://www.qt.io/download/open-source ） |
+| 本仓库自身源码 | 公开（本仓库即源码分发），无额外闭源义务 |
+| 第三方组件 | MinGW 运行库（GCC runtime exception 许可，windeployqt 已收集 libgcc/libstdc++/libwinpthread） |
+| 待办 | 正式发布前在便携包根目录创建 `licenses/` 目录放置上述文本（首版发布动作，非代码阻塞） |
