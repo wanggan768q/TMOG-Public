@@ -26,22 +26,25 @@ void check(bool ok, const char* what) {
 // 受控枚举器：take_sample 睡指定毫秒后返回一个最小快照
 class SlowEnumerator : public IProcessEnumerator {
 public:
-    explicit SlowEnumerator(int sleep_ms) : sleep_ms_(sleep_ms) {
-        SampleResult r;
-        r.ok = true;
-        ProcessSnapshot ps;
-        ps.identity.pid = 1;
-        ps.identity.creation_tick = 1;
-        r.processes.push_back(ps);
-        canned_ = std::move(r);
-    }
+    explicit SlowEnumerator(int sleep_ms) : sleep_ms_(sleep_ms) {}
     std::optional<SampleResult> take_sample() override {
         QThread::msleep(static_cast<unsigned long>(sleep_ms_));
-        return canned_;
+        // 唯一序号：每次真实调用递增——区分新旧 take_sample 完成的直接证据
+        return make(++calls_);
     }
     ~SlowEnumerator() override = default;
     int sleep_ms_;
-    SampleResult canned_;
+    int calls_ = 0;
+
+    static SampleResult make(int seq) {
+        SampleResult r;
+        r.ok = true;
+        ProcessSnapshot ps;
+        ps.identity.pid = static_cast<std::uint32_t>(seq);
+        ps.identity.creation_tick = 1;
+        r.processes.push_back(ps);
+        return r;
+    }
 };
 
 } // namespace
@@ -155,8 +158,28 @@ int main(int argc, char** argv) {
         check(done_calls == 1, "F5: late-but-safe result applied after revert (window alive)");
 
         // 重新采样可用（拒绝关闭后恢复采样循环的实际验证）
-        worker.start(owner, enumr.get(), [](SampleResult) {}, [] {});
-        check(worker.busy(), "F6: start accepted after failed-shutdown revert");
+        // 补证（协调者要求）：唯一序号区分新旧枚举——等**第二个** done 真实
+        // 投递（带 deadline），旧结果（seq=1）不能满足 seq==2 断言。
+        int second_seq = 0;
+        worker.start(owner, enumr.get(),
+                     [&](SampleResult r) {
+                         if (r.ok && !r.processes.empty())
+                             second_seq = static_cast<int>(r.processes[0].identity.pid);
+                     }, [] {});
+        check(worker.busy(), "F6: start accepted after failed-shutdown revert (in flight)");
+        const auto dl2 = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+        while (second_seq != 2 && std::chrono::steady_clock::now() < dl2) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            QThread::msleep(20);
+        }
+        check(second_seq == 2,
+              "F6b: second take_sample completed and its done delivered (seq==2, not stale seq==1)");
+        // 新枚举真实完成后线程空闲，再收束验证
+        const auto dl3 = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (worker.busy() && std::chrono::steady_clock::now() < dl3) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            QThread::msleep(20);
+        }
         const bool second = worker.shutdown(8000);
         check(second, "F7: second shutdown succeeds");
         // 成功 shutdown 的 closing_=true 是设计终态（线程已确认退出，资源可销毁）；

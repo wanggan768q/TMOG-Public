@@ -33,7 +33,7 @@
 | A | 1.5s 慢枚举在途时 `shutdown(100ms)` 返回 **false**（不伪报安全），`busy()` 仍 true（所有权保留）；失败后 `closing_` 复位（可恢复）；迟到结果在恢复运行态下安全应用（窗口未销毁）；线程随后自然退出（不强杀） |
 | C | `shutdown(5000)` 确认线程实际退出返回 true，状态清空，枚举器此后析构无悬空 |
 | D | 正常完成顺序：恰好一次 done 回调；完成后 shutdown 立即成功；closing 终态下 start 被拒绝 |
-| **F（>2s 票面用例）** | **2500ms** 慢枚举完整序列：`shutdown(300ms)` false → 所有权保留 → `closing_` 自动复位 → 线程自然 finished（finished 队列清理与旧 queued 结果交错，守卫防错清）→ 迟到结果安全应用 → **重新 start 实际接受**（恢复采样循环成立）→ 再次 `shutdown(8000)` 成功（closing 终态、busy 清空） |
+| **F（>2s 票面用例）** | **2500ms** 慢枚举完整序列：`shutdown(300ms)` false → 所有权保留 → `closing_` 自动复位 → 线程自然 finished（finished 队列清理与旧 queued 结果交错，守卫防错清）→ 迟到结果安全应用 → **重新 start 实际接受** → **F6b：第二次 take_sample 真实完成且第二个 done 已投递**（SlowEnumerator 递增唯一序号放进结果，断言收到 seq==2 而非旧 seq==1，排除旧结果冒充；8s deadline 超时即失败）→ 再次 `shutdown(8000)` 成功（closing 终态、busy 清空） |
 | **G（>2s 票面用例）** | **3000ms** 慢枚举 + 充足超时一次收束成功、状态清空 |
 
 **检查两次驱动出修复**：首跑暴露缺陷 2（wait 同步/队列清理时序）；v2 首跑暴露缺陷 4（closing 永久置位 → F8 初版断言按错误语义写，修正实现后按正确语义断言通过）。
