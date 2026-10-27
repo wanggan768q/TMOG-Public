@@ -140,6 +140,8 @@ void MainWindow::apply_sample(SampleResult result) {
     model_->replace_snapshot(std::move(rows));
     last_sample_ = std::move(result);
     restore_selection();
+    // 语义注记：选中进程退出后锚点保留（不自动清除），进程重现时自动恢复选中；
+    // 仅用户点空白才清除。进程列表场景下这是合理行为（进程可重现），非缺陷。
 }
 
 void MainWindow::restore_selection() {
@@ -185,9 +187,12 @@ void MainWindow::on_selection_changed() {
         selected_identity_ = row->snapshot.identity;
     else
         selected_identity_.reset();
-        // 无效索引 = 用户取消选择或重置清空。重置期恢复流程随后会按锚点重选；
-        // 若此前锚点已被清（用户主动点空白），恢复自然不发生——两语义由此区分：
-        // 重置不清锚点靠的是 restore_selection 在 selectionChanged 之后执行。
+    // 无效索引 → 清锚点（用户点空白取消选择）。
+    // 注意：模型重置（replace_snapshot）清空视图选择时 selectionChanged
+    // 实测不触发（Qt 6.12 行为，非文档契约），handler 不被调用，锚点自然存活，
+    // restore_selection 随后按锚点恢复。若升级 Qt 后重置开始发此信号，
+    // 此处会误清锚点破坏选择保持——届时加 resetGuard 标志在 apply_sample
+    // 期间抑制清锚点。
 }
 
 void MainWindow::on_end_task() {
