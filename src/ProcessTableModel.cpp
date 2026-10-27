@@ -1,5 +1,4 @@
 #include "ProcessTableModel.h"
-#include <QLocale>
 
 namespace tmog {
 
@@ -15,7 +14,7 @@ int ProcessTableModel::columnCount(const QModelIndex& parent) const {
 
 QVariant ProcessTableModel::data(const QModelIndex& index, int role) const {
     if (!index.isValid() || index.row() >= (int)rows_.size()) return {};
-    const Row& r = rows_[index.row()];
+    const SampledRow& r = rows_[index.row()];
 
     if (role == Qt::DisplayRole) {
         switch (index.column()) {
@@ -26,9 +25,14 @@ QVariant ProcessTableModel::data(const QModelIndex& index, int role) const {
                                  : QStringLiteral("—");   // 待采样/不可用显式显示，不造零
         case ColMemory: {
             if (!r.snapshot.resident_available) return QStringLiteral("—");
-            const double mb = static_cast<double>(r.snapshot.resident_bytes) / (1024.0 * 1024.0);
-            return mb >= 1024.0 ? QString::number(mb / 1024.0, 'f', 1) + QStringLiteral(" GB")
-                                : QString::number(mb, 'f', 1) + QStringLiteral(" MB");
+            const double bytes = static_cast<double>(r.snapshot.resident_bytes);
+            if (bytes >= 1024.0 * 1024.0 * 1024.0)
+                return QString::number(bytes / (1024.0 * 1024.0 * 1024.0), 'f', 2)
+                     + QStringLiteral(" GB");
+            if (bytes >= 1024.0 * 1024.0)
+                return QString::number(bytes / (1024.0 * 1024.0), 'f', 1)
+                     + QStringLiteral(" MB");
+            return QString::number(bytes / 1024.0, 'f', 0) + QStringLiteral(" KB");
         }
         case ColStatus:
             switch (r.status) {
@@ -41,9 +45,10 @@ QVariant ProcessTableModel::data(const QModelIndex& index, int role) const {
             return {};
         }
     }
-    // 数值列排序角色
+    // 排序角色：数值列按值；文本列返回原串（Qt 按字典序比较 QString）
     if (role == Qt::UserRole) {
         switch (index.column()) {
+        case ColName:   return QString::fromStdString(r.snapshot.name);
         case ColPid:    return static_cast<qulonglong>(r.snapshot.identity.pid);
         case ColCpu:    return r.cpu_percent ? *r.cpu_percent : -1;
         case ColMemory: return r.snapshot.resident_available
@@ -66,13 +71,15 @@ QVariant ProcessTableModel::headerData(int section, Qt::Orientation orientation,
     return {};
 }
 
-void ProcessTableModel::replace_snapshot(std::vector<Row> rows) {
+void ProcessTableModel::replace_snapshot(std::vector<SampledRow> rows,
+                                         std::vector<SampledRow>* old_rows_out) {
+    if (old_rows_out) *old_rows_out = std::move(rows_);
     beginResetModel();
     rows_ = std::move(rows);
     endResetModel();
 }
 
-const ProcessTableModel::Row* ProcessTableModel::row_at(int row) const {
+const SampledRow* ProcessTableModel::row_at(int row) const {
     return row >= 0 && row < (int)rows_.size() ? &rows_[row] : nullptr;
 }
 

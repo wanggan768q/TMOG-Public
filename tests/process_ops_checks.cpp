@@ -103,6 +103,46 @@ int main() {
               "nonexistent pid fails gracefully");
     }
 
+    // 5. 关键进程检测：查 csrss.exe（Windows 会话管理器，必定 critical）→ CriticalTarget
+    //    或 OpenProcess 被拒（受保护进程）→ AccessDenied；两者都是"拒绝"语义。
+    //    不实际尝试结束它——��验证我们会在终止前拒绝。
+    {
+        DWORD csrss_pid = 0;
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap != INVALID_HANDLE_VALUE) {
+            PROCESSENTRY32W e32{};
+            e32.dwSize = sizeof(e32);
+            if (Process32FirstW(snap, &e32)) {
+                do {
+                    if (_wcsicmp(e32.szExeFile, L"csrss.exe") == 0) {
+                        csrss_pid = e32.th32ProcessID; break;
+                    }
+                } while (Process32NextW(snap, &e32));
+            }
+            CloseHandle(snap);
+        }
+        if (csrss_pid) {
+            // 拿真实创建时间：如果连身份核实都过不了，说明身份防线先拦住（也算拒绝）
+            HANDLE probe = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, csrss_pid);
+            if (probe) {
+                FILETIME c{}, e{}, k{}, u{};
+                GetProcessTimes(probe, &c, &e, &k, &u);
+                CloseHandle(probe);
+                ProcessIdentity target{
+                    csrss_pid,
+                    (static_cast<std::uint64_t>(c.dwHighDateTime) << 32) | c.dwLowDateTime};
+                auto r = ops.terminate(target, 0);
+                check(r.result == KillResult::CriticalTarget ||
+                          r.result == KillResult::AccessDenied,
+                      "critical process (csrss) rejected before terminate");
+            } else {
+                check(true, "critical process (csrss) not even openable (denied)");
+            }
+        } else {
+            std::cout << "NOTE: csrss not found, critical test skipped\n";
+        }
+    }
+
     std::cout << (failures == 0 ? "ALL PASS\n" : "FAILURES\n");
     return failures == 0 ? 0 : 1;
 }

@@ -1,4 +1,5 @@
 #include "WindowsProcessOps.h"
+#include "WinTime.h"
 #include <windows.h>
 
 namespace tmog {
@@ -11,7 +12,7 @@ bool get_self_identity(ProcessIdentity& out) {
     FILETIME c{}, e{}, k{}, u{};
     if (!GetProcessTimes(h, &c, &e, &k, &u)) return false;
     out.pid = GetCurrentProcessId();
-    out.creation_tick = (static_cast<std::uint64_t>(c.dwHighDateTime) << 32) | c.dwLowDateTime;
+    out.creation_tick = win::filetime_to_tick(c);
     return true;
 }
 
@@ -58,7 +59,7 @@ KillOutcome WindowsProcessOps::terminate(const ProcessIdentity& target, int wait
         CloseHandle(h);
         return {KillResult::Failed, "GetProcessTimes failed"};
     }
-    const auto creation = (static_cast<std::uint64_t>(c.dwHighDateTime) << 32) | c.dwLowDateTime;
+    const auto creation = win::filetime_to_tick(c);
     if (creation != target.creation_tick) {
         CloseHandle(h);
         return {KillResult::IdentityChanged,

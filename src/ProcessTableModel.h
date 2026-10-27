@@ -8,7 +8,8 @@
 namespace tmog {
 
 // Processes 页表格模型：名称/PID/CPU%/内存/状态
-// 快照由 MainWindow 的采样线程投递（通过 invokeMethod 回 UI 线程），模型只存结果
+// 快照由 MainWindow 的采样线程投递（经队列连接回 UI 线程），模型只存结果。
+// 行数据类型即核心层 SampledRow，GUI 不再自建行结构。
 class ProcessTableModel : public QAbstractTableModel {
     Q_OBJECT
 public:
@@ -21,19 +22,14 @@ public:
     QVariant data(const QModelIndex& index, int role) const override;
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
 
-    struct Row {
-        ProcessSnapshot snapshot;
-        std::optional<int> cpu_percent;   // 有值才显示数字
-        ProcessStatus status = ProcessStatus::FirstSample;
-    };
+    // 整表替换为新快照。返回被重置抹掉的旧行（供调用方恢复选中/基线决策）。
+    void replace_snapshot(std::vector<SampledRow> rows,
+                          std::vector<SampledRow>* old_rows_out = nullptr);
 
-    // 整表替换为新快照；保持按 (pid, creation_tick) 匹配的选中行
-    void replace_snapshot(std::vector<Row> rows);
-
-    const Row* row_at(int row) const;
+    const SampledRow* row_at(int row) const;
 
 private:
-    std::vector<Row> rows_;
+    std::vector<SampledRow> rows_;
 };
 
 } // namespace tmog

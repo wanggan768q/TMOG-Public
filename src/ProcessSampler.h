@@ -1,5 +1,6 @@
 #pragma once
 #include <optional>
+#include <vector>
 #include "ProcessSnapshot.h"
 
 namespace tmog {
@@ -19,5 +20,18 @@ ProcessStatus compute_cpu_percent(const std::optional<ProcessSnapshot>& previous
                                   std::uint64_t wall_delta_ns,
                                   std::uint32_t logical_processors,
                                   std::optional<int>& out_percent);
+
+// 整帧差分结果行：快照 + 差分产出
+struct SampledRow {
+    ProcessSnapshot snapshot;
+    std::optional<int> cpu_percent;
+    ProcessStatus status = ProcessStatus::FirstSample;
+};
+
+// 相邻两帧配对（按 PID）+ 逐进程差分。previous 为基线帧（调用方保证有效；
+// 基线作废时传入自差分或由调用方跳过，见 MainWindow 暂停语义）。
+std::vector<SampledRow> diff_samples(const SampleResult& previous,
+                                     const SampleResult& current,
+                                     std::uint32_t logical_processors);
 
 } // namespace tmog

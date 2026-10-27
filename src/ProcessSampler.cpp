@@ -1,6 +1,17 @@
 #include "ProcessSampler.h"
+#include <map>
 
 namespace tmog {
+
+namespace {
+
+std::map<std::uint32_t, const ProcessSnapshot*> index_by_pid(const SampleResult& s) {
+    std::map<std::uint32_t, const ProcessSnapshot*> m;
+    for (const auto& p : s.processes) m.emplace(p.identity.pid, &p);
+    return m;
+}
+
+} // namespace
 
 ProcessStatus compute_cpu_percent(const std::optional<ProcessSnapshot>& previous,
                                   const ProcessSnapshot& current,
@@ -27,6 +38,31 @@ ProcessStatus compute_cpu_percent(const std::optional<ProcessSnapshot>& previous
     const auto denom = wall_delta_ns * logical_processors;
     out_percent = static_cast<int>((delta_ns * 100 + denom / 2) / denom);
     return ProcessStatus::Ok;
+}
+
+std::vector<SampledRow> diff_samples(const SampleResult& previous,
+                                     const SampleResult& current,
+                                     std::uint32_t logical_processors) {
+    std::vector<SampledRow> rows;
+    rows.reserve(current.processes.size());
+    const auto prev_by_pid = index_by_pid(previous);
+
+    for (const auto& cur : current.processes) {
+        SampledRow row;
+        row.snapshot = cur;
+
+        std::optional<ProcessSnapshot> prev;
+        auto it = prev_by_pid.find(cur.identity.pid);
+        if (it != prev_by_pid.end()) prev = *it->second;
+
+        const auto wall_delta =
+            current.wall_clock_ns > previous.wall_clock_ns
+                ? current.wall_clock_ns - previous.wall_clock_ns : 0;
+        row.status = compute_cpu_percent(prev, cur, wall_delta,
+                                         logical_processors, row.cpu_percent);
+        rows.push_back(std::move(row));
+    }
+    return rows;
 }
 
 } // namespace tmog

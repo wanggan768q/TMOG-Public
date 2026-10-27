@@ -10,6 +10,7 @@
 #include <QThread>
 #include <QSortFilterProxyModel>
 #include <QMessageBox>
+#include <QDateTime>
 #include <utility>
 
 namespace tmog {
@@ -59,7 +60,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* refresh_act = toolbar->addAction(tr("刷新"));
     connect(refresh_act, &QAction::triggered, this, &MainWindow::on_refresh_now);
     auto* end_act = toolbar->addAction(tr("结束任务"));
-    end_act->setEnabled(true);
     connect(end_act, &QAction::triggered, this, &MainWindow::on_end_task);
     connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged,
             this, &MainWindow::on_selection_changed);
@@ -89,20 +89,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 MainWindow::~MainWindow() = default;
 
 void MainWindow::on_sample_tick() {
-    if (paused_ || sampling_ || !enumerator_ || closing_) return; // 禁止重叠采样
-    start_worker();
+    if (!paused_ && !sampling_ && enumerator_ && !closing_)
+        start_worker();
 }
 
 void MainWindow::start_worker() {
     sampling_ = true;
     auto* bridge = new WorkerBridge();
     bridge->enumerator = enumerator_.get();
-    auto* thread = new QThread(this);
+    auto* thread = new QThread(/*无 parent：生命周期由 in_flight_ 显式管理*/);
+    in_flight_ = thread;
     // done 信号跨线程 → 队列连接自动切回 UI 线程
     connect(bridge, &WorkerBridge::done, this,
             [this, bridge](SampleResult result) {
                 bridge->deleteLater();
                 sampling_ = false;
+                in_flight_ = nullptr;
                 if (closing_) return;
                 apply_sample(std::move(result));
             },
@@ -111,6 +113,7 @@ void MainWindow::start_worker() {
             [this, bridge]() {
                 bridge->deleteLater();
                 sampling_ = false;
+                in_flight_ = nullptr;
                 // 采样失败：跳过本帧，下个 tick 重试；错误语义在状态栏后续补充
             },
             Qt::QueuedConnection);
@@ -123,68 +126,84 @@ void MainWindow::start_worker() {
 }
 
 void MainWindow::apply_sample(SampleResult result) {
-    const auto wall_now = result.wall_clock_ns;
-    std::vector<ProcessTableModel::Row> rows;
-    rows.reserve(result.processes.size());
+    std::vector<SampledRow> rows;
 
-    bool have_prev = last_sample_ && last_sample_->ok;
-    const auto wall_delta = have_prev && wall_now > last_sample_->wall_clock_ns
-                          ? wall_now - last_sample_->wall_clock_ns : 0;
-
-    for (const auto& cur : result.processes) {
-        ProcessTableModel::Row row;
-        row.snapshot = cur;
-
-        std::optional<ProcessSnapshot> prev;
-        if (have_prev) {
-            for (const auto& p : last_sample_->processes) {
-                if (p.identity.pid == cur.identity.pid) { prev = p; break; }
-            }
+    if (last_sample_) {
+        // 正常帧：与基线配对差分
+        rows = diff_samples(*last_sample_, result, core_count_);
+    } else {
+        // 无基线（首帧/暂停恢复后）：全部显示"待采样"，基线在本帧建立
+        rows.reserve(result.processes.size());
+        for (const auto& cur : result.processes) {
+            SampledRow row;
+            row.snapshot = cur;
+            row.status = ProcessStatus::FirstSample;
+            rows.push_back(std::move(row));
         }
-        row.status = compute_cpu_percent(prev, cur, wall_delta, core_count_,
-                                         row.cpu_percent);
-        rows.push_back(std::move(row));
     }
-    model_->replace_snapshot(std::move(rows));
-    last_sample_ = std::make_unique<SampleResult>(std::move(result));
 
-    // 选择保持���按身份恢复选中行
-    if (selected_identity_) {
-        const auto& identity = *selected_identity_;
-        for (int r = 0; r < model_->rowCount(); ++r) {
-            const auto* row = model_->row_at(r);
-            if (row && row->snapshot.identity == identity) {
-                table_->selectRow(r);
-                break;
+    // 重置会抹掉视图选择：先取走旧行用于恢复，重置后按身份还原
+    std::vector<SampledRow> old_rows;
+    model_->replace_snapshot(std::move(rows), &old_rows);
+    if (!old_rows.empty())
+        last_sample_ = std::move(result);   // 有基线意义才更新
+    else
+        last_sample_ = std::move(result);   // 首帧也是有效基线
+    restore_selection();
+}
+
+void MainWindow::restore_selection() {
+    if (!selected_identity_) return;
+    const auto& identity = *selected_identity_;
+    auto* proxy = static_cast<QSortFilterProxyModel*>(table_->model());
+    for (int r = 0; r < model_->rowCount(); ++r) {
+        const auto* row = model_->row_at(r);
+        if (row && row->snapshot.identity == identity) {
+            const QModelIndex proxy_index =
+                proxy->mapFromSource(model_->index(r, 0));
+            if (proxy_index.isValid()) {
+                table_->selectionModel()->select(
+                    proxy_index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+                table_->setCurrentIndex(proxy_index);
             }
+            break;
         }
     }
 }
 
-void MainWindow::on_pause_toggled() {
-    paused_ = !paused_;
-    // 差分基线作废由下次 tick 的 FirstSample 状态自然表达
+void MainWindow::on_pause_toggled(bool paused) {
+    if (paused) {
+        // 暂停：基线作废，恢复后首帧整表"待采样"，差分不跨暂停期
+        invalidate_baseline();
+    }
+    // 恢复：无额外动作，下个 tick 正常采样并建立新基线
 }
+
+void MainWindow::invalidate_baseline() { last_sample_.reset(); }
 
 void MainWindow::on_refresh_now() { on_sample_tick(); }
 
 void MainWindow::on_selection_changed() {
-    selected_identity_.reset();
     const auto* row = model_->row_at(table_->currentIndex().row());
-    if (row) selected_identity_ = row->snapshot.identity;
+    if (row)
+        selected_identity_ = row->snapshot.identity;
+    // 索引无效（重置清空选择）时不清身份：身份是恢复锚点，恢复流程会用它
 }
 
 void MainWindow::on_end_task() {
     const auto* row = model_->row_at(table_->currentIndex().row());
     if (!row || !process_ops_) return;
-    const auto& snap = row->snapshot;
+    const ProcessSnapshot& snap = row->snapshot;
 
-    // 确认框：名称、PID、目标身份、未保存数据警告；取消不得执行
+    // 确认框：名称、PID、创建身份、未保存数据警告；取��不得执行
+    const QDateTime created = QDateTime::fromMSecsSinceEpoch(
+        static_cast<qint64>(snap.identity.creation_tick / 10000) - 11644473600000LL);
     QMessageBox::StandardButton reply = QMessageBox::question(
         this, tr("结束任务"),
-        tr("确定结束进程“%1”（PID %2）吗？\n\n该进程可能有未保存的数据，结束将导致数据丢失。")
+        tr("确定结束进程“%1”（PID %2，创建于 %3）吗？\n\n该进程可能有未保存的数据，结束将导致数据丢失。")
             .arg(QString::fromStdString(snap.name),
-                 QString::number(snap.identity.pid)),
+                 QString::number(snap.identity.pid),
+                 created.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (reply != QMessageBox::Yes) {
         show_kill_outcome({KillResult::Cancelled, {}});
@@ -230,7 +249,11 @@ void MainWindow::show_kill_outcome(const KillOutcome& outcome) {
 void MainWindow::closeEvent(QCloseEvent* event) {
     closing_ = true;
     sample_timer_.stop();
-    // 在途采样完成后由队列回调丢弃结果；worker 线程对象由父子关系随窗口销毁
+    // 等待在途采样收尾（take_sample 是有限操作），避免窗口销毁时线程仍引用枚举器
+    if (in_flight_) {
+        in_flight_->quit();
+        in_flight_->wait(2000);
+    }
     event->accept();
 }
 
