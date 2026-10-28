@@ -117,6 +117,93 @@ if(TARGET Qt6::Widgets)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins/platforms"
         TIMEOUT 120)
 
+    # #13 检查：真实生产模态事件路径（结束任务确认）。真实 MainWindow 三参
+    # 构造注入（枚举器 + fake ops 仅记录）驱动真实 SamplingWorker/QMessageBox/
+    # 异步 kill 线程；仅默认 fake 场景，manual/idle 模式入口在此 EXE 内
+    # 拒绝执行（Task-3/B 范围另批）。独立测试 EXE 非 GUI 业务入口。
+    # WIN32 守卫：同批准计划 §3 原样要求（本目标依赖 Windows 测试环境语义）。
+    if(WIN32)
+        add_executable(end_confirm_checks
+            tests/end_confirm_checks.cpp
+            src/MainWindow.cpp
+            src/ProcessTableModel.cpp
+        )
+        target_link_libraries(end_confirm_checks PRIVATE tmog_core Qt6::Widgets)
+        add_test(NAME end_confirm_checks COMMAND end_confirm_checks)
+        # #13 修复（Dev 范围内澄清）：windeployqt 会把 platforms/qwindows.dll
+        # 部署进构建目录；同目录测试 EXE 请求 offscreen 平台时 Qt 在 appDir
+        # plugins 内找不到 qoffscreen.dll → QApplication 初始化可能挂起
+        # （假说，当前环境观察：Debug 18.9s PASS / Release ctest 120s 超时
+        # 零输出；设 QT_PLUGIN_PATH 指向同一 Qt 安装 plugins 后 Release 直跑
+        # 18.9s PASS——支持性对照证据，因果未唯一证实）。从本工程
+        # find_package 的同一 Qt 配置导出插件路径（QtInstallPaths.cmake 官方
+        # 变量），不硬编码个人路径、不改生产部署；校验失败显式报错，不做
+        # 静默兜底。
+        if(NOT DEFINED QT6_INSTALL_PREFIX OR NOT DEFINED QT6_INSTALL_PLUGINS
+           OR "${QT6_INSTALL_PREFIX}" STREQUAL ""
+           OR "${QT6_INSTALL_PLUGINS}" STREQUAL "")
+            message(FATAL_ERROR "end_confirm_checks: Qt install path variables "
+                                "undefined or empty; cannot derive test plugin path")
+        endif()
+        string(FIND "${QT6_INSTALL_PREFIX}" ";" _prefix_sep)
+        if(NOT _prefix_sep EQUAL -1)
+            message(FATAL_ERROR "end_confirm_checks: QT6_INSTALL_PREFIX contains "
+                                "';' (${QT6_INSTALL_PREFIX}); cannot derive single path")
+        endif()
+        string(FIND "${QT6_INSTALL_PLUGINS}" ";" _plugin_path_sep)
+        if(NOT _plugin_path_sep EQUAL -1)
+            message(FATAL_ERROR "end_confirm_checks: QT6_INSTALL_PLUGINS contains "
+                                "';' (${QT6_INSTALL_PLUGINS}); cannot derive "
+                                "single plugin path")
+        endif()
+        # 来源匹配（精确布局核对，非任意祖先）：当前 Qt 6 布局固定为
+        # <prefix>/lib/cmake/Qt6；派生路径必须与 find_package 实际来源
+        # REALPATH 相等，防 Qt 错配与 ../ 逃逸。不泛化到任意 Qt 布局。
+        get_filename_component(_qt_cmake_real "${Qt6_DIR}" REALPATH)
+        get_filename_component(_prefix_expect_real
+            "${Qt6_DIR}/../../.." REALPATH)
+        get_filename_component(_prefix_real "${QT6_INSTALL_PREFIX}" REALPATH)
+        if(NOT _prefix_real STREQUAL _prefix_expect_real)
+            message(FATAL_ERROR "end_confirm_checks: Qt install prefix mismatch: "
+                                "QT6_INSTALL_PREFIX (${_prefix_real}) != "
+                                "${_prefix_expect_real} derived from Qt6_DIR "
+                                "(${_qt_cmake_real})")
+        endif()
+        set(_tmog_test_plugin_dir "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}")
+        get_filename_component(_plugin_dir_real "${_tmog_test_plugin_dir}" REALPATH)
+        get_filename_component(_plugin_expect_real
+            "${QT6_INSTALL_PREFIX}/plugins" REALPATH)
+        if(NOT _plugin_dir_real STREQUAL _plugin_expect_real)
+            message(FATAL_ERROR "end_confirm_checks: derived plugin path mismatch: "
+                                "${_plugin_dir_real} != ${_plugin_expect_real}")
+        endif()
+        if(NOT EXISTS "${_plugin_dir_real}/platforms/qoffscreen.dll")
+            message(FATAL_ERROR "end_confirm_checks: offscreen platform plugin "
+                                "not found at ${_plugin_dir_real}/platforms/"
+                                "qoffscreen.dll (Qt install mismatch?)")
+        endif()
+        set_tests_properties(end_confirm_checks PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=${_plugin_dir_real}"
+            TIMEOUT 120)
+        # #15 修复（Dev 范围内澄清，同源派生路径复用）：stale_persistence_checks
+        # 与 end_confirm_checks 同处构建目录根，同受 windeployqt platforms/
+        # 部署影响（Release 在途挂起观测见 acceptance；假说未证实）。Windows
+        # 下覆盖既有 offscreen 属性并补匹配插件路径与有限 TIMEOUT 120；
+        # 非 Windows 保持下方既有 offscreen 属性。测试本体零改动（5.3s
+        # D1 断言/完整 4 PASS 不变）。
+        set_tests_properties(stale_persistence_checks PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=${_plugin_dir_real}"
+            TIMEOUT 120)
+        unset(_qt_cmake_real)
+        unset(_prefix_expect_real)
+        unset(_prefix_real)
+        unset(_tmog_test_plugin_dir)
+        unset(_plugin_dir_real)
+        unset(_plugin_expect_real)
+        unset(_prefix_sep)
+        unset(_plugin_path_sep)
+    endif()
+
     # M4：Windows 便携目录（windeployqt 收集 Qt 运行库与插件）
     if(WIN32)
         find_program(WINDEPLOYQT_EXE windeployqt HINTS "${Qt6_DIR}/../../../bin")
