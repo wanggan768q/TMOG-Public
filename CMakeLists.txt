@@ -56,6 +56,11 @@ if(WIN32)
         add_executable(close_lifecycle_checks tests/close_lifecycle_checks.cpp)
         target_link_libraries(close_lifecycle_checks PRIVATE tmog_core)
         add_test(NAME close_lifecycle_checks COMMAND close_lifecycle_checks)
+
+        # #16 采样失败区分/代际/忙碌检查（同 #14，Qt Core 事件循环）
+        add_executable(sampling_recovery_checks tests/sampling_recovery_checks.cpp)
+        target_link_libraries(sampling_recovery_checks PRIVATE tmog_core)
+        add_test(NAME sampling_recovery_checks COMMAND sampling_recovery_checks)
     endif()
 endif()
 
@@ -70,6 +75,20 @@ if(TARGET Qt6::Widgets)
         WIN32_EXECUTABLE ON
         MACOSX_BUNDLE ON
     )
+
+    # #16 G5 检查：持久陈旧标注走生产呈现路径（离屏真实 MainWindow +
+    # 生产 SamplingWorker；GUI 目标可用时才有意义）。MainWindow.cpp 与
+    # TmogReplica 同源编入（非镜像）。
+    add_executable(stale_persistence_checks
+        tests/stale_persistence_checks.cpp
+        src/MainWindow.cpp
+        src/ProcessTableModel.cpp
+    )
+    target_link_libraries(stale_persistence_checks PRIVATE tmog_core Qt6::Widgets)
+    add_test(NAME stale_persistence_checks
+             COMMAND stale_persistence_checks)
+    set_tests_properties(stale_persistence_checks PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     # M4：Windows 便携目录（windeployqt 收集 Qt 运行库与插件）
     if(WIN32)

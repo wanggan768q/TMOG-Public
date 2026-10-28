@@ -26,7 +26,8 @@ namespace tmog {
 class SamplingWorker {
 public:
     using DoneFn = std::function<void(SampleResult)>;
-    using FailedFn = std::function<void()>;
+    // #16：失败回调带错误描述（结果不存在或 ok=false 均到达此处）
+    using FailedFn = std::function<void(const std::string&)>;
 
     SamplingWorker() = default;
     // 析构前必须已 shutdown 成功（调用方保证；shutdown 失败时禁止析构枚举器）

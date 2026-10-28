@@ -11,11 +11,16 @@
 #include <QSortFilterProxyModel>
 #include <QMessageBox>
 #include <QDateTime>
+#include <QLabel>
+#include <QStatusBar>
+#include <QThread>
 #include <utility>
 
 namespace tmog {
 
-MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+MainWindow::MainWindow(QWidget* parent,
+                       std::unique_ptr<IProcessEnumerator> enumerator_override)
+    : QMainWindow(parent) {
     model_ = new ProcessTableModel(this);
     proxy_ = new QSortFilterProxyModel(this);
     proxy_->setSourceModel(model_);
@@ -45,11 +50,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     // 平台枚举器与进程操作：编译期选择
     core_count_ = 0;
+    if (enumerator_override) {
+        // 检查注入（G5）：受控枚举器驱动生产采样路径（真实 worker/事件循环）。
+        core_count_ = 4;   // 注入路径无平台枚举器可询，取常数（检查不依赖核数）
+        enumerator_ = std::move(enumerator_override);
+    }
 #if defined(_WIN32)
-    auto* we = new WindowsProcessEnumerator();
-    core_count_ = we->logical_processor_count();
-    enumerator_.reset(we);
-    process_ops_ = std::make_unique<WindowsProcessOps>();
+    if (!enumerator_) {
+        auto* we = new WindowsProcessEnumerator();
+        core_count_ = we->logical_processor_count();
+        enumerator_.reset(we);
+        process_ops_ = std::make_unique<WindowsProcessOps>();
+    }
 #elif defined(__APPLE__)
     enumerator_ = std::make_unique<MacProcessEnumerator>();
     process_ops_ = std::make_unique<MacProcessOps>();
@@ -61,19 +73,56 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(&sample_timer_, &QTimer::timeout, this, &MainWindow::on_sample_tick);
     sample_timer_.start(1000);   // 1/sec，对应原版 Normal — 1/sec
 
+    // #16 G5：持久陈旧标注。addPermanentWidget 的 widget 不被临时 showMessage
+    // 隐藏——失败标注在 busy/"正在结束进程…"等短时消息期间持续可见。
+    stale_label_ = new QLabel(this);
+    stale_label_->setVisible(false);
+    statusBar()->addPermanentWidget(stale_label_);
+
     // 触发首次采样
     QMetaObject::invokeMethod(this, &MainWindow::on_sample_tick, Qt::QueuedConnection);
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow() {
+    // #16 防御：正常路径 closeEvent 已确认两线程退出；若构造后未走
+    // closeEvent（如测试直接销毁），尽力等待在途结束线程（terminate 有限）。
+    if (kill_thread_) kill_thread_->wait(4000);
+}
 
 void MainWindow::on_sample_tick() {
-    if (!paused_ && enumerator_ && !closing_)
-        worker_.start(this, enumerator_.get(),
-                      [this](SampleResult result) { apply_sample(std::move(result)); },
-                      [] {
-                          // 采样失败：跳过本帧，下个 tick 重试；错误语义在状态栏后续补充
-                      });
+    // 定时器路径：暂停/关闭中不采样（手动刷新路径见 on_refresh_now）
+    if (!paused_ && !closing_) start_sample();
+}
+
+// #16：启动一次采样，捕获当前代际。结果回调先比对代际——暂停（代际递增）
+// 前发出的在途结果到达后被直接丢弃，不进入差分、不建立基线。
+void MainWindow::start_sample() {
+    if (worker_.busy() || closing_ || !enumerator_) return;   // 忙碌/关闭中不重入
+    const auto generation = sample_generation_;
+    worker_.start(this, enumerator_.get(),
+                  [this, generation](SampleResult result) {
+                      if (generation != sample_generation_) return;   // 跨代际旧结果：丢弃
+                      apply_sample(std::move(result));
+                      if (sample_failed_) {
+                          // #16 G5：真实新样本成功才清陈旧——立即清除，无延时
+                          // timer（避免延时回调误清后续新失败）。旧代际成功
+                          // 在上方代际守卫已被丢弃，到此必为当前代际。
+                          sample_failed_ = false;
+                          stale_label_->setVisible(false);
+                      }
+                  },
+                  [this, generation](const std::string& error) {
+                      if (generation != sample_generation_) return;   // 跨代际失败：静默丢弃
+                      // 失败：保留上次数据显示（模型不动），基线作废。陈旧标注
+                      // 为持久 widget（addPermanentWidget），持续到当前代际真实
+                      // 成功帧清除——worker 迟缓/挂起时不消失，旧表不冒充当前。
+                      sample_failed_ = true;
+                      invalidate_baseline();
+                      stale_label_->setText(
+                          tr("数据已陈旧（采样失败：%1）")
+                              .arg(QString::fromStdString(error)));
+                      stale_label_->setVisible(true);
+                  });
 }
 
 void MainWindow::apply_sample(SampleResult result) {
@@ -122,15 +171,31 @@ const SampledRow* MainWindow::current_source_row() const {
 void MainWindow::on_pause_toggled(bool paused) {
     paused_ = paused;
     if (paused) {
-        // 暂停：基线作废，恢复后首帧整表"待采样"，差分不跨暂停期
+        // 暂停：代际递增——暂停前所有在途采样结果作废（快速暂停→恢复场景下
+        // 旧结果到达即被拒绝）；基线作废，恢复后首帧整表"待采样"。
+        ++sample_generation_;
+        invalidate_baseline();
+    } else {
+        // 恢复：基线也作废（暂停期手动刷新帧建立的基线不跨恢复差分），
+        // 下个 tick 正常采样并建立新基线
         invalidate_baseline();
     }
-    // 恢复：无额外动作，下个 tick 正常采样并建立新基线
 }
 
 void MainWindow::invalidate_baseline() { last_sample_.reset(); }
 
-void MainWindow::on_refresh_now() { on_sample_tick(); }
+// #16 手动刷新闭环：
+//  - 忙碌：拒绝重入并明确反馈（不叠加 worker，worker 内部也还有防线）。
+//  - 暂停：仍允许采一次（显示+可建立暂停期基线），paused_ 保持不变。
+//  - 关闭中：忽略。
+void MainWindow::on_refresh_now() {
+    if (closing_) return;
+    if (worker_.busy()) {
+        statusBar()->showMessage(tr("正在采样，请稍候…"), 2000);
+        return;
+    }
+    start_sample();
+}
 
 void MainWindow::on_selection_changed() {
     const auto* row = current_source_row();
@@ -147,9 +212,17 @@ void MainWindow::on_selection_changed() {
 }
 
 void MainWindow::on_end_task() {
-    const auto* row = current_source_row();
-    if (!row || !process_ops_) return;
-    const ProcessSnapshot& snap = row->snapshot;
+    if (!process_ops_) return;
+    // #16：先值拷贝目标身份——模态确认框期间 sample_timer_ 继续采样并
+    // replace_snapshot 重分配模型行，原 row/snap 指针会悬空；身份以值语义
+    // 持有，终止时再由平台层核实创建时间未变（PID 复用防御不受影响）。
+    const SampledRow* row = current_source_row();
+    if (!row) return;
+    const ProcessSnapshot snap = row->snapshot;
+    if (kill_thread_) {   // 已有结束操作在途：不叠加线程，给用户反馈
+        statusBar()->showMessage(tr("已有结束操作进行中，请稍候…"), 2000);
+        return;
+    }
 
     // 确认框：名称、PID、创建身份、未保存数据警告；取��不得执行
     const QDateTime created = QDateTime::fromMSecsSinceEpoch(
@@ -166,10 +239,25 @@ void MainWindow::on_end_task() {
         return;
     }
 
-    const auto outcome = process_ops_->terminate(snap.identity, /*wait_timeout_ms=*/3000);
-    show_kill_outcome(outcome);
-    if (outcome.result == KillResult::Ok || outcome.result == KillResult::Requested)
-        on_refresh_now();   // 立即刷新反映结果
+    // #16：terminate（含 WaitForSingleObject 退出确认，最多 3s）在一次性
+    // 工作线程执行，等待期间 GUI 保持响应（不冻结）。结果经队列连接回
+    // UI 线程展示；线程实际退出后由 finished 回调清指针。
+    statusBar()->showMessage(tr("正在结束进程…"));
+    auto* thread = QThread::create([this, identity = snap.identity]() {
+        const auto outcome = process_ops_->terminate(identity, /*wait_timeout_ms=*/3000);
+        QMetaObject::invokeMethod(this, [this, outcome]() {
+            statusBar()->clearMessage();
+            show_kill_outcome(outcome);
+            if (outcome.result == KillResult::Ok || outcome.result == KillResult::Requested)
+                on_refresh_now();   // 立即刷新反映结果
+        }, Qt::QueuedConnection);
+    });
+    kill_thread_ = thread;
+    connect(thread, &QThread::finished, this, [this, thread]() {
+        if (kill_thread_ == thread) kill_thread_ = nullptr;
+        thread->deleteLater();
+    });
+    thread->start();
 }
 
 void MainWindow::show_kill_outcome(const KillOutcome& outcome) {
@@ -213,6 +301,15 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         QMessageBox::warning(this, tr("退出"),
             tr("后台采样未能在 2 秒内结束，已取消关闭。请稍后重试。"));
         sample_timer_.start(1000);   // 恢复采样循环，用户可再次关闭
+        event->ignore();
+        return;
+    }
+    // #16：结束操作在途时同样有限等待（terminate 最长 3s + 余量）；超时
+    // 拒绝关闭，绝不带在途线程销毁（线程 lambda 捕获 this）。
+    if (kill_thread_ && !kill_thread_->wait(4000)) {
+        QMessageBox::warning(this, tr("退出"),
+            tr("结束进程操作未能在 4 秒内完成，已取消关闭。请稍后重试。"));
+        sample_timer_.start(1000);
         event->ignore();
         return;
     }

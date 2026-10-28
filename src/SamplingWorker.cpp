@@ -1,5 +1,6 @@
 #include "SamplingWorker.h"
 #include <QObject>
+#include <utility>
 
 namespace tmog {
 
@@ -12,12 +13,17 @@ public:
 public slots:
     void run() {
         auto result = enumerator->take_sample();
-        if (result) emit done(std::move(*result));
-        else emit failed();
+        // #16：结果存在与成功标志分别检查——ok=false 的 API 失败快照
+        // 不再被当成功投递（不进入成功差分、不污染基线）。
+        if (result && result->ok)
+            emit done(std::move(*result));
+        else
+            emit failed(result ? std::move(result->error)
+                               : std::string("take_sample returned no result"));
     }
 signals:
     void done(SampleResult result);
-    void failed();
+    void failed(const std::string& error);
 };
 
 SamplingWorker::~SamplingWorker() {
@@ -43,9 +49,9 @@ void SamplingWorker::start(QObject* owner, IProcessEnumerator* enumerator,
             },
             Qt::QueuedConnection);
     QObject::connect(bridge, &Bridge::failed, owner,
-            [this, on_failed = std::move(on_failed)]() {
+            [this, on_failed = std::move(on_failed)](const std::string& error) {
                 if (closing_) return;
-                on_failed();
+                on_failed(error);
             },
             Qt::QueuedConnection);
 

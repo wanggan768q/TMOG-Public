@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
         int done_calls = 0;
         worker.start(owner, raw,
                      [&](SampleResult) { ++done_calls; },
-                     [] {});
+                     [](const std::string&) {});
         check(worker.busy(), "slow sample in flight");
 
         // 等 worker 真正进入 take_sample（否则 shutdown 可能早于线程启动）
@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
         auto* owner = new QObject(&app);
         auto enumr = std::make_unique<SlowEnumerator>(300);
         SamplingWorker worker;
-        worker.start(owner, enumr.get(), [](SampleResult) {}, [] {});
+        worker.start(owner, enumr.get(), [](SampleResult) {}, [](const std::string&) {});
         QThread::msleep(100);
         const bool exited = worker.shutdown(5000);
         check(exited, "shutdown with sufficient timeout confirms thread exit");
@@ -105,7 +105,7 @@ int main(int argc, char** argv) {
         auto enumr = std::make_unique<SlowEnumerator>(50);
         SamplingWorker worker;
         int done_calls = 0;
-        worker.start(owner, enumr.get(), [&](SampleResult) { ++done_calls; }, [] {});
+        worker.start(owner, enumr.get(), [&](SampleResult) { ++done_calls; }, [](const std::string&) {});
         // 旋转事件循环直到回调投递或超时
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (done_calls == 0 && std::chrono::steady_clock::now() < deadline) {
@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
 
         // E：closing 后 start 拒绝新采样
         int second_calls = 0;
-        worker.start(owner, enumr.get(), [&](SampleResult) { ++second_calls; }, [] {});
+        worker.start(owner, enumr.get(), [&](SampleResult) { ++second_calls; }, [](const std::string&) {});
         QThread::msleep(300);
         QCoreApplication::processEvents();
         check(second_calls == 0 && !worker.busy(),
@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
         SamplingWorker worker;
 
         int done_calls = 0;
-        worker.start(owner, enumr.get(), [&](SampleResult) { ++done_calls; }, [] {});
+        worker.start(owner, enumr.get(), [&](SampleResult) { ++done_calls; }, [](const std::string&) {});
         QThread::msleep(200);   // 进入 take_sample
 
         const bool first = worker.shutdown(300);
@@ -165,7 +165,7 @@ int main(int argc, char** argv) {
                      [&](SampleResult r) {
                          if (r.ok && !r.processes.empty())
                              second_seq = static_cast<int>(r.processes[0].identity.pid);
-                     }, [] {});
+                     }, [](const std::string&) {});
         check(worker.busy(), "F6: start accepted after failed-shutdown revert (in flight)");
         const auto dl2 = std::chrono::steady_clock::now() + std::chrono::seconds(8);
         while (second_seq != 2 && std::chrono::steady_clock::now() < dl2) {
@@ -194,7 +194,7 @@ int main(int argc, char** argv) {
         auto* owner = new QObject(&app);
         auto enumr = std::make_unique<SlowEnumerator>(3000);
         SamplingWorker worker;
-        worker.start(owner, enumr.get(), [](SampleResult) {}, [] {});
+        worker.start(owner, enumr.get(), [](SampleResult) {}, [](const std::string&) {});
         QThread::msleep(200);
         const bool ok = worker.shutdown(8000);
         check(ok, "G1: 3s sample shutdown with 8s timeout succeeds (>2s direct evidence)");
