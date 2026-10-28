@@ -59,16 +59,16 @@ v1.0.1 历史证据要点（不能当作 v1.1.0 已证明）：
 
 | 字段 | 来源 | 单位 | 采样 | 权限 | 可靠性 | 覆盖 | 分层 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| CPU 基准频率 | `CallNtPowerInformation(11).MaxMhz` | MHz | 静态 | 标准用户 | 高 | 全平台 | 官方文档确认 |
-| CPU 有效频率 | PDH `\Processor Information(*)\Actual Frequency`（或 Processor Frequency × % Processor Performance / 100） | MHz | 1s tick | 标准用户 | 高（公式+实测吻合） | Win8+ | 本机实测 + 官方对象存在 |
-| CPU 报告频率 | `CallNtPowerInformation(11).CurrentMhz` | MHz | — | 标准用户 | **低**：实测钉死 MaxMhz，不随负载变 | 全平台 | 官方确认·行为有偏差 |
-| AC/电池 | `GetSystemPowerStatus.ACLineStatus` + `GUID_ACDC_POWER_SOURCE` 事件 | 0/1/255 | 事件驱动+慢速轮询 | 标准用户 | 高 | 全平台 | 官方文档确认 |
-| 电池百分比 | `BatteryLifePercent` + `GUID_BATTERY_PERCENTAGE_REMAINING` | 0–100（255=未知） | 事件驱动+60s 兜底 | 标准用户 | 高 | 有电池机器 | 官方文档确认 |
-| 充电状态 | `BatteryFlag`（bit 8）+ `SystemBatteryState(level 5)` | 位标志 | 同上 | 标准用户 | 高 | 有电池机器 | 官方文档确认 |
-| 省电模式 | `SystemStatusFlag` / `GUID_POWER_SAVING_STATUS` | 0/1 | 事件驱动 | 标准用户 | 高 | Win10+ | 官方文档确认 |
-| 睡眠/恢复 | `PowerRegisterSuspendResumeNotification`（Win8+）或 `WM_POWERBROADCAST` | 事件 | 注册即得 | 标准用户 | 高 | Win8+ | 官方文档确认 |
-| P/E 等级区分 | `GetLogicalProcessorInformationEx(RelationProcessorCore).EfficiencyClass` | 等级 0..N | 静态 | 标准用户 | 高 | Win10+ | 官方文档确认 + 本机实测 |
-| SMT | 同上 `.Flags & LTP_PC_SMT` | 位 | 静态 | 标准用户 | 高 | Win7+ | 官方文档确认 |
+| CPU 基准频率 | `CallNtPowerInformation(11).MaxMhz` | MHz | 静态 | 文档未说明特权限制；标准用户未实测 | 高 | 全平台 | 官方文档确认 |
+| CPU 有效频率 | PDH `\Processor Information(*)\Actual Frequency`（或 Processor Frequency × % Processor Performance / 100） | MHz | 1s tick | 文档未说明特权限制；标准用户未实测 | 高（公式+实测吻合） | Win8+ | 本机实测 + 官方对象存在 |
+| CPU 报告频率 | `CallNtPowerInformation(11).CurrentMhz` | MHz | — | 文档未说明特权限制；标准用户未实测 | **低**：实测钉死 MaxMhz，不随负载变 | 全平台 | 官方确认·行为有偏差 |
+| AC/电池 | `GetSystemPowerStatus.ACLineStatus` + `GUID_ACDC_POWER_SOURCE` 事件 | 0/1/255 | 事件驱动+慢速轮询 | 文档未说明特权限制；标准用户未实测 | 高 | 全平台 | 官方文档确认 |
+| 电池百分比 | `BatteryLifePercent` + `GUID_BATTERY_PERCENTAGE_REMAINING` | 0–100（255=未知） | 事件驱动+60s 兜底 | 文档未说明特权限制；标准用户未实测 | 高 | 有电池机器 | 官方文档确认 |
+| 充电状态 | `BatteryFlag`（bit 8）+ `SystemBatteryState(level 5)` | 位标志 | 同上 | 文档未说明特权限制；标准用户未实测 | 高 | 有电池机器 | 官方文档确认 |
+| 省电模式 | `SystemStatusFlag` / `GUID_POWER_SAVING_STATUS` | 0/1 | 事件驱动 | 文档未说明特权限制；标准用户未实测 | 高 | Win10+ | 官方文档确认 |
+| 睡眠/恢复 | `PowerRegisterSuspendResumeNotification`（Win8+）或 `WM_POWERBROADCAST` | 事件 | 注册即得 | 文档未说明特权限制；标准用户未实测 | 高 | Win8+ | 官方文档确认 |
+| P/E 等级区分 | `GetLogicalProcessorInformationEx(RelationProcessorCore).EfficiencyClass` | 等级 0..N | 静态 | 文档未说明特权限制；标准用户未实测 | 高 | Win10+ | 官方文档确认 + 本机实测 |
+| SMT | 同上 `.Flags & LTP_PC_SMT` | 位 | 静态 | 文档未说明特权限制；标准用户未实测 | 高 | Win7+ | 官方文档确认 |
 | **CPU 瓦数** | 无安全文档来源；唯一技术候选 = 未文档化 `\Energy Meter(rapl_package0_pkg)\Power` | 疑为 mW（未确认） | — | 未验证 | **低**（无官方承诺） | Intel RAPL only；VM 可能无实例 | **未知**（存在性本机实测，文档缺口） |
 | **GPU 瓦数** | 标准 API（DXGI）无接口；NVML/ADLX 厂商 SDK 存在但本轮选择不纳入（依赖/范围选择，见 §4 术语说明） | — | — | — | — | — | 本项目合同范围不可用（标准 API 无来源；不宣称全平台不可测） |
 | **CPU 温度** | WMI `MSAcpi_ThermalZoneTemperature`（root\WMI）`.CurrentTemperature` | 0.1 K → ÷10−273.15 | 慢速 5–10s | **文档未说明特权限制，标准用户未实测**（本机管理员下成功） | 低-中（OEM `_TZ` 依赖；本机只有主板热区） | 部分 OEM 机器 | 未知（本机实测存在，官方文档缺失→404） |

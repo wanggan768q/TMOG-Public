@@ -27,17 +27,17 @@
 | CPU 基准×性能% | `\Processor Information(*)\Processor Frequency` + `% Processor Performance` | 【本机实测】与 Actual Frequency 换算一致 |
 | P/E-core 区分 | `GetLogicalProcessorInformationEx(RelationProcessorCore).EfficiencyClass` | 【官方文档确认】【本机实测】8 核 class=1+SMT（P-core）、4 核 class=0 无 SMT（E-core）；语义是性能等级非 Intel 品牌名 |
 | SMT | 同上 `.Flags & LTP_PC_SMT` | 【官方文档确认】 |
-| AC/电池 | `GetSystemPowerStatus`（ACLineStatus/BatteryFlag/BatteryLifePercent/BatteryLifeTime） | 【官方文档确认】无权限要求；BatteryFullLifeTime 是估算值 |
+| AC/电池 | `GetSystemPowerStatus`（ACLineStatus/BatteryFlag/BatteryLifePercent/BatteryLifeTime） | 【官方文档确认】文档未说明特权限制，标准用户未实测；BatteryFullLifeTime 是估算值 |
 | 电源源通知 | `RegisterPowerSettingNotification(GUID_ACDC_POWER_SOURCE)` → WM_POWERBROADCAST | 【官方文档确认】Vista+，窗口消息；PowerSettingRegisterNotification（Win7+，回调，注册即回当前值） |
 | 电池百分比通知 | `GUID_BATTERY_PERCENTAGE_REMAINING`（0–100） | 【官方文档确认】 |
 | 省电模式 | `GUID_POWER_SAVING_STATUS` / `SystemStatusFlag` | 【官方文档确认】Win10+ |
-| 睡眠/恢复 | `PowerRegisterSuspendResumeNotification`（PBT_APMSUSPEND / PBT_APMRESUMESUSPEND / PBT_APMRESUMEAUTOMATIC） | 【官方文档确认】Win8+，回调机制，无特权要求 |
+| 睡眠/恢复 | `PowerRegisterSuspendResumeNotification`（PBT_APMSUSPEND / PBT_APMRESUMESUSPEND / PBT_APMRESUMEAUTOMATIC） | 【官方文档确认】Win8+，回调机制；文档未说明特权限制，标准用户未实测 |
 | 系统空闲/冷却模式 | `CallNtPowerInformation(SystemPowerInformation=12).CoolingMode` | 【官方文档确认】PO_TZ_INVALID_MODE 可作"无 ACPI 热区"官方探测信号 |
 | CPU 瓦数 | **无文档化来源**；唯一候选 = 未文档化计数器 `\Energy Meter(*)\Power`（RAPL） | 【本机实测存在】【官方文档缺口】Intel-only，单位未确认（实测 pkg≈75.5，若 mW 则量级合理） |
 | GPU 瓦数/温度 | DXGI 1.6 全接口无任何温度/功耗方法（IDXGIAdapter4 仅 GetDesc3）；NVML/ADLX 厂商 SDK 存在但本轮选择不纳入（依赖/驱动/权限与范围选择，非禁止性约束） | 【官方文档确认：标准 API 无来源】+【本轮范围选择】（本项目合同范围不可用，不宣称全平台不可测） |
 | CPU 温度 | WMI `MSAcpi_ThermalZoneTemperature`(root\WMI)，单位十分之一开尔文 | 【官方文档缺失】【本机实测存在】TZ00=301.0K；OEM 依赖；官方权限文档缺失 |
 | CPU 温度（备选） | `Win32_TemperatureProbe` | 【官方文档确认：不可用】"current implementations of WMI do not populate the CurrentReading property" |
-| per-core 温度/瓦数 | MSR（0x19C、RAPL 0x6xx） | 【明确不可用】RDMSR 是 Ring0 指令，必然内核驱动 |
+| per-core 温度/瓦数 | MSR（0x19C、RAPL 0x6xx） | 【本轮合同范围不可用】所选标准 API 无已确认来源；RDMSR 直读需 Ring0，本轮无驱动约束下不采用。不排除厂商已有来源，本轮未纳入 |
 
 ## 3. 原版 v1.1.0/v1.0.1 证据（原版观察层）
 
@@ -70,7 +70,7 @@ CPU 瓦数字符串全部绑定厂商 SDK，无任何系统 API 佐证：
 | 0x1403fb210 / 0x140438d40 | `CPU Power` |
 | 0x140415e10 | `Power consumption` |
 
-→ 原版 CPU 功耗来自 **AMD Ryzen Master SDK / Intel 侧等厂商 SDK**（需要其驱动/服务栈）。Intel 侧未见 RAPL/MSR/Energy Meter 字符串。**本项目按约束不引入厂商 SDK → CPU 功耗在原版路径上不可复刻**。
+→ v1.0.1 已保存字符串包含 **AMD Ryzen Master SDK** 调用标签；Intel 侧具体来源未确认，未见相关名称不能证明未使用 RAPL/MSR/Energy Meter。本项目本轮选择不纳入厂商 SDK（依赖/驱动/权限与范围选择，不是禁止合法本地 SDK 的约束），因此这些厂商绑定路径本轮不复刻。
 
 ### 3.3 原版 GPU 功耗来源 【原版静态证据】
 
@@ -87,7 +87,7 @@ CPU 瓦数字符串全部绑定厂商 SDK，无任何系统 API 佐证：
 ### 3.4 原版温度来源 【原版静态证据 + 缺口】
 
 - UI 字符串有 `TEMP`（0x140193680 附近 switch，绘图标签）、设置页 `Temperature` 选项（0x1400da0d0 反编译体）。
-- **`MSAcpi_ThermalZoneTemperature` 字符串 0 命中**；`WMI` 温度类名、`\\root\wmi` 命名空间均未在字符串清单出现。
+- 在已保存的字符串清单中未见 `MSAcpi_ThermalZoneTemperature`、相关 WMI 温度类名或 `\\root\wmi` 命名空间；未保存针对这些名称的独立搜索记录，不能据此宣称完整搜索 0 命中或原版未使用这些接口。
 - → 原版温度来源**未在静态证据中确认**（可能走厂商 SDK 的温度接口，NVML/ADLX/Ryzen Master 均含温度 API）。温度来源标记【未知】，需动态验证（不在本票自动授权范围）。
 
 ### 3.5 原版页面结构 【原版静态证据】
@@ -95,7 +95,7 @@ CPU 瓦数字符串全部绑定厂商 SDK，无任何系统 API 佐证：
 - 页面名 `Power & Freq`（0x140415ce8），15 项导航第 9 位。
 - RTTI 符号：`PowerAndFreqRows@tmog::host::WindowsApplication`（返回 `vector<DisplayRow>`，lambda 接收 `HardwareDeviceDescriptor`）→ 原版按**硬件设备描述符逐设备**渲染行，CPU/GPU/盘各自一行。
 - Summary 图的 `POWER` 图类型（switch case 6，`CPU Power` 标签）。
-- **原版未用 PDH 性能计数器**：`PdhOpenQuery`/`PdhAddCounter` 字符串 0 命中；`\Processor Information` 计数器路径 0 命中。
+- **原版是否使用 PDH 性能计数器未确认**：已保存材料没有针对 `PdhOpenQuery`、`PdhAddCounter` 或 `\Processor Information` 的独立搜索记录；`search_power.md` 仅覆盖 `Power` 查询，不能证明这些名称 0 命中或接口未使用。即使字符串搜索为空，也不能证明工件中不存在该文本或应用未调用该接口。本合同选择 PDH 属自主设计，不依赖对原版的否定结论。
 
 ### 3.6 原版证据的局限 【限制】
 
@@ -109,28 +109,28 @@ CPU 瓦数字符串全部绑定厂商 SDK，无任何系统 API 佐证：
 
 | 字段 | 来源 API | 单位 | 采样建议 | 权限 | 可靠性 | 覆盖/支持限制 | 分层 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| CPU 基准频率 | `CallNtPowerInformation(11).MaxMhz` | MHz | 启动时一次+电源方案变更 | 无 | 高 | 全平台 WinXP+ | 【官方文档确认】 |
-| CPU 有效频率 | PDH `\Processor Information(*)\Actual Frequency` | MHz | 1s（随主 tick） | 无 | 中-高 | Win8+；VM/部分虚拟化可能无实例 | 【本机实测】 |
-| CPU 性能百分比 | PDH `% Processor Performance` | % | 1s | 无 | 中 | 同上 | 【本机实测】 |
-| CPU 报告频率（原版口径） | `CallNtPowerInformation(11).CurrentMhz` | MHz | 不建议单独展示 | 无 | **低**（实测恒等于 MaxMhz） | 全平台 | 【官方文档确认但行为有已知偏差】 |
-| P/E-core 分级 | `EfficiencyClass`（GetLogicalProcessorInformationEx） | 等级 0..n | 静态 | 无 | 高 | Win10+；异构系统才非零；语义为性能等级 | 【官方文档确认】【本机实测】 |
-| SMT/逻辑核拓扑 | 同上 Flags + RelationProcessorCore/Package | — | 静态 | 无 | 高 | Win7+ | 【官方文档确认】 |
-| AC/电池状态 | `GetSystemPowerStatus` + `GUID_ACDC_POWER_SOURCE` 通知 | 0/1/255 | 事件驱动+60s 兜底轮询 | 无 | 高 | 全平台；台式机 ACLineStatus 可能为 255 | 【官方文档确认】 |
-| 电池百分比 | `BatteryLifePercent` + `GUID_BATTERY_PERCENTAGE_REMAINING` | 0–100, 255=未知 | 事件驱动 | 无 | 高 | 有电池机器 | 【官方文档确认】 |
-| 充电中 | `BatteryFlag & 8`；`CallNtPowerInformation(5)` SystemBatteryState | 位 | 事件驱动 | 无 | 高 | 有电池+智能电池子系统 | 【官方文档确认】 |
-| 剩余时间 | `BatteryLifeTime` | 秒，-1=未知 | 事件驱动 | 无 | 中（系统估算） | 接 AC 时恒 -1 | 【官方文档确认】 |
-| 省电模式 | `GUID_POWER_SAVING_STATUS` | 0/1 | 事件驱动 | 无 | 高 | Win10+ | 【官方文档确认】 |
-| 睡眠/恢复事件 | `PowerRegisterSuspendResumeNotification` 或 WM_POWERBROADCAST | 事件 | 注册即得 | 无 | 高 | Win8+（回调）/全平台（消息） | 【官方文档确认】 |
-| 冷却模式/热区存在性 | `CallNtPowerInformation(12).CoolingMode` | 枚举 | 慢速（10s+） | 无 | 中 | 用于探测 ACPI 热区是否定义 | 【官方文档确认】 |
+| CPU 基准频率 | `CallNtPowerInformation(11).MaxMhz` | MHz | 启动时一次+电源方案变更 | 文档未说明特权限制；标准用户未实测 | 高 | 全平台 WinXP+ | 【官方文档确认】 |
+| CPU 有效频率 | PDH `\Processor Information(*)\Actual Frequency` | MHz | 1s（随主 tick） | 文档未说明特权限制；标准用户未实测 | 中-高 | Win8+；VM/部分虚拟化可能无实例 | 【本机实测】 |
+| CPU 性能百分比 | PDH `% Processor Performance` | % | 1s | 文档未说明特权限制；标准用户未实测 | 中 | 同上 | 【本机实测】 |
+| CPU 报告频率（原版口径） | `CallNtPowerInformation(11).CurrentMhz` | MHz | 不建议单独展示 | 文档未说明特权限制；标准用户未实测 | **低**（实测恒等于 MaxMhz） | 全平台 | 【官方文档确认但行为有已知偏差】 |
+| P/E-core 分级 | `EfficiencyClass`（GetLogicalProcessorInformationEx） | 等级 0..n | 静态 | 文档未说明特权限制；标准用户未实测 | 高 | Win10+；异构系统才非零；语义为性能等级 | 【官方文档确认】【本机实测】 |
+| SMT/逻辑核拓扑 | 同上 Flags + RelationProcessorCore/Package | — | 静态 | 文档未说明特权限制；标准用户未实测 | 高 | Win7+ | 【官方文档确认】 |
+| AC/电池状态 | `GetSystemPowerStatus` + `GUID_ACDC_POWER_SOURCE` 通知 | 0/1/255 | 事件驱动+60s 兜底轮询 | 文档未说明特权限制；标准用户未实测 | 高 | 全平台；台式机 ACLineStatus 可能为 255 | 【官方文档确认】 |
+| 电池百分比 | `BatteryLifePercent` + `GUID_BATTERY_PERCENTAGE_REMAINING` | 0–100, 255=未知 | 事件驱动 | 文档未说明特权限制；标准用户未实测 | 高 | 有电池机器 | 【官方文档确认】 |
+| 充电中 | `BatteryFlag & 8`；`CallNtPowerInformation(5)` SystemBatteryState | 位 | 事件驱动 | 文档未说明特权限制；标准用户未实测 | 高 | 有电池+智能电池子系统 | 【官方文档确认】 |
+| 剩余时间 | `BatteryLifeTime` | 秒，-1=未知 | 事件驱动 | 文档未说明特权限制；标准用户未实测 | 中（系统估算） | 接 AC 时恒 -1 | 【官方文档确认】 |
+| 省电模式 | `GUID_POWER_SAVING_STATUS` | 0/1 | 事件驱动 | 文档未说明特权限制；标准用户未实测 | 高 | Win10+ | 【官方文档确认】 |
+| 睡眠/恢复事件 | `PowerRegisterSuspendResumeNotification` 或 WM_POWERBROADCAST | 事件 | 注册即得 | 文档未说明特权限制；标准用户未实测 | 高 | Win8+（回调）/全平台（消息） | 【官方文档确认】 |
+| 冷却模式/热区存在性 | `CallNtPowerInformation(12).CoolingMode` | 枚举 | 慢速（10s+） | 文档未说明特权限制；标准用户未实测 | 中 | 用于探测 ACPI 热区是否定义 | 【官方文档确认】 |
 | CPU 温度 | `MSAcpi_ThermalZoneTemperature`(root\WMI) | 0.1 K（÷10−273.15→°C） | 慢速（5–10s） | **可能需管理员（官方无文档，本机管理员实测通过）** | **低** | OEM ACPI _TZ 依赖；多数机器缺失或仅主板热区；随时可能消失 | 【本机实测存在】【官方文档缺失】 |
 | CPU 温度（备选探测） | `Win32_TemperatureProbe`(root\CIMV2) | — | — | — | **不可用** | 官方声明不填充 CurrentReading | 【明确不可用】 |
 | CPU 瓦数 | 无安全来源；实验候选 `\Energy Meter(*)\Power`（RAPL） | 疑似 mW（未确认） | 若做：2s+，可降级隐藏 | 未验证标准用户 | **低**（未文档化、Microsoft 不承诺） | Intel-only；VM/AMD/旧平台无实例 | 【本机实测存在】【官方文档缺口】 |
 | GPU 瓦数 | 标准 API 无来源（NVML/ADLX 本轮选择不纳入） | — | — | — | — | — | 本项目合同范围不可用（不宣称全平台不可测） |
 | GPU 温度 | 同上 | — | — | — | — | — | 本项目合同范围不可用（同上） |
-| per-core 温度 | 无（MSR Ring0） | — | — | — | — | — | 【明确不可用】 |
+| per-core 温度 | 所选标准 API 无已确认来源；MSR 直读需 Ring0 | — | — | — | — | — | 【本轮合同范围不可用】不排除厂商已有来源，本轮未纳入 |
 
 **矩阵标注说明**：
-- 权限列"无"指**官方文档未说明特权限制**——这不等于文档担保标准用户可调用；本会话为管理员会话，标准用户实际行为未实测——MSAcpi/Energy Meter 行已单独标"未验证标准用户"。
+- 权限列统一写明**官方文档未说明特权限制、标准用户未实测**，不以“无”或“标准用户”简写替代；这不等于文档担保可调用。本会话为管理员会话，MSAcpi/Energy Meter 的标准用户实际行为同样未实测。
 - CurrentMhz 钉死 MaxMhz 的实测偏差**仅限本测试机与本次采样场景**，不外推为该 API 在所有机型上的行为。
 - GPU 行"不可用"指本项目合同范围（标准 API 无来源 + 厂商 SDK 本轮选择不纳入），不宣称全平台不可测。
 - per-core 温度行：本轮无驱动约束下 MSR（Ring0）不可达 + 所选标准 API 无已确认来源；不排除厂商已有来源（本轮未纳入）。
@@ -186,7 +186,7 @@ CPU 瓦数字符串全部绑定厂商 SDK，无任何系统 API 佐证：
 ## 7. 验收对照（Issue #9 acceptance criteria）
 
 - [x] **每个字段有来源、单位、频率、权限、可靠性及支持／未知矩阵** → 第 4 节 19 行矩阵。
-- [x] **选定安全可行的频率／电源测量，并明确功耗／温度无来源时不可用** → 第 5.1/5.2 节承诺合同；CPU 瓦数/GPU 全项/per-core 温度标【明确不可用】；CPU 温度按尽力而为+覆盖限制。
+- [x] **选定安全可行的频率／电源测量，并明确功耗／温度无来源时不可用** → 第 5.1/5.2 节承诺合同；CPU 瓦数默认不纳入；GPU 全项/per-core 温度标【本轮合同范围不可用，不排除其他来源】；CPU 温度按尽力而为+覆盖限制。
 - [ ] **维护者确认展示范围及后续测试合同** → 第 5.4 节列出 5 项决策；待确认。对应硬件证据（AMD/笔记本/VM/标准用户）缺失项已标"未验证"，构成验收时的限制或阻塞。
 - [x] **研究没有安装驱动或访问厂商授权，不以继续调查完成** → 全程仅 PDH/WMI/Power API 查询 + 二进制静态分析；第 6 节限制清单。
 

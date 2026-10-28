@@ -142,7 +142,7 @@ typedef struct _PROCESSOR_RELATIONSHIP {
 > "The system is only capable of estimating BatteryFullLifeTime based on calculations on BatteryLifeTime and BatteryLifePercent. Without smart battery subsystems, this value may not be accurate enough to be useful."
 > （BatteryFullLifeTime 是估算值，无智能电池子系统时可能不准确。）
 
-- 权限：文档未要求任何特权。最低支持 Windows XP。
+- 权限：文档未说明特权限制；标准用户未实测。最低支持 Windows XP。
 
 ### 3.2 CallNtPowerInformation SystemPowerInformation (level 12) 【官方文档确认】
 
@@ -175,7 +175,7 @@ DWORD PowerRegisterSuspendResumeNotification(
 
 - 最低支持：**Windows 8** / Server 2012（文档 Requirements 明确）。
 - 机制：**回调**（DeviceNotifyCallbackRoutine），不是窗口消息。
-- 权限：文档未要求特权。
+- 权限：文档未说明特权限制；标准用户未实测。
 - 注意（实现提示）：Qt 主线程不在此回调上，需要自建消息泵或用窗口消息替代方案（见 3.4 的 WM_POWERBROADCAST 也可收到 PBT_APMSUSPEND/PBT_APMRESUMESUSPEND）。
 
 ### 3.4 GUID_ACDC_POWER_SOURCE / PowerSettingRegisterNotification / WM_POWERBROADCAST 【官方文档确认】
@@ -198,7 +198,7 @@ DWORD PowerRegisterSuspendResumeNotification(
 
 - RegisterPowerSettingNotification 文档（https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerpowersettingnotification）：交互应用 Flags=0、hRecipient=窗口句柄；服务 Flags=1。
 - PowerSettingRegisterNotification 文档（https://learn.microsoft.com/en-us/windows/win32/api/powersetting/nf-powersetting-powersettingregisternotification）：Remarks 指出"注册后立即用当前值回调一次"——适合初始化。
-- 权限：两者文档均未要求特权。
+- 权限：两者文档均未说明特权限制；标准用户未实测。
 
 ### 3.5 电池状态（SystemBatteryState level 5）【官方文档确认】
 
@@ -297,7 +297,7 @@ ACPI\ThermalZone\TZ00_0               3010    → 301.0 K = 27.85 °C
 
 - → **明确不可用**作为温度来源（官方自己声明不填充）。
 
-### 5.3 CPU per-core 温度（MSR 0x19C/DTS、Intel DPTF）【官方文档确认：仅内核驱动可达】
+### 5.3 CPU per-core 温度（MSR 0x19C/DTS、Intel DPTF）【本轮合同范围不可用：MSR 直读需 Ring0】
 
 - per-core 温度读数依赖 MSR（IA32_THERM_STATUS 0x19C、MSR_TEMPERATURE_TARGET 等），用户态不可直接访问（Ring0 指令 RDMSR）。LibreHardwareMonitor 源码证实其 per-core 温度走 `ioctl_read_msr` 内核模块（见 4.7）。
 - Intel DPTF（Dynamic Tuning Framework）是 OEM/驱动侧方案，无用户态公开 API。
@@ -316,11 +316,11 @@ ACPI\ThermalZone\TZ00_0               3010    → 301.0 K = 27.85 °C
 
 | API | 管理员要求 | 证据 |
 | --- | --- | --- |
-| CallNtPowerInformation（level 11/12/5） | 文档无要求；错误码含 STATUS_ACCESS_DENIED 但仅对敏感 level | 官方页 + 本机实测成功 |
-| GetSystemPowerStatus | 无 | 官方页无权限段 |
-| PowerRegisterSuspendResumeNotification | 无 | 官方页无权限段 |
-| RegisterPowerSettingNotification | 无 | 官方页无权限段 |
-| PowerSettingRegisterNotification | 无 | 官方页无权限段 |
+| CallNtPowerInformation（level 11/12/5） | 文档未说明特权限制；标准用户未实测，返回码含 STATUS_ACCESS_DENIED | 官方页 + 本机管理员实测成功 |
+| GetSystemPowerStatus | 文档未说明特权限制；标准用户未实测 | 官方页无权限段 |
+| PowerRegisterSuspendResumeNotification | 文档未说明特权限制；标准用户未实测 | 官方页无权限段 |
+| RegisterPowerSettingNotification | 文档未说明特权限制；标准用户未实测 | 官方页无权限段 |
+| PowerSettingRegisterNotification | 文档未说明特权限制；标准用户未实测 | 官方页无权限段 |
 | PDH 性能计数器（Processor Information / Energy Meter） | 文档未说明特权限制；本机管理员下验证可读，标准用户未实测 | 本机实测 + 文档缺口 |
 | MSAcpi_ThermalZoneTemperature | **官方无文档**；二手来源普遍称需管理员；本机管理员下成功 | 见 5.1 |
 | MSR/RAPL 直读 | 需内核驱动承载（本轮不采用） | 见 4.7/5.3 |
@@ -341,21 +341,21 @@ ACPI\ThermalZone\TZ00_0               3010    → 301.0 K = 27.85 °C
 
 | 字段 | 数据来源 API | 单位 | 采样建议 | 权限 | 可靠性 | 覆盖限制 | 分层 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| CPU 基准频率 | CallNtPowerInformation(11).MaxMhz；或计数器 Processor Frequency（基准口径） | MHz | 慢速（1–10s）即可，静态 | 无 | 高（官方） | 全平台 | 【官方文档确认】 |
-| CPU 当前/有效频率 | 计数器 `\Processor Information(*)\Actual Frequency`（或 Processor Frequency × % Processor Performance/100） | MHz | 1s tick | 无 | 高（实测与公式吻合） | 全平台（Win8+ 计数器对象） | 【本机实测】+【官方对象存在】 |
-| CPU"当前频率"（CallNtPowerInformation.CurrentMhz） | CallNtPowerInformation(11).CurrentMhz | MHz | 不建议作为主频率源 | 无 | **低**（实测钉死在 MaxMhz，不随负载变） | 全平台 | 【官方文档确认但行为有已知偏差】 |
-| AC/电池 | GetSystemPowerStatus.ACLineStatus | 0/1/255 | 事件驱动（GUID_ACDC_POWER_SOURCE）+ 慢速轮询 | 无 | 高 | 全平台 | 【官方文档确认】 |
-| 电池百分比 | GetSystemPowerStatus.BatteryLifePercent；事件 GUID_BATTERY_PERCENTAGE_REMAINING | 0–100, 255=未知 | 事件驱动 + 60s 兜底 | 无 | 高 | 有电池的机器 | 【官方文档确认】 |
-| 充电状态 | BatteryFlag & 8；SystemBatteryState(level 5) | 位标志 | 同上 | 无 | 高 | 有电池的机器 | 【官方文档确认】 |
-| 省电模式 | SystemStatusFlag / GUID_POWER_SAVING_STATUS | 0/1 | 事件驱动 | 无 | 高 | Win10+ | 【官方文档确认】 |
-| 睡眠/恢复通知 | PowerRegisterSuspendResumeNotification（回调，Win8+）或 WM_POWERBROADCAST(PBT_APMSUSPEND/RESUME) | 事件 | 注册即得 | 无 | 高 | 全平台 Win8+ | 【官方文档确认】 |
-| 电源源变更通知 | RegisterPowerSettingNotification(GUID_ACDC_POWER_SOURCE) → WM_POWERBROADCAST | 事件（PoAc/PoDc/PoHot） | 注册即得 | 无 | 高 | 全平台 Vista+ | 【官方文档确认】 |
+| CPU 基准频率 | CallNtPowerInformation(11).MaxMhz；或计数器 Processor Frequency（基准口径） | MHz | 慢速（1–10s）即可，静态 | 文档未说明特权限制；标准用户未实测 | 高（官方） | 全平台 | 【官方文档确认】 |
+| CPU 当前/有效频率 | 计数器 `\Processor Information(*)\Actual Frequency`（或 Processor Frequency × % Processor Performance/100） | MHz | 1s tick | 文档未说明特权限制；标准用户未实测 | 高（实测与公式吻合） | 全平台（Win8+ 计数器对象） | 【本机实测】+【官方对象存在】 |
+| CPU"当前频率"（CallNtPowerInformation.CurrentMhz） | CallNtPowerInformation(11).CurrentMhz | MHz | 不建议作为主频率源 | 文档未说明特权限制；标准用户未实测 | **低**（实测钉死在 MaxMhz，不随负载变） | 全平台 | 【官方文档确认但行为有已知偏差】 |
+| AC/电池 | GetSystemPowerStatus.ACLineStatus | 0/1/255 | 事件驱动（GUID_ACDC_POWER_SOURCE）+ 慢速轮询 | 文档未说明特权限制；标准用户未实测 | 高 | 全平台 | 【官方文档确认】 |
+| 电池百分比 | GetSystemPowerStatus.BatteryLifePercent；事件 GUID_BATTERY_PERCENTAGE_REMAINING | 0–100, 255=未知 | 事件驱动 + 60s 兜底 | 文档未说明特权限制；标准用户未实测 | 高 | 有电池的机器 | 【官方文档确认】 |
+| 充电状态 | BatteryFlag & 8；SystemBatteryState(level 5) | 位标志 | 同上 | 文档未说明特权限制；标准用户未实测 | 高 | 有电池的机器 | 【官方文档确认】 |
+| 省电模式 | SystemStatusFlag / GUID_POWER_SAVING_STATUS | 0/1 | 事件驱动 | 文档未说明特权限制；标准用户未实测 | 高 | Win10+ | 【官方文档确认】 |
+| 睡眠/恢复通知 | PowerRegisterSuspendResumeNotification（回调，Win8+）或 WM_POWERBROADCAST(PBT_APMSUSPEND/RESUME) | 事件 | 注册即得 | 文档未说明特权限制；标准用户未实测 | 高 | 全平台 Win8+ | 【官方文档确认】 |
+| 电源源变更通知 | RegisterPowerSettingNotification(GUID_ACDC_POWER_SOURCE) → WM_POWERBROADCAST | 事件（PoAc/PoDc/PoHot） | 注册即得 | 文档未说明特权限制；标准用户未实测 | 高 | 全平台 Vista+ | 【官方文档确认】 |
 | CPU 瓦数 | **无安全来源**；唯一候选 = `\Energy Meter(rapl_package0_pkg)\Power`（未文档化） | 实测值疑为 mW（未确认） | 若做：1–2s，可降级 | 管理员未验证（本机管理员下可读） | **低**（未文档化，Microsoft 不承诺） | Intel-only（RAPL）、VM 可能无实例 | 【本机实测存在】【官方文档缺口】 |
 | GPU 瓦数 | 标准 API（DXGI）无接口；NVML/ADLX 厂商 SDK 存在但本轮选择不纳入（依赖/范围选择） | — | — | — | — | — | 本项目合同范围不可用（不宣称全平台不可测） |
 | CPU 温度 | WMI `MSAcpi_ThermalZoneTemperature`(root\WMI).CurrentTemperature | 十分之一开尔文 → ÷10−273.15 得 °C | 慢速（5–10s），温度变化慢 | 可能需管理员（官方无文档） | 低-中（OEM 依赖，多数机器只有主板热区或缺失） | OEM ACPI _TZ 支持的机器；Win32_TemperatureProbe 官方声明不填充 | 【本机实测存在】【官方文档缺失】 |
 | GPU 温度 | 同上（DXGI 无接口；厂商 SDK 本轮不纳入） | — | — | — | — | — | 本项目合同范围不可用（同上） |
-| P/E-core 区分 | GetLogicalProcessorInformationEx(RelationProcessorCore).EfficiencyClass（Win10+） | 等级值（0=highest efficiency） | 静态 | 无 | 高（官方语义 + 本机 8P+4E 实测吻合） | Win10+；语义是性能等级，非 Intel 品牌名 | 【官方文档确认】【本机实测】 |
-| SMT/超线程 | 同上 .Flags & LTP_PC_SMT | 位 | 静态 | 无 | 高 | 全平台 Win7+ | 【官方文档确认】 |
+| P/E-core 区分 | GetLogicalProcessorInformationEx(RelationProcessorCore).EfficiencyClass（Win10+） | 等级值（0=highest efficiency） | 静态 | 文档未说明特权限制；标准用户未实测 | 高（官方语义 + 本机 8P+4E 实测吻合） | Win10+；语义是性能等级，非 Intel 品牌名 | 【官方文档确认】【本机实测】 |
+| SMT/超线程 | 同上 .Flags & LTP_PC_SMT | 位 | 静态 | 文档未说明特权限制；标准用户未实测 | 高 | 全平台 Win7+ | 【官方文档确认】 |
 
 ---
 
