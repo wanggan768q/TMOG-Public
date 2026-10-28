@@ -1,0 +1,31 @@
+probe: user=Ambition elevated_token_check_follows
+StartTrace rc=0 (0=OK, 5=ACCESS_DENIED, 183=ALREADY_EXISTS)
+EnableTraceEx2 rc=0
+child pid=47768
+EVENT #1 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #2 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #3 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #4 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #5 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #6 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #7 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #8 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #9 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #10 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #11 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #12 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #13 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #14 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #15 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #16 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #17 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #18 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #19 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+EVENT #20 name=KERNEL_NETWORK_TASK_UDPIP pid=4 fields: 
+ControlTrace STOP rc=0
+ControlTrace QUERY rc=4201 EventsLost=0 LogBuffersLost=0 RealTimeBuffersLost=0
+
+=== SUMMARY ===
+total events=124 child_pid=47768
+-- by event|field --
+-- by pid --

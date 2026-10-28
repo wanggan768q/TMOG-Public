@@ -1,0 +1,12 @@
+StartTrace rc=0 (0=OK 5=ACCESS_DENIED 183=ALREADY_EXISTS)
+EnableTraceEx2 rc=0
+child pid=72448
+child: tcp sent=65536 recv=65536
+child: udp sent=22400 recv=22400
+QUERY(before stop): EventsLost=0 BuffersLost=0 RTBuffersLost=0
+ControlTrace STOP rc=0
+
+=== SUMMARY ===
+total events=0 child_pid=72448
+-- by task|op|ver --
+-- by pid --
