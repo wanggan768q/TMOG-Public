@@ -194,11 +194,11 @@ URL: https://github.com/repnz/etw-providers-docs（manifest 文件 `Manifests-Wi
 | UDP 覆盖 | ✅ 42/43/58/59 | ❌ | 端点表无字节 | ❌ | ❌ |
 | 身份可靠性 | PID 事件级；需防复用对账 | 绑定连接行（Row→PID） | PID 快照 | 无 PID | — |
 | 开销可控性 | 可控（小缓冲+窄 keyword），需实测 | 极低（轮询） | 极低 | 极低 | — |
-| 精度/口径 | 逐操作求和，无漏计（除丢事件） | 快照间关断的连接漏计尾部 | 无字节 | 系统总量对照 | — |
+| 精度/口径 | 逐事件求和；受provider覆盖盲区、事件丢失及身份关联限制，不能声称除丢失外无漏计 | 快照间关断的连接漏计尾部 | 无字节 | 系统总量对照 | — |
 
 ### 推荐组合
 
-1. **主机制（管理员模式）**：`EVENT_TRACE_SYSTEM_LOGGER_MODE` 会话 + 启用内核网络事件（manifest keyword `KERNEL_NETWORK_KEYWORD_IPV4|IPV6` = 0x30，或 legacy `EVENT_TRACE_FLAG_NETWORK_TCPIP`），消费端按 (PID, 方向) 聚合 `size` 差分；ControlTrace QUERY 周期读 EventsLost，丢失>0 时在 UI 标注"数据可能偏低"。会话参数：BufferSize 64KB、MinimumBuffers 小值、FlushTimer 1–5s。
+1. **主机制（管理员模式）**：`EVENT_TRACE_SYSTEM_LOGGER_MODE` 会话 + 启用内核网络事件（manifest keyword `KERNEL_NETWORK_KEYWORD_IPV4|IPV6` = 0x30，或 legacy `EVENT_TRACE_FLAG_NETWORK_TCPIP`），消费端按 (payload PID, 方向) 聚合 `size`；ControlTrace QUERY周期读EventsLost，丢失增量>0时标数据可能偏低。**候选合同固定参数**：BufferSize **64KB**、MinimumBuffers **16**、MaximumBuffers **64**、FlushTimer **1s**（与归档探针一致；不是已验证资源总开销）。
 2. **UDP**：由主机制覆盖；无 ETW 权限时标注"UDP 数据不可用"（一手依据充分）。
 3. **降级（管理员不可用/用户拒绝提升）**：per-process 网络功能整体降级为"不可用"（TCP EStats 在普通用户下数据未定义，不建议启用，避免把随机数据当真实流量）；仅保留 GetIfTable2 系统总量展示。
 4. **"权限不足不可用"状态码映射**：`StartTrace` 返回 `ERROR_ACCESS_DENIED`（5）→ 主机制不可用；`SetPerTcpConnectionEStats` 返回 `ERROR_ACCESS_DENIED` → EStats 降级路径不可用；`GetPerTcpConnectionEStats` 返回 `ERROR_NOT_FOUND` → 连接已关断/不存在（正常边界，非权限问题）。
@@ -210,31 +210,33 @@ URL: https://github.com/repnz/etw-providers-docs（manifest 文件 `Manifests-Wi
 
 **环境**：Windows 11 Pro 10.0.26200，会话 token 已具管理员组（`net session`/`IsInRole` 验证为环境既有状态，未执行提权动作）。探针：`research/issue7/etw-probe/etw-probe.cpp`（MSVC 14.44 /SDK 10.0.26100 编译，`/utf-8`）。全部流量仅 127.0.0.1 回环或本机 LAN IP 自连，子进程为探针自身 `--client` 参数实例；每轮会话 `StartTrace→Enable→收发→CloseTrace→ControlTrace STOP`，停止后 `logman query` 确认无残留会话。
 
-**关键教训（探针 v1–v6 的假阴性）**：内核网络事件的 `rec->EventHeader.ProcessId` 在内核 logger 会话中不可靠（观察到恒为 4/System 或宿主值），**必须解析 payload 首个 uint32 PID**——与 MOF 页"may not be able to use the ProcessId and ThreadId members of EVENT_TRACE_HEADER"警告一致。v1–v6 因读 header PID 误判"回环零事件"；v7 修正后同场景出现完整事件。**该教训本身是合同级结论：消费端解析必须用 payload PID。**
+**关键教训（探针 v1–v6 的零事件与归属问题分开）**：`EventHeader.ProcessId` 不可作为可靠流量归属——run12/13 中它有时为真实PID，有时为4或其他进程，与MOF页警告一致，合同仍采用payload首个uint32 PID。**撤回“v1–v6 因读取header PID而零事件”的确定归因**：归属读法错误只能错认进程，不能解释run2保存的 `total events=0`。后续版本观察到事件属事实，早期零事件是否由消费就绪、配置/参数或其他差异造成未证实，不将时间先后当因果；消费者先就绪仍保留为合同防线。
 
 **Payload 布局实测**（由 dump 十六进制反推 + 交叉验证，v7 固化）：
 - TCPIP op=10 (IPv4 send)：len=36 = `PID(4) size(4) daddr(4) saddr(4) dport(2) sport(2) startime(4) endtime(4) seqnum(4) connid(4)` —— 与 MOF TcpIp_SendIPV4 模板吻合
 - TCPIP op=11/14/16/18 (recv/retrans/disconn/copy)：len=28，同 TcpIp_TypeGroup1 模板
 - TCPIP op=12/15 (连接类)：len=44
 - UDPIP op=42/43：len=28 = `PID(4) size(4) saddr(4) daddr(4) sport(2) dport(2) seqnum(4) connid(4)`
-- 样例解码：`38100100 4e040000 0a350136 0a350167 ef2a f7e9` → payloadPid=69688, size=1102, 10.53.1.54:10991→10.53.1.103:59895（外部 mDNS 流量，归属合理）
+- 样例解码（run13 事件#1，UDP op42）：`38100100 4e040000 0a350136 0a350167 ef2a f7e9` → payloadPid=69688，size=1102，saddr=10.53.1.54、daddr=10.53.1.103；端口按网络序为 **sport=0xEF2A=61226、dport=0xF7E9=63465**。这是已保存的自然背景UDP样例；端口并非mDNS的5353，没有应用层协议证据，**撤回“外部mDNS、归属合理”的定性**，不凭地址/进程名确认协议或是否跨主机。
 
 **关键词**：manifest 一手只定义 `KERNEL_NETWORK_KEYWORD_IPV4(0x10)|IPV6(0x20)`；任务分发里提及的 `NETWORK_TRACE/TCP_SEND` 等细粒度 keyword 不存在于此 provider（研究节 1a 已核）。实验用 `0x30` 成功收到 TCP+UDP 两族事件。
 
-**精确计量验证（run12/run13，两次复现）**：
-- 子进程向本机回环 server 发送 65536 字节 → 该 PID 的 op=10 (send) 事件 sum(size) = **65536，精确匹配，零偏差**（run13: 13 事件）
-- 接收侧 op=11 sum=77824 = 回显 65536 + server 侧读取块 12288（3×4096），符合"接收事件按接收方归属"口径
-- **口径结论**：`size` 单位为应用层数据字节（不含 TCP/IP 头）——发送方向精确匹配实发 `send()` 总量，与研究节"待实验"项闭环
+**受控计量与归档口径（run12/run13）**：
+- 子进程自报向回环server发送65536B并收到65536B回显，两轮payloadPID混合总桶分别为 `pid=72860:196608B` 和 `pid=73356:196608B`，即 **3×65536B**；这与send/recv/copy三份总量自洽，不是逐opcode的直接分解。
+- 逐任务/opcode保存的是**hdrPid桶**：run12 `hdrPid=25584` 的op10/op11/op18分别为65536B；run13 `hdrPid=73356` 的op10为65536B，op11/op18分别为77824B。headerPID不可靠，**撤回“77824=回显65536+server读取12288，所以正确归属于接收方”的解释**。归档没有 `payloadPid×opcode` 交叉计数，可靠接收方分解不可直接复查。
+- 合同采用按payload PID聚合载荷字节的候选口径；TCP发送桶与已知实发量相符的证据只适用于该测试机和回环样例，不宣称所有路径“不含头且精确”已证实。
 
-**TCP 双计风险（run13）**：同一流量出现 op=11 (recv) 与 op=18 (copy) 各 77824 字节——op=18 是"协议代用户拷贝"，与 op=11 数据重叠。**合同必须固定单一 opcode 口径**：只计 op=10/11（send/recv），排除 op=18，避免双计。op=14（重传）单列。
+**TCP 双计风险**：run12/13上述hdrPid桶中op11与op18字节和分别相等，配合MOF TCP-copy语义及payloadPID总桶的3×65536B自洽性，支持合同**排除op18、只计op10/11**的防双计选择，但不能把hdrPid桶当最终可靠归属计数。专门 `op18-check.cpp` 验证入口已保存，**运行输出未归档**，不新增其成功结论为可复查证据；op14重传仍单列。
 
-**UDP 回环盲区（run12/run13 两次复现）**：子进程 UDP 回环发送 22400 字节（16×1400 → 127.0.0.1 server）→ **零 UdpIp 事件**。同期外部真实 UDP 流量（mDNS，pid=69688）事件正常出现，证明 provider 本身在产事件。**结论：UDP 回环流量不产生 UdpIp ETW 事件（本机 Win11 26200 实测），per-process UDP 计量对回环流量天然缺失；跨主机 UDP 未实测（受控边界内无法产生），标注未验证。**
+**UDP 回环盲区（run12/run13 两次观察）**：子进程自报回环UDP发送22400B，归档未观察到可归属该受控流量的UdpIp事件；同期自然背景UDP事件存在，只能证明provider在产事件，**不能把其定性为mDNS或用其验证UDP字节精度**。合同据此把该测试机/受控回环场景列为不可用/无数据，不显示0；不将该现象泛化为所有版本/硬件的“天然缺失”。跨主机UDP与 `size` 已知实发量对照未做，列为未验证。
 
 **非本机地址实验受限说明**：本机所有自有 IP（127.0.0.1、10.53.1.103 LAN、Tailscale IP）互连均属回环路径；受控边界内（不产生真实外网流量、不装抓包工具）无法构造"离开主机"的流量场景。TCP 回环事件已证明机制有效，跨主机行为留待实机验收（列未实测限制）。
 
-**丢事件计数（run1–run13 全部轮次）**：停止前 `ControlTrace QUERY` 读 `EventsLost=0 LogBuffersLost=0 RealTimeBuffersLost=0`（BufferSize 64KB/MinBuffers 16/FlushTimer 1s 下）。注意 QUERY 必须在 STOP 之前——会话停止后 QUERY 返回 4201（ERROR_WMI_INSTANCE_NOT_FOUND），run1 已踩坑。
+**丢事件计数**：有已保存QUERY行的轮次报告 `EventsLost=0 BuffersLost=0 RTBuffersLost=0`（BufferSize=64KB、MinimumBuffers=16、MaximumBuffers=64、FlushTimer=1s）。**run11两个输出文件为空，不能据此称run1–run13全部完成有效丢失查询**。已保存样例没有触发EventsLost>0，也没有证明UI丢失标注路径运行成功；该路径必须保持未实测。QUERY须在STOP前，run1停止后QUERY=4201的失败另保留为事实。
 
-**事件量级观察**：60 秒被动观察（run10，keyword 0x20 仅 IPv6）1793 事件 ≈ 30 事件/秒（后台 mDNS 类为主）；run12/13（keyword 0x30）210K–229K 事件/2.5s 窗口（含大量后台 IPv4 流量），事件速率与主机活跃流量正相关。TMOG 长驻会话须窄 keyword + 合理 FlushTimer，消费端聚合必须增量处理（逐事件累计，不可攒批重放）。
+**事件量级观察**：run10仅开启keyword0x20、观察60s，1793事件约 **29.9/s**；其背景协议未证实，不能当完整0x30安静基线。run12/13开启0x30，全会话总量分别 **210265/229449**。当前保存源码含300ms消费者预热、子进程阶段和2500ms尾窗，日志无起止时间戳，**约3s只可估算7–9万事件/s量级**，不是瞬时峰值，不能用整个会话总数除以单独2.5s尾窗。精确速率/CPU峰值和最大缓冲压力仍未验证；生产聚合应增量处理且有资源上限，`std::map`查找/插入为O(log P)，不是O(1)。
+
+**证据留存限制（审查 D4/D6/D7）**：`op18-check`只有源码/构建入口，未保存运行输出，本次不能复查专门归属验证；EventsLost>0及其状态标注未实际触发；UDP背景样例没有已知实发量基准。三者已同步到合同第9节，不以缺失输出重建或伪造实验结果。
 
 **非提权对照**：`runas /trustlevel:0x20000` 降权运行在沙盒内静默失败（多种调用方式，exit=1 无输出）——**普通用户 StartTrace=ERROR_ACCESS_DENIED 未实测**，以 StartTrace 官方文档原文（研究节 2 权限矩阵）为准，列未实测限制。
 
