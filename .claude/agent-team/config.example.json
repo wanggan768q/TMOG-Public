@@ -1,0 +1,14 @@
+{
+  "Dev_Setting": "",
+  "Review_Setting": "",
+  "IssueWriter_Setting": "",
+  "Plan_Setting": "",
+  "TeamReview_Setting": "",
+  "Max_Dev": 1,
+  "Max_Review": 1,
+  "Max_IssueWriter": 1,
+  "Worktree_Root": "E:\\Git\\TMOG-Public-WorkTree",
+  "Dev_Split_Direction": "vertical",
+  "Review_Split_Direction": "horizontal",
+  "Merge_Method": "merge"
+}

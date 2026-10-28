@@ -12,6 +12,12 @@
 
 逆向分析使用 REA（MCP 工具集）。入口技能：`reverse-engineer-anything`。
 
+## 团队协作与独立审计
+
+启动 Product、制定或修订计划、派发 Dev/Review、发布合并 PR、回写 Issue、恢复进度或清理任务 worktree 时，必须读取 `.claude/agent-team/README.md`。角色定义在 `.claude/agents/`，本地配置为 `.claude/agent-team/config.json`，执行进度在当前主工程 `.claude/workflow/`。建立流程不授权自动恢复历史功能开发；先取得用户指定任务或继续指令。
+
+用户主动调用 TeamReview 审计团队流程、技能使用或跟进改进建议时，必须读取 `.claude/agent-team/team-review.md`。TeamReview 独立于 Product，仅用户管理；不自动运行，不自行整改或改变技能复制策略。
+
 ## Agent skills
 
 ### Issue tracker

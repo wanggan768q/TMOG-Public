@@ -1,4 +1,17 @@
 .*/
+# 团队角色定义和共享合同入库；本地配置、运行进度及其他私有技能仍忽略。
+!.claude/
+.claude/*
+!.claude/agents/
+!.claude/agent-team/
+.claude/agent-team/*
+!.claude/agent-team/README.md
+!.claude/agent-team/team-review.md
+!.claude/agent-team/config.example.json
+!.claude/agent-team/check.ps1
+!.claude/workflow/
+.claude/workflow/*
+!.claude/workflow/README.md
 build/
 build-debug/
 review-build*/
