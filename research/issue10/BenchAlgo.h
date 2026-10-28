@@ -1,7 +1,8 @@
 #pragma once
-// Benchmarks 合同参考实现（Issue #10 / W24，算法版本 tmog-bench/1）。
-// 本文件是合同的机器可执行形态：内核、固定总功、chunk 边界取消、
-// 单调计时、注入时钟。#28 运行页直接复用，不得改语义后沿用版本号。
+// Benchmarks 研究候选参考件（Issue #10 / W24，算法候选版本 tmog-bench/1.1）。
+// 仅覆盖内核、计时与取消；不是完整合同的机器可执行实现。
+// 尚无 Failed/环境字段/独立 partial 字段，#28 正式实现须逐项对照合同重审，
+// 不得直接作为已验收实现复用，也不得改语义后沿用结果版本号。
 //
 // 合同文档：doc/plans/2026-10-27-issue-10-benchmark-contract.md
 // 边界：纯计算零 IO；单线程；不提权；chunk 边界外不检查取消。
@@ -21,7 +22,7 @@
 namespace tmog::bench {
 
 // 算法-结果绑定：语义修改必须升版本，新旧结果不可比。
-inline constexpr const char* kAlgorithmVersion = "tmog-bench/1";
+inline constexpr const char* kAlgorithmVersion = "tmog-bench/1.1";
 
 // 固定总功（可比性前提：所有机器算同样的题）。
 inline constexpr std::uint32_t kCpuPasses = 4096;          // 每 pass 262144 步
@@ -30,13 +31,18 @@ inline constexpr std::uint32_t kMemTrials = 5;             // 每 trial 64 次�
 inline constexpr std::uint32_t kMemIterationsPerTrial = 64;
 inline constexpr std::uint32_t kMemElements = 1u << 20;    // 1M double × 3 = 24 MiB
 
-// 总时长硬超时：唯一超时判定，在 chunk 边界检查。
+// TRIAD 请求字节：每次迭代每元素读 16 B、写 8 B；不等同物理 DRAM 流量。
+constexpr std::uint64_t mem_trial_bytes(std::uint32_t elements, std::uint32_t iterations) {
+    return static_cast<std::uint64_t>(elements) * iterations * 24;
+}
+
+// 总时长协作式上限：仅在 chunk 边界检查，非硬实时保证。
 inline constexpr double kWallLimitSeconds = 5.0;
 
 enum class BenchStatus {
     Completed,
     Cancelled,   // 用户取消：无任何数值
-    TimedOut,    // 超 5 s：已完成 chunk 的部分结果，partial=true
+    TimedOut,    // 超时部分计数；本候选没有独立 partial 字段，也不产出速率
 };
 
 // 注入时钟接口：产品路径用 steady_clock，检查注入假时钟。
@@ -67,7 +73,7 @@ struct CpuResult {
 struct MemResult {
     BenchStatus status;
     std::optional<double> gigabytes_per_second;  // Completed 时有值；GB/s（10^9）；TRIAD 内核吞吐（非主内存带宽认证）
-    std::uint64_t bytes_done = 0;                // 已完成字节（含部分；24 B/元素）
+    std::uint64_t bytes_done = 0;                // 全部已完成 trial 累计请求字节（含每 trial 的迭代）
     std::uint32_t trials_done = 0;
     double best_trial_seconds = 0.0;             // 最佳 trial 时长
     double duration_seconds = 0.0;

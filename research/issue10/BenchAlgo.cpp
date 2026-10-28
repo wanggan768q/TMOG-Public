@@ -1,4 +1,4 @@
-// Benchmarks 合同参考实现（tmog-bench/1）。语义见 BenchAlgo.h 与合同文档。
+// Benchmarks 研究候选参考件（tmog-bench/1.1）。仅覆盖内核/计时/取消。
 #include "BenchAlgo.h"
 
 namespace tmog::bench {
@@ -81,7 +81,7 @@ MemResult run_mem_bandwidth(const double* b, const double* c, double* a,
     r.status = BenchStatus::Cancelled;
     const double start = clock.now_seconds();
     constexpr std::uint64_t kBytesPerTrial =
-        static_cast<std::uint64_t>(kMemElements) * 24;  // 24 B/元素（STREAM 约定）
+        mem_trial_bytes(kMemElements, kMemIterationsPerTrial);
 
     for (std::uint32_t trial = 0; trial < kMemTrials; ++trial) {
         if (cancel.is_cancelled()) {
@@ -104,7 +104,9 @@ MemResult run_mem_bandwidth(const double* b, const double* c, double* a,
         if (trial == 0 || trial_seconds < r.best_trial_seconds) {
             r.best_trial_seconds = trial_seconds;
         }
-        g_mem_sink = a[0];  // volatile 写出（防删除）
+        // 候选限制：前 63 次写入不被独立观察，编译器可省略死存储。
+        // 字节计数是请求工作量；未证明全部迭代实际发生，不能认证 DRAM 带宽。
+        g_mem_sink = a[0];
     }
 
     r.status = BenchStatus::Completed;
