@@ -1,6 +1,8 @@
 .*/
 build/
 build-debug/
+review-build*/
+review-16-*/
 build-review-fixes-10*/
 artifacts/
 *.png.orig
