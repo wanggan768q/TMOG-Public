@@ -1,14 +1,21 @@
 // 17S 独立设置检查：schema/defaults/四档/尺寸/64KiB/排序列、load失败安全默认、
-// QSaveFile 原子保存（setDirectWriteFallback(false)）失败保留旧字节、cancelWriting。
+// QSaveFile 原子保存（setDirectWriteFallback(false)）失败保留旧字节、
+// cancelWriting 直接放弃新文件、测试根目录约束。
 // 显式失败检查（非 assert）：Debug 与 Release 同样有效，失败计数非零退出。
+//
+// 测试根目录约束：所有自建临时目录必须位于显式传入的 test root（当前配置
+// build 目录）内，拒绝系统 TEMP 与用户主目录。CTest 经 add_test 传
+// $<TARGET_FILE_DIR:settings_checks>；直跑必须显式传同一 build 目录。
 #include <QCryptographicHash>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QtGlobal>
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -35,14 +42,67 @@ void check(bool ok, const std::string& what) {
     if (!ok) ++failures;
 }
 
-// 自建临时目录：产物目录下的唯一子目录，测试结束后清理。不触碰真实用户配置。
+std::filesystem::path g_test_root; // main 显式设置（当前配置 build 目录）
+std::filesystem::path g_self_exe;  // main 设置 argv[0]，用于定位 build 目录
+
+void write_bytes(const std::string& path, const std::string& content) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f.write(content.data(), static_cast<std::streamsize>(content.size()));
+}
+
+// ---------------- 测试根目录约束 ----------------
+
+namespace fs = std::filesystem;
+
+std::filesystem::path exe_directory() {
+    std::error_code ec;
+    const fs::path self = fs::weakly_canonical(g_self_exe, ec);
+    if (ec) return {};
+    return self.parent_path();
+}
+
+std::filesystem::path user_home() {
+#ifdef Q_OS_WIN
+    if (const char* p = std::getenv("USERPROFILE")) return fs::path(p);
+#else
+    if (const char* p = std::getenv("HOME")) return fs::path(p);
+#endif
+    return {};
+}
+
+// p 是否位于 base 之内（含相等）。前缀按路径分量比较。
+bool is_within(const fs::path& p, const fs::path& base) {
+    std::error_code ec;
+    const fs::path cp = fs::weakly_canonical(p, ec);
+    if (ec) return false;
+    const fs::path cb = fs::weakly_canonical(base, ec);
+    if (ec) return false;
+    const auto r = std::mismatch(cb.begin(), cb.end(), cp.begin(), cp.end());
+    return r.first == cb.end();
+}
+
+bool is_allowed_test_root(const fs::path& root) {
+    std::error_code ec;
+    if (root.empty() || !fs::is_directory(root, ec) || ec) return false;
+    // 必须在测试可执行文件所在目录（当前配置 build 目录）内。
+    if (!is_within(root, exe_directory())) return false;
+    // 显式拒绝系统 TEMP 与用户主目录（含其子目录）。
+    if (is_within(root, fs::temp_directory_path(ec)) || ec) return false;
+    ec.clear();
+    if (is_within(root, user_home())) return false;
+    return true;
+}
+
+// ---------------- 自建临时目录 ----------------
+
+// 自建临时目录：显式 test root（当前配置 build 目录）下的唯一子目录，
+// 测试结束后清理。不触碰真实用户配置，不落系统 TEMP。
 class TempDir {
 public:
-    TempDir() {
+    explicit TempDir(const fs::path& root) {
         const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-        base_ = std::filesystem::temp_directory_path() /
-                ("tmog_settings_checks_" + std::to_string(
-                     static_cast<long long>(now)));
+        base_ = root / ("tmog_settings_checks_" +
+                        std::to_string(static_cast<long long>(now)));
         std::filesystem::create_directories(base_);
     }
     ~TempDir() {
@@ -58,6 +118,29 @@ public:
 private:
     std::filesystem::path base_;
 };
+
+// ---------------- 目标父目录文件集合（杂散检测） ----------------
+
+// 目录直接条目（文件与子目录）排序快照。
+std::vector<std::string> snapshot_dir(const fs::path& dir) {
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(dir, ec)) {
+        names.push_back(e.path().filename().string());
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+// after 中新增（before 没有）的条目 = 杂散文件/目录。可注入 stub：
+// 自检负例用恒空 stub 观察失败，正式检测用真实实现。
+std::vector<std::string> detect_stray(const std::vector<std::string>& before,
+                                      const std::vector<std::string>& after) {
+    std::vector<std::string> added;
+    std::set_difference(after.begin(), after.end(), before.begin(), before.end(),
+                        std::back_inserter(added));
+    return added;
+}
 
 // ---------------- schema/defaults ----------------
 
@@ -99,15 +182,37 @@ void test_valid_columns() {
           "invalid/unknown/case-mismatched columns rejected");
 }
 
-// ---------------- load 失败→安全默认+error ----------------
+// ---------------- 测试根目录自检 ----------------
 
-void write_bytes(const std::string& path, const std::string& content) {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    f.write(content.data(), static_cast<std::streamsize>(content.size()));
+void test_root_validation() {
+    check(is_allowed_test_root(g_test_root),
+          "test root: accepted build-dir root");
+    check(!is_allowed_test_root(std::filesystem::temp_directory_path()),
+          "test root: system TEMP rejected");
+    check(!is_allowed_test_root(user_home()),
+          "test root: user home rejected");
 }
 
+void test_stray_detection_selfcheck() {
+    // 杂散检测必须能在故意植入时失败：先拍快照、植入、再拍快照，
+    // detect_stray 必须捕获植入文件。走当前全局实现（RED 阶段全局
+    // stub 时此用例失败，GREEN 后真实实现捕获植入而通过）。
+    TempDir d(g_test_root);
+    write_bytes(d.file("seed.json"), "{}");
+    const auto before = snapshot_dir(d.path());
+    write_bytes(d.file("planted_stray.tmp"), "planted");
+    const auto after = snapshot_dir(d.path());
+    const auto stray = detect_stray(before, after);
+    check(stray.size() == 1 && stray[0] == "planted_stray.tmp",
+          "stray detection: planted stray file captured");
+    check(detect_stray(after, after).empty(),
+          "stray detection: identical snapshots yield no stray");
+}
+
+// ---------------- load 失败→安全默认+error ----------------
+
 void test_missing_file() {
-    TempDir d;
+    TempDir d(g_test_root);
     auto r = load_display_settings(QString::fromStdString(d.file("absent.json")));
     check(r.error.isEmpty(), "missing file: no error");
     check(r.settings.schema_version == 1 && r.settings.width == 1000 &&
@@ -117,7 +222,7 @@ void test_missing_file() {
 }
 
 void test_corrupt_json() {
-    TempDir d;
+    TempDir d(g_test_root);
     write_bytes(d.file("bad.json"), "{not json");
     auto r = load_display_settings(QString::fromStdString(d.file("bad.json")));
     check(!r.error.isEmpty(), "corrupt JSON: error non-empty");
@@ -127,7 +232,7 @@ void test_corrupt_json() {
 }
 
 void test_array_root() {
-    TempDir d;
+    TempDir d(g_test_root);
     write_bytes(d.file("arr.json"), "[1,2,3]");
     auto r = load_display_settings(QString::fromStdString(d.file("arr.json")));
     check(!r.error.isEmpty(), "array root: error");
@@ -136,7 +241,7 @@ void test_array_root() {
 }
 
 void test_unknown_version() {
-    TempDir d;
+    TempDir d(g_test_root);
     write_bytes(d.file("v2.json"), "{\"schema_version\":2}");
     auto r = load_display_settings(QString::fromStdString(d.file("v2.json")));
     check(!r.error.isEmpty(), "unknown version: error");
@@ -144,7 +249,7 @@ void test_unknown_version() {
 }
 
 void test_wrong_types() {
-    TempDir d;
+    TempDir d(g_test_root);
     write_bytes(d.file("types.json"),
                 R"({"schema_version":1,"width":"wide","height":true,)"
                 R"("refresh_ms":1000,"sort_column":7,"sort_descending":"yes"})");
@@ -156,7 +261,7 @@ void test_wrong_types() {
 }
 
 void test_out_of_bounds() {
-    TempDir d;
+    TempDir d(g_test_root);
     write_bytes(d.file("oob.json"),
                 R"({"schema_version":1,"width":100000,"height":-5,)"
                 R"("refresh_ms":1500})");
@@ -167,7 +272,7 @@ void test_out_of_bounds() {
 }
 
 void test_unknown_tier_and_column() {
-    TempDir d;
+    TempDir d(g_test_root);
     write_bytes(d.file("uk.json"),
                 R"({"schema_version":1,"refresh_ms":700,"sort_column":"size"})");
     auto r = load_display_settings(QString::fromStdString(d.file("uk.json")));
@@ -177,7 +282,7 @@ void test_unknown_tier_and_column() {
 }
 
 void test_unknown_keys_ignored() {
-    TempDir d;
+    TempDir d(g_test_root);
     write_bytes(d.file("extra.json"),
                 R"({"schema_version":1,"width":1000,"height":700,)"
                 R"("refresh_ms":2000,"sort_column":"cpu","sort_descending":true,)"
@@ -190,7 +295,7 @@ void test_unknown_keys_ignored() {
 }
 
 void test_oversize_64kib() {
-    TempDir d;
+    TempDir d(g_test_root);
     std::string big(64 * 1024 + 1, 'x');
     write_bytes(d.file("big.json"), big);
     auto r = load_display_settings(QString::fromStdString(d.file("big.json")));
@@ -201,7 +306,7 @@ void test_oversize_64kib() {
 // ---------------- roundtrip ----------------
 
 void test_roundtrip() {
-    TempDir d;
+    TempDir d(g_test_root);
     const QString path = QString::fromStdString(d.file("ok.json"));
     for (const int tier : {500, 1000, 2000, 5000}) {
         DisplaySettings s;
@@ -227,24 +332,23 @@ void test_roundtrip() {
 
 // ---------------- QSaveFile 原子性 ----------------
 
-QString read_all(const QString& path) {
+QByteArray read_bytes_q(const QString& path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return {};
-    return QString::fromUtf8(f.readAll());
+    return f.readAll();
 }
 
 // 旧文件字节/hash 在保存失败后保持；无权限/占用模拟不成立时标注未验证，
 // 不用不存在目录冒充等价场景。
 void test_commit_failure_preserves_old() {
-    TempDir d;
+    TempDir d(g_test_root);
     const QString path = QString::fromStdString(d.file("locked.json"));
     DisplaySettings old;
     old.refresh_ms = 2000;
     QString err;
     check(save_display_settings(path, old, err), "seed old file");
 
-    const QString before = read_all(path);
-    const QByteArray beforeBytes = before.toUtf8();
+    const QByteArray beforeBytes = read_bytes_q(path);
     const QByteArray beforeHash =
         QCryptographicHash::hash(beforeBytes, QCryptographicHash::Sha256).toHex();
 
@@ -265,48 +369,90 @@ void test_commit_failure_preserves_old() {
             std::cout << "SKIP: lock did not block commit on this FS\n";
         } else {
             check(!err.isEmpty(), "locked target: save returns false+error");
-            const QString after = read_all(path);
+            const QByteArray afterBytes = read_bytes_q(path);
             const QByteArray afterHash = QCryptographicHash::hash(
-                after.toUtf8(), QCryptographicHash::Sha256).toHex();
-            check(beforeBytes == after.toUtf8(),
+                afterBytes, QCryptographicHash::Sha256).toHex();
+            check(beforeBytes == afterBytes,
                   "locked target: old bytes unchanged");
             check(beforeHash == afterHash, "locked target: old hash unchanged");
         }
     }
 }
 
-// cancelWriting：模拟保存中断后旧文件字节保留（验证 QSaveFile 不先截断旧文件）。
-// 通过 direct fallback 禁用断言在实现侧；本用例验证失败路径不覆盖旧内容。
+// cancelWriting（直接调用）：写入新数据后放弃，旧文件字节与 SHA-256 不变，
+// 且不留任何临时残留（目标父目录文件集合前后一致）。并做正对照：真实
+// commit 后文件确实被替换，证明本用例的机制有效。
+void test_cancel_writing_direct() {
+    TempDir d(g_test_root);
+    const QString path = QString::fromStdString(d.file("cancel_direct.json"));
+    DisplaySettings old;
+    old.refresh_ms = 500;
+    QString err;
+    check(save_display_settings(path, old, err), "cancelWriting: seed old file");
+
+    const QByteArray beforeBytes = read_bytes_q(path);
+    const QByteArray beforeHash =
+        QCryptographicHash::hash(beforeBytes, QCryptographicHash::Sha256).toHex();
+    const auto beforeSet = snapshot_dir(d.path());
+
+    // 内层作用域：QSaveFile 生命周期结束时临时文件清理才完成。
+    {
+        QSaveFile f(path);
+        f.setDirectWriteFallback(false);
+        check(f.open(QIODevice::WriteOnly), "cancelWriting: QSaveFile opens draft");
+        QJsonObject obj;
+        obj.insert("schema_version", 1);
+        f.write(QJsonDocument(obj).toJson());
+        f.cancelWriting(); // 放弃新文件
+    }
+
+    const QByteArray afterBytes = read_bytes_q(path);
+    check(afterBytes == beforeBytes, "cancelWriting: old bytes unchanged");
+    const QByteArray afterHash =
+        QCryptographicHash::hash(afterBytes, QCryptographicHash::Sha256).toHex();
+    check(beforeHash == afterHash, "cancelWriting: old hash unchanged");
+    const auto strays = detect_stray(beforeSet, snapshot_dir(d.path()));
+    for (const auto& s : strays) {
+        std::cout << "  stray: " << s << "\n";
+    }
+    check(strays.empty(),
+          "cancelWriting: no stray temp file left in target dir");
+
+    // 正对照：真实 write+commit 确实替换旧文件（证明上述断言非空跑）。
+    DisplaySettings newer;
+    newer.refresh_ms = 2000;
+    check(save_display_settings(path, newer, err),
+          "cancelWriting: positive-control commit succeeds");
+    check(read_bytes_q(path) != beforeBytes,
+          "cancelWriting: positive-control replaced old bytes");
+}
+
+// 目录目标保存失败：旧文件保留 + 目标父目录文件集合不变（杂散检测）。
 void test_cancel_writing_keeps_old() {
-    TempDir d;
+    TempDir d(g_test_root);
     const QString path = QString::fromStdString(d.file("cancel.json"));
     DisplaySettings old;
     old.refresh_ms = 500;
     QString err;
     check(save_display_settings(path, old, err), "seed cancel old");
 
-    const QString before = read_all(path);
-
-    // QSaveFile 语义：写临时文件、commit 前旧文件不动。这里直接验证：
-    // 实现必须 setDirectWriteFallback(false)，失败时 commit 未发生。
-    // 以受控方式触发失败：把目标改成目录，save 必失败且不留新文件。
-    const std::filesystem::path dirTarget = d.path() / "as_dir";
+    // 以受控方式触发失败：把目标改成目录，save 必失败且不留杂散文件。
+    const fs::path dirTarget = d.path() / "as_dir";
     std::filesystem::create_directories(dirTarget);
+    const auto beforeSet = snapshot_dir(d.path()); // 含 seed 文件与 as_dir
     DisplaySettings s;
     s.refresh_ms = 2000;
     bool ok = save_display_settings(QString::fromStdString(dirTarget.string()), s, err);
     check(!ok && !err.isEmpty(), "directory target: save fails with error");
-    check(!std::filesystem::exists(dirTarget / "as_dir"),
-          "directory target: no stray file created");
-    check(read_all(path) == before, "directory target: unrelated old file kept");
-
-    // cancelWriting 行为契约本身由实现保证（setDirectWriteFallback(false) +
-    // 失败路径 commit 未调用）。模拟直接调用不可见实现内部，这里验证结果不变。
-    check(read_all(path) == before, "after failed save: old file untouched");
+    check(detect_stray(beforeSet, snapshot_dir(d.path())).empty(),
+          "directory target: parent dir file set unchanged (no stray)");
+    check(read_bytes_q(path) ==
+          read_bytes_q(QString::fromStdString(d.file("cancel.json"))),
+          "directory target: unrelated old file kept");
 }
 
 void test_utf8_format() {
-    TempDir d;
+    TempDir d(g_test_root);
     const QString path = QString::fromStdString(d.file("utf8.json"));
     DisplaySettings s;
     QString err;
@@ -324,11 +470,26 @@ void test_utf8_format() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        std::cout << "usage: settings_checks <test-root: current build dir>\n";
+        return 2;
+    }
+    g_self_exe = argv[0];
+    g_test_root = std::filesystem::path(argv[1]);
+    if (!is_allowed_test_root(g_test_root)) {
+        std::cout << "settings_checks: invalid test root (must be inside this "
+                     "test's build dir, not system TEMP/user home): "
+                  << g_test_root.string() << "\n";
+        return 2;
+    }
+
     test_defaults();
     test_valid_tiers();
     test_size_bounds();
     test_valid_columns();
+    test_root_validation();
+    test_stray_detection_selfcheck();
     test_missing_file();
     test_corrupt_json();
     test_array_root();
@@ -340,6 +501,7 @@ int main() {
     test_oversize_64kib();
     test_roundtrip();
     test_commit_failure_preserves_old();
+    test_cancel_writing_direct();
     test_cancel_writing_keeps_old();
     test_utf8_format();
 
