@@ -66,10 +66,12 @@ MainWindow::MainWindow(QWidget* parent,
         if (!process_ops_) process_ops_ = std::make_unique<WindowsProcessOps>();
     }
 #elif defined(__APPLE__)
-    if (!enumerator_) enumerator_ = std::make_unique<MacProcessEnumerator>();
+    // #13 attempt2：枚举器赋值恢复 base 原行为（无条件，撤销 attempt1 越范围
+    // 守卫）；ops 注入守卫为获准修改保留。
+    enumerator_ = std::make_unique<MacProcessEnumerator>();
     if (!process_ops_) process_ops_ = std::make_unique<MacProcessOps>();
 #elif defined(__unix__)
-    if (!enumerator_) enumerator_ = std::make_unique<LinuxProcessEnumerator>();
+    enumerator_ = std::make_unique<LinuxProcessEnumerator>();
     if (!process_ops_) process_ops_ = std::make_unique<LinuxProcessOps>();
 #endif
 

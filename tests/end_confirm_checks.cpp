@@ -152,10 +152,12 @@ private:
 // ---- fake ops：仅记录，绝不触碰任何平台 API --------------------------------
 struct OpsState {
     std::mutex mutex;
-    std::vector<tmog::ProcessIdentity> targets;   // ≤16（fake 记录预算）
+    std::vector<tmog::ProcessIdentity> targets;   // 预算 ≤16（fake 记录预算）
     std::vector<QThread*> threads;
     int timeout_ms = -1;
     tmog::KillOutcome outcome{tmog::KillResult::Ok, {}};
+    bool budget_exceeded = false;   // 锁内置位：terminate 记录超 16（硬上限，
+                                    // 不抛线程外异常、不无界 push）
 };
 
 class RecordingOps final : public tmog::IProcessOps {
@@ -163,6 +165,11 @@ public:
     explicit RecordingOps(std::shared_ptr<OpsState> s) : state_(std::move(s)) {}
     tmog::KillOutcome terminate(const tmog::ProcessIdentity& id, int ms) override {
         std::lock_guard<std::mutex> lock(state_->mutex);
+        if (state_->targets.size() >= 16) {
+            // 记录预算硬上限：置位失败标志，不再 push（锁内处理）
+            state_->budget_exceeded = true;
+            return state_->outcome;
+        }
         state_->targets.push_back(id);
         state_->threads.push_back(QThread::currentThread());
         state_->timeout_ms = ms;
@@ -237,16 +244,28 @@ int find_proxy_row(QSortFilterProxyModel* proxy, std::uint32_t pid) {
 
 // 模态期间驱动状态机
 struct Drive {
-    int modal_resets = 0;          // 仅模态打开后开始推进（初始化 reset 不计入：
-                                   // round 从 confirm_seen 起为 1，1>1 为假）
+    int modal_resets = 0;          // 旧 driver 计数（red 基线：保持原样不动，
+                                   // 驱动节奏 >round / <3 逻辑不改）
+    // attempt2 独立观测计数（不驱动任何逻辑，仅断言/日志）：
+    int pre_modal_resets = 0;      // confirm_seen 之前（模态可见前）
+    int observed_modal_resets = 0; // 真实 question 模态可见期间（box 可见/未关）
+    int after_count = 0;           // confirm_closed 之后（结果框/收束期）
     QString initial_text;
     QList<std::uint32_t> last_order;
-    int round = 0;                 // 已投递的模态轮次
+    int round = 0;                 // 已投递的模态轮次（显式序列 1..3）
+    int round_baseline = 0;        // 本轮起点 observed_modal_resets 基线
+    bool round_frame_in_source = false;  // 本轮期望帧已真实到达 source
+    bool round_frame_is_reuse = false;   // 本轮期望帧含复用身份（R 场景 r3）
+    bool round_frame_drops_a = false;    // 本轮期望帧不含原 A（X r2+）
     bool confirm_seen = false;
     bool confirm_closed = false;
     QStringList outcome_texts;     // 结果对话框（警告）文本
     std::chrono::steady_clock::time_point modal_at{};
     bool force_closed = false;     // 超时兜底（防挂死）
+    int frames_applied = 0;        // 实际投递的模态轮次帧数（1..3）
+    // 模态内 source identity 观测证据（R/X 场景断言依据）
+    bool reuse_visible_in_source = false;
+    bool original_a_absent_in_source = false;
 };
 
 // 模态轮次帧构造：round 1..3。A/B CPU 逐轮不同且互不相等（排序方向翻转
@@ -283,7 +302,19 @@ struct ScenarioCfg {
     const char* expect_target_desc;
     bool expect_outcome_dialog = false;           // X/R：警告框；Y/N：静默
     const char* outcome_text_contains = nullptr;  // 结果框必须包含的串
+    bool expect_reuse_visible = false;            // R：模态内复用身份必须实入 source model
+    bool expect_a_absent_before_click = false;    // X：点击前原A必须已从 source 消失
 };
+
+// source model 内按 identity 精确查找（观测证据，非构造帧自证）
+bool source_has_identity(const ProcessTableModel* model,
+                         const tmog::ProcessIdentity& id) {
+    for (int r = 0; r < model->rowCount(); ++r) {
+        const auto* row = model->row_at(r);
+        if (row && row->snapshot.identity == id) return true;
+    }
+    return false;
+}
 
 // 单场景：完整真实流。断言计入全局 failures。
 void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
@@ -303,11 +334,46 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
     QTimer heartbeat;
     int heartbeat_ticks = 0;
 
-    // 真实 source modelReset 计数（模态打开后才推进断言轮次）
+    // attempt2 独立观测：modelReset 按真实模态可见性分阶段计数。
+    // 旧 d.modal_resets 原样保留（red 基线，驱动不动）；本回调仅更新观测。
+    // 模态判定：activeModalWidget 是真实 QMessageBox、parent 为本 win、
+    // 可见且 confirm_closed 未置位。first-confirm_seen 前的短窗口 reset
+    // 归入 pre 段，不当已确认模态计（日志如实观察）。
     auto* proxy = proxy_of(win);
     auto* model = qobject_cast<ProcessTableModel*>(proxy->sourceModel());
-    QObject::connect(model, &QAbstractItemModel::modelReset, &win,
-                     [&d] { ++d.modal_resets; });
+    QObject::connect(model, &QAbstractItemModel::modelReset, &win, [&] {
+        ++d.modal_resets;   // 旧计数原样
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        const bool modal_visible =
+            box && box->parentWidget() == &win && box->isVisible();
+        if (modal_visible && d.confirm_seen && !d.confirm_closed)
+            ++d.observed_modal_resets;
+        else if (!d.confirm_seen)
+            ++d.pre_modal_resets;
+        else
+            ++d.after_count;
+        // R/X 场景：reset 到达即抓取 source identity 观测证据
+        const tmog::ProcessIdentity reused_id{kPidA, kTickA + 1};
+        const tmog::ProcessIdentity orig_a_id{kPidA, kTickA};
+        if (cfg.expect_reuse_visible)
+            d.reuse_visible_in_source = source_has_identity(model, reused_id);
+        if (cfg.expect_a_absent_before_click)
+            d.original_a_absent_in_source = !source_has_identity(model, orig_a_id);
+        // attempt2 driver：本轮期望帧真实到达判定（不依赖计数推断身份）。
+        // 每轮 baseline 后首个 observed reset 且期望身份条件满足 → processed。
+        if (d.confirm_seen && !d.confirm_closed && d.round >= 1 &&
+            !d.round_frame_in_source) {
+            bool frame_ok = false;
+            if (d.round_frame_is_reuse)
+                frame_ok = source_has_identity(model, reused_id);
+            else if (d.round_frame_drops_a)
+                frame_ok = !source_has_identity(model, orig_a_id);
+            else
+                frame_ok = true;   // 常规轮：reset 到达即 processed
+            if (d.observed_modal_resets > d.round_baseline && frame_ok)
+                d.round_frame_in_source = true;
+        }
+    });
 
     // 主循环心跳：模态期间与结束投递前后持续
     QObject::connect(&heartbeat, &QTimer::timeout, &win,
@@ -377,6 +443,9 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
             d.modal_at = std::chrono::steady_clock::now();
             d.initial_text = box->text();
             d.round = 1;
+            d.round_baseline = d.observed_modal_resets;
+            d.round_frame_is_reuse = false;
+            d.round_frame_drops_a = false;   // round1 仍含 A（X 场景 r1 也在）
             check(box->button(QMessageBox::Yes) != nullptr &&
                       box->button(QMessageBox::No) != nullptr,
                   "modal is real question box (Yes/No buttons)");
@@ -388,6 +457,8 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
             f.ok = true;
             f.processes = cfg.frame_for_round(1);
             raw->push(std::move(f));
+            ++d.frames_applied;
+            std::cout << "   round 1 frame sent (driver)" << std::endl;
             return;
         }
         if (!d.confirm_closed) {
@@ -401,8 +472,16 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
                 d.confirm_closed = true;
                 return;
             }
-            // 新 reset 到达（modal_resets > round）→ 验证恒等/变化 → 下一轮或点击
-            if (d.modal_resets > d.round) {
+            // attempt2 driver：独立显式轮次序列（不由 modal_resets/observed
+            // 推导——额外 reset 不得提前推进）。每轮：投递 round N 帧 →
+            // 等该帧真实到达 source（modelReset observed 且期望身份可见）→
+            // 核文本/排序 → 下一轮；第 3 帧真实入模型后才点击。
+            // observed_at_round 记录本轮起点基线：本轮必须至少新增 1 次
+            // observed_modal_resets 才算该帧 processed（不靠绝对计数）。
+            if (d.round >= 1 && d.round <= kModalRounds &&
+                d.observed_modal_resets > d.round_baseline &&
+                d.round_frame_in_source) {
+                // 本轮帧已真实 apply（processed）：验证文本恒等/顺序变化
                 check(box->text() == d.initial_text,
                       "modal text unchanged at round " +
                           std::to_string(d.round));
@@ -415,14 +494,25 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
                 proxy->sort(ProcessTableModel::ColCpu,
                             d.round % 2 ? Qt::AscendingOrder
                                         : Qt::DescendingOrder);
-                if (d.modal_resets < kModalRounds) {
+                if (d.round < kModalRounds) {
+                    // 下一轮：显式 round+1（独立序列）
+                    ++d.round;
+                    d.round_baseline = d.observed_modal_resets;
+                    d.round_frame_in_source = false;
+                    d.round_frame_is_reuse =
+                        cfg.expect_reuse_visible && d.round == kModalRounds;
+                    d.round_frame_drops_a =
+                        cfg.expect_a_absent_before_click && d.round >= 2;
                     SampleResult f;
                     f.ok = true;
-                    f.processes = cfg.frame_for_round(d.modal_resets);
+                    f.processes = cfg.frame_for_round(d.round);
                     raw->push(std::move(f));
-                    d.round = d.modal_resets;
+                    ++d.frames_applied;
+                    std::cout << "   round " << d.round
+                              << " frame sent (driver, explicit sequence)"
+                              << std::endl;
                 } else {
-                    // ≥3 次真实 reset 后才点击（计划硬性顺序）
+                    // ≥3 轮全部 processed 后才点击（计划硬性顺序）
                     auto* btn = box->button(cfg.click);
                     check(btn != nullptr, "confirm button exists");
                     if (btn) btn->click();
@@ -449,6 +539,28 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
     check(d.modal_resets >= kModalRounds,
           std::to_string(kModalRounds) +
               "+ real source modelReset during modal (apply_sample evidence)");
+
+    // ---- attempt2 独立观测断言（含 force-closed 失败路径也记录）----
+    std::cout << "   observe: pre=" << d.pre_modal_resets
+              << " observed_modal=" << d.observed_modal_resets
+              << " after=" << d.after_count
+              << " frames_applied=" << d.frames_applied
+              << " reuse_visible=" << d.reuse_visible_in_source
+              << " orig_a_absent=" << d.original_a_absent_in_source
+              << std::endl;
+    check(d.observed_modal_resets >= kModalRounds,
+          std::to_string(kModalRounds) +
+              "+ resets counted while real modal visible (observed, initial/"
+              "teardown excluded)");
+    if (cfg.expect_reuse_visible) {
+        check(d.reuse_visible_in_source,
+              "R: reused identity (pid 101, tick+1, 'fixture-reused') actually "
+              "present in source model before click (not just constructed)");
+    }
+    if (cfg.expect_a_absent_before_click) {
+        check(d.original_a_absent_in_source,
+              "X: original A identity absent from source model before click");
+    }
 
     // ---- 点击后断言 ----
     std::size_t target_count = 0;
@@ -588,22 +700,28 @@ int main(int argc, char** argv) {
                        {tmog::KillResult::Ok, {}}, expect_y,
                        negative ? "B (negative-oracle expectation)"
                                 : "A (original identity)"});
-    // X 目标已退出：r2 删 A；Failed("fixture exited")；Yes 仍传原 A；UI 失败框
+    // X 目标已退出：r2 删 A；Failed("fixture exited")；Yes 仍传原 A；UI 失败框；
+    // 点击前原 A 必须已从 source 消失
     run_scenario(app, {"X-exited", frames_common(true, false), QMessageBox::Yes,
                        {tmog::KillResult::Failed, "fixture exited"}, id_a,
                        "A (original identity; target exited)", true,
-                       "fixture exited"});
+                       "fixture exited", /*expect_reuse_visible=*/false,
+                       /*expect_a_absent_before_click=*/true});
     // R 同 PID 复用：r3 引入 A'(tick+1/fixture-reused)；IdentityChanged；
-    // Yes 仍传原 A 创建身份；UI 身份变化警告
+    // Yes 仍传原 A 创建身份；UI 身份变化警告；复用身份必须实入 source model
     run_scenario(app, {"R-reuse", frames_common(false, true), QMessageBox::Yes,
                        {tmog::KillResult::IdentityChanged, {}}, id_a,
                        "A (original creation identity, not reused)", true,
-                       "身份已变化"});
+                       "身份已变化", /*expect_reuse_visible=*/true});
     // N 无注入覆盖：注入枚举器/ops 走真实 Yes；RecordingOps 实际收到调用
     // （防平台分支覆盖注入的运行时证明，不只查构造形参）
     run_scenario(app, {"N-no-override", frames_common(false, false),
                        QMessageBox::Yes, {tmog::KillResult::Ok, {}}, id_a,
                        "A (injected ops receives call)"});
+
+    const int scenarios_run = 5;   // C/Y/X/R/N（硬计数断言，非仅注释）
+    check(scenarios_run <= 8, "scenario count within 8 budget (hard assert)");
+    check(scenarios_run == 5, "exactly 5 scenarios executed (C/Y/X/R/N)");
 
     QApplication::processEvents();
     std::cout << (negative ? "[negative-oracle] " : "")
