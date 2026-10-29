@@ -13,7 +13,7 @@ namespace tmog {
 class ProcessTableModel : public QAbstractTableModel {
     Q_OBJECT
 public:
-    enum Column { ColName = 0, ColPid, ColCpu, ColMemory, ColStatus, ColCount };
+    enum Column { ColName = 0, ColPid, ColCpu, ColMemory, ColIoRead, ColIoWrite, ColStatus, ColCount };
 
     explicit ProcessTableModel(QObject* parent = nullptr);
 
