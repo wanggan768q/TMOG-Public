@@ -19,10 +19,10 @@ try {
     $teamSettings = @('Dev_Setting', 'Review_Setting', 'IssueWriter_Setting', 'Plan_Setting')
     $settingsKeys = $teamSettings + @('TeamReview_Setting')
     $readyKeys = if ($Role -eq 'team-review') { @('TeamReview_Setting') } else { $teamSettings }
-    $limitKeys = @('Max_Dev', 'Max_Review', 'Max_IssueWriter')
+    $limitKeys = @('Max_Dev', 'Max_Review', 'Max_IssueWriter', 'Max_Plan')
     $required = $settingsKeys + $limitKeys + @('Worktree_Root', 'Merge_Method')
     Assert-Condition ($config -is [System.Collections.IDictionary]) '配置必须是 JSON 对象。'
-    Assert-Condition ($config.Count -eq $required.Count) '配置字段数量不匹配；Plan 和 TeamReview 固定单例，不配置数量上限。'
+    Assert-Condition ($config.Count -eq $required.Count) '配置字段数量不匹配；TeamReview 固定单例，不配置数量上限。'
     foreach ($key in $required) {
         Assert-Condition ($config.ContainsKey($key) -and $template.ContainsKey($key)) "缺少字段：$key"
     }

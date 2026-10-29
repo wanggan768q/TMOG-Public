@@ -19,13 +19,13 @@
 
 | 字段 | 规则 |
 |---|---|
-| Dev_Setting / Review_Setting / IssueWriter_Setting / Plan_Setting | 已有 Claude settings JSON 文件路径；相对主工程根目录解析；空、缺失或非法 JSON 时不启动 |
+| Dev_Setting / Review_Setting / IssueWriter_Setting / Plan_Setting | 已有 Claude settings JSON 文件路径；相对主工程根目录解析；空、缺失或非法 JSON 时不启动。角色专用 settings（如 IssueWriter 的发布权限）放在当前工程 `.claude/agent-team/settings/`（Git 忽略），用相对路径填写；不新建或修改用户目录下的 settings |
 | TeamReview_Setting | 独立审计 settings 路径；相对主工程解析，仅用户启动 TeamReview 时要求就绪，固定单例 |
-| Max_Dev / Max_Review / Max_IssueWriter | 正整数，默认各 1；计入启动中、执行、待命、阻塞和关闭未确认的窗口 |
+| Max_Dev / Max_Review / Max_IssueWriter / Max_Plan | 正整数，默认各 1；计入启动中、执行、待命、阻塞和关闭未确认的窗口 |
 | Worktree_Root | 允许创建任务 worktree 的绝对根目录 |
 | Merge_Method | merge 默认；可明确配置 squash/rebase；仓库不支持所选方式时暂停，不静默切换 |
 
-Plan 固定最多一个未关闭窗口，没有 Max_Plan 配置。忙时排队；每个计划请求用新会话，交付后关闭（见“关闭与清理”）。其他角色按任务创建，**不同任务可并行**，各自在独立 worktree 推进，总数受 Max_* 上限约束（上限不是必须开满）。并行规则：同一任务同一时刻只有一个写者，Review 期间该任务 Dev 停止写代码；Product 派发前比对各任务允许修改路径，有重叠的任务按依赖串行；合并到 main 逐个进行，前一个合并后，后续任务按“PR、Issue 和本地同步”第 4 条重新评估基点，必要时由 Dev 更新分支并复审新 SHA。
+Plan 与其他角色一样按请求创建、可多开，数量受 Max_Plan 约束；每个计划请求一个会话，交付后关闭（见“关闭与清理”）。多个 Plan 不得写同一计划文件。其他角色按任务创建，**不同任务可并行**，各自在独立 worktree 推进，总数受 Max_* 上限约束（上限不是必须开满）。并行规则：同一任务同一时刻只有一个写者，Review 期间该任务 Dev 停止写代码；Product 派发前比对各任务允许修改路径，有重叠的任务按依赖串行；合并到 main 逐个进行，前一个合并后，后续任务按“PR、Issue 和本地同步”第 4 条重新评估基点，必要时由 Dev 更新分支并复审新 SHA。
 
 Product 每次执行解析并保存配置快照及 SHA-256；恢复时核对差异，权限、根目录、合并策略变化须重新确认。不保存 settings 密钥或正文，日志只留路径和摘要。
 
@@ -103,7 +103,7 @@ Product 记录自己的清单并汇总成员报告引用，不改写成员证据
 
 ## 计划、开发与审查
 
-Plan 固定单例，可制定计划和接收 Product 发现的问题；范围内澄清记录来源/影响/变更，新增功能、扩大范围、改变验收或关键方案需要用户批准。计划正文在主工程 doc/plans，修订保留原批准版本并生成新版本；任务引用文件摘要，而不是一个可悄悄变化的文件名。Plan 不创建 Issue、不派发开发。
+Plan 可多开（受 Max_Plan 约束），可制定计划和接收 Product 发现的问题；范围内澄清记录来源/影响/变更，新增功能、扩大范围、改变验收或关键方案需要用户批准。计划正文在主工程 doc/plans，修订保留原批准版本并生成新版本；任务引用文件摘要，而不是一个可悄悄变化的文件名。Plan 不创建 Issue、不派发开发。
 
 Dev 修改前：
 
@@ -138,9 +138,12 @@ IssueWriter 只在 Product 明确放行的固定 SHA 上操作；先读取远程
 **一个会话只服务一个任务阶段，用完即关，不跨任务复用**，目的是让下一任务从干净上下文开始；交接只靠磁盘报告与 state，不靠会话记忆。Product 按真实 handle 用 `orca terminal close --terminal <handle>` 单独关闭，不使用 `--tab` 或按 worktree 批量关闭。必须关闭的时机：
 
 - Dev/Review：其报告落盘且 Product 已读取摘要并记账后立即关闭。同票返工新开 attempt 会话，从上轮报告恢复，不唤回旧会话。
-- Plan：每个计划请求交付并落盘后关闭；下个计划请求新开会话。Plan 单例指同时最多一个未关闭实例。
+- Plan：每个计划请求交付并落盘后关闭；下个计划请求新开会话。
 - IssueWriter：PR、合并、Issue 链接及状态核实且报告落盘后关闭。
-- 例外仅限：失败或阻塞且需保留画面供用户查看，或结果未知待核查；保留时在 state 写明理由与关闭条件，条件满足后关闭。
+- 例外仅限：失败或阻塞需保留画面供用户查看，或结果未知待核查。保留时：
+  1. 该角色先向 Product 发 BLOCKED，写明等待对象（用户/权限/外部）、需要的具体决定或命令、所在终端名；
+  2. Product 在 state 写明理由与关闭条件，并在**自己的终端**立即告知用户“谁在等、等什么、去哪个终端处理”，不让用户去各窗口找；
+  3. Product 每次结束 turn 前，把仍在等待的会话列成一张“待用户处理”清单附在回复末尾，直到条件满足后关闭。
 
 关闭后用 `orca terminal list` 和 ListAgents 确认已退出，再释放额度。所有待清理 worktree 关联终端与进程退出后才删除目录。
 

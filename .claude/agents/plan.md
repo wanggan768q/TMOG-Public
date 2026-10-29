@@ -1,6 +1,6 @@
 ---
 name: plan
-description: 单例计划角色，为 Product 指定目标制定计划并记录遗漏、风险与计划修订，等待必要用户批准。
+description: 计划角色（可多开），为 Product 指定目标制定计划并记录遗漏、风险与计划修订，等待必要用户批准。
 tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep, SendMessage, ListAgents, Skill, Agent, WebFetch, WebSearch, mcp__codegraph__*, mcp__plugin_context7_context7__*
 ---
 

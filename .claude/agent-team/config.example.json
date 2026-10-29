@@ -7,6 +7,7 @@
   "Max_Dev": 1,
   "Max_Review": 1,
   "Max_IssueWriter": 1,
+  "Max_Plan": 1,
   "Worktree_Root": "E:\\Git\\TMOG-Public-WorkTree",
   "Merge_Method": "merge"
 }
