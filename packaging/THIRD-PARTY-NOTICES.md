@@ -22,7 +22,8 @@ MinGW-w64 GCC 13.1.0），组件清单与 `MANIFEST.txt` 对应。
 | Qt6Svg.dll | 6.12.0.0 | 同上 | LGPLv3 |
 
 - 许可证全文：`licenses/Qt-LICENSE.txt`（LGPLv3）、`licenses/Qt-COPYING.txt`（GPL 及例外说明，Qt 官方随附）
-- 来源：本机 `E:/InstallApplication/Qt/6.12.0/mingw_64/bin/`（官方在线安装器安装， mingw_64 6.12.0 组件）
+- 来源：Qt 官方在线安装器的 6.12.0 mingw_64 组件原样部署（制作过程只读使用官方安装内容，
+  未修改任何 Qt 二进制）
 - 对应源码：Qt 6.12.0 的 qtbase/qtsvg 模块源码，官方发布点
   https://download.qt.io/official_releases/qt/6.12/6.12.0/submodules/
   （qtbase-everywhere-src-6.12.0.tar.xz、qtsvg-everywhere-src-6.12.0.tar.xz）；
@@ -37,19 +38,22 @@ MinGW-w64 GCC 13.1.0），组件清单与 `MANIFEST.txt` 对应。
 
 ### 插件（windeployqt 实际收集，与 MANIFEST 一致）
 
-| 文件 | 版本 | 许可 | 备注 |
-|---|---|---|---|
-| platforms/qwindows.dll | 6.12.0.0 | LGPLv3 | Qt 平台插件；内含 wintab API 头衍生的数据（LCS/Telegraphics，见下） |
-| generic/qtuiotouchplugin.dll | 6.12.0.0 | LGPLv3 | 触摸输入插件 |
-| iconengines/qsvgicon.dll | 6.12.0.0 | LGPLv3 | SVG 图标引擎（依赖 Qt6Svg） |
-| imageformats/qgif.dll | 6.12.0.0 | LGPLv3 | GIF 图像格式 |
-| imageformats/qico.dll | 6.12.0.0 | LGPLv3 | ICO 图像格式 |
-| imageformats/qjpeg.dll | 6.12.0.0 | LGPLv3 | JPEG 图像格式 |
-| imageformats/qsvg.dll | 6.12.0.0 | LGPLv3 | SVG 图像格式（依赖 Qt6Svg） |
-| networkinformation/qnetworklistmanager.dll | 6.12.0.0 | LGPLv3 | 网络状态后端 |
-| styles/qmodernwindowsstyle.dll | 6.12.0.0 | LGPLv3 | Windows 现代样式 |
-| tls/qcertonlybackend.dll | 6.12.0.0 | LGPLv3 | 仅证书 TLS 后端 |
-| tls/qschannelbackend.dll | 6.12.0.0 | LGPLv3 | Schannel TLS 后端（使用 Windows 系统 TLS，不含 OpenSSL） |
+插件 DLL 本体版权同 Qt 核心（Copyright (C) The Qt Company Ltd. and other
+contributors.），逐行列出以避免"同上"在表格中不可追溯：
+
+| 文件 | 版本 | 版权 | 许可 | 备注 |
+|---|---|---|---|---|
+| platforms/qwindows.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | Qt 平台插件；内含 wintab API 头衍生的数据（LCS/Telegraphics，见下） |
+| generic/qtuiotouchplugin.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | 触摸输入插件 |
+| iconengines/qsvgicon.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | SVG 图标引擎（依赖 Qt6Svg） |
+| imageformats/qgif.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | GIF 图像格式 |
+| imageformats/qico.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | ICO 图像格式 |
+| imageformats/qjpeg.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | JPEG 图像格式（内嵌 libjpeg-turbo 3.2.0，见内嵌表） |
+| imageformats/qsvg.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | SVG 图像格式（依赖 Qt6Svg） |
+| networkinformation/qnetworklistmanager.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | 网络状态后端 |
+| styles/qmodernwindowsstyle.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | Windows 现代样式 |
+| tls/qcertonlybackend.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | 仅证书 TLS 后端 |
+| tls/qschannelbackend.dll | 6.12.0.0 | Copyright (C) The Qt Company Ltd. and other contributors. | LGPLv3 | Schannel TLS 后端（使用 Windows 系统 TLS，不含 OpenSSL） |
 
 - 上述插件许可依据：本机 Qt 安装 SBOM（`mingw_64/sbom/qtbase-6.12.0.spdx.json`、
   `qtsvg-6.12.0.spdx.json`）逐包核对，均为
@@ -60,29 +64,52 @@ MinGW-w64 GCC 13.1.0），组件清单与 `MANIFEST.txt` 对应。
 
 ### Qt 内嵌第三方组件（随上述二进制分发，须一并声明）
 
-依据 Qt 安装 SBOM 逐项核对（本机合法来源）：
+依据 Qt 6.12.0 安装内 SBOM 逐项核对（本机合法来源，SBOM 路径相对 Qt 安装根：
+`mingw_64/sbom/qtbase-6.12.0.spdx.json`）。版本列为 SBOM `versionInfo` 实测值；
+版权列为 SBOM `copyrightText` 主要条目（完整多行版权见对应源码）。
 
-| 组件 | 所在 | 许可 | 版权 |
-|---|---|---|---|
-| zlib | Qt6Core/Qt6Gui 嵌入 | Zlib | (C) 1995-2026 Jean-loup Gailly and Mark Adler |
-| libpng | Qt6Gui 嵌入 | Libpng + libpng-2.0 | libpng 项目 |
-| libjpeg (IJG) | Qt6Gui 嵌入（qjpeg 插件） | IJG + BSD-3-Clause | Independent JPEG Group |
-| PCRE2 | Qt6Core 嵌入（QRegularExpression） | BSD-3-Clause + PCRE2 exception | University of Cambridge / Philip Hazel |
-| Freetype | Qt6Gui 嵌入 | FTL OR GPL-2.0 | Freetype 项目 |
-| HarfBuzz | Qt6Gui 嵌入 | MIT | HarfBuzz 项目 |
-| Unicode 数据 (UCD/CLDR) | Qt6Core 嵌入 | Unicode-3.0 | Unicode, Inc. |
-| double-conversion | Qt6Core 嵌入 | BSD-3-Clause | Google |
-| tinycbor | Qt6Core 嵌入 | MIT | Intel |
-| wintab 头数据 | qwindows.dll | LCS/Telegraphics 授权 | Copyright 1991-1998 by LCS/Telegraphics |
+| 组件 | 版本（SBOM） | 所在 | 许可 | 版权（SBOM 摘录） |
+|---|---|---|---|---|
+| zlib | 1.3.2 | Qt6Core/Qt6Gui 嵌入 | Zlib | (C) 1995-2026 Jean-loup Gailly and Mark Adler |
+| libpng | 1.6.58 | Qt6Gui 嵌入 | Libpng AND libpng-2.0 | Copyright (c) 1995-2026 The PNG Reference Library Authors 等（多作者，见源码） |
+| libjpeg-turbo (IJG) | 3.2.0 | Qt6Gui 嵌入（qjpeg 插件） | IJG AND BSD-3-Clause | Copyright (C) 2009-2026 D. R. Commander；Copyright (C) 1991-1998 Thomas G. Lane 等 |
+| PCRE2 | 10.48 | Qt6Core 嵌入（QRegularExpression） | BSD-3-Clause with PCRE2 Binary-Like-Packages exception | Copyright (c) 1997-2007 University of Cambridge；Copyright (c) 2007-2024 Philip Hazel；Copyright (c) 2010-2024 Zoltan Herczeg |
+| Freetype | 2.14.3 | Qt6Gui 嵌入 | FTL OR GPL-2.0（SBOM 免责声明，以下游正式分发为准） | Copyright (c) 1996-2026 David Turner, Robert Wilhelm, Werner Lemberg 等 |
+| HarfBuzz | 14.5.0 | Qt6Gui 嵌入 | MIT（SBOM 免责声明，以下游正式分发为准） | Copyright © 2010-2022 Google, Inc.；Copyright © 2005-2023 Behdad Esfahbod 等 |
+| Unicode 数据 (UCD) | 36 | Qt6Core 嵌入 | Unicode-3.0 | Unicode, Inc.（SBOM Attribution 条目） |
+| CLDR 数据 | v48.2 | Qt6Core 嵌入 | Unicode-3.0 | Unicode, Inc.（SBOM Attribution 条目） |
+| double-conversion | 3.4.0 | Qt6Core 嵌入 | BSD-3-Clause | Google（SBOM Attribution 条目） |
+| tinycbor | 7.0 | Qt6Core 嵌入 | MIT | Intel（SBOM Attribution 条目） |
+| wintab 头数据 | unknown（SBOM 未记版本） | qwindows.dll | LCS/Telegraphics 授权 | Copyright 1991-1998 by LCS/Telegraphics |
 
-- 以上组件均以静态方式嵌入 Qt 官方二进制，其许可义务由 Qt 官方二进制的分发条款
-  一并承载；Qt 官方源码 tarball 内含各组件完整许可文本
-  （`qtbase-everywhere-src-6.12.0/src/3rdparty/`）。本表提供组件名/许可/版权概览，
-  完整文本以对应源码 tarball 为准（上方源码获取条目）。
-- `Network_Attribution_psl-data`（MPL-2.0，libpsl 数据）：qnetworklistmanager 插件
-  运行时使用 QNetworkInformation，但 libpsl 静态数据仅链接进 Qt6Network 的
-  HSTS/PSL 相关功能；Qt 官方 mingw 二进制中该项是否实际嵌入以 SBOM 与源码 tarball
-  为准，本表如实转录 SBOM 记录，不代 Qt 做嵌入式判定。
+**逐组件分发相关信息（修改状态/替换与重新链接/调试权利）：**
+
+- 修改状态：**全部未修改**——上述组件以静态方式嵌入 Qt 官方二进制，制作过程对
+  Qt 二进制零修改，组件修改状态继承 Qt 官方构建（dev-2 轮 SBOM 只读核对）。
+- 库替换与重新链接：这些组件静态嵌入 Qt 库内部，**不能以"替换单个 DLL"方式单独
+  替换**；替换途径是以同一上游版本重新构建 Qt（或使用 ABI 兼容的官方 6.12.0 构建）
+  并重新链接本应用。该途径受 LGPLv3（Qt 本体的分发许可选项）保障。
+- 反向工程/调试权利：按 LGPLv3 对 Qt 二进制的条款执行；内嵌组件自身的调试权利
+  以其上游许可为准（SBOM `licenseDeclared` 均为 NOASSERTION，本表"许可"列为
+  Attribution 条目与公开上游许可的一致性记录，不代上游与 Qt 做法律判定）。
+- **完整许可证文本：本包内未随附**（见下方"全文交付状态"）。
+
+**全文交付状态（诚实边界，dev-2 轮如实记录）：**
+
+- 本机 Qt 安装（mingw_64/、Licenses/、mingw 工具链 licenses/）内**不存在**上述
+  11 项内嵌组件的许可全文文本（仅 SBOM Attribution 元数据；工具链 zlib 文本对应
+  MinGW-builds 2013 版本，与本处 zlib 1.3.2 非同一来源，不作冒替）。
+- 交付状态：**pending**——完整许可文本需从各组件对应源码（精确 6.12.0 tarball
+  `src/3rdparty/`，或上游发布点）取得并加入包内 `licenses/`，须维护者批准获取方式
+  与包内容扩大（涉及白名单/负例/NOTICES 同步更新）后实施。在此之前本包**不得
+  声称第三方许可材料完整**。
+- `Network_Attribution_psl-data`（MPL-2.0，libpsl 数据，SBOM 版本
+  2026-05-14_08-35-31_UTC）：qnetworklistmanager 插件运行时使用 QNetworkInformation；
+  libpsl 静态数据仅链接进 Qt6Network 的 HSTS/PSL 相关功能。Qt 官方 mingw 二进制中
+  该项是否实际嵌入以 SBOM 与源码 tarball 为准，本表如实转录 SBOM 记录，不代 Qt
+  做嵌入式判定。`Network_Attribution_libpsl`（SBOM 记录 download 为
+  https://github.com/rockdaboot/libpsl ，版权 Chromium Authors 2014-2016）同样
+  如实转录。
 
 ## GCC 运行库（MinGW-w64 GCC 13.1.0，MinGW-Builds 发行，随 Qt 安装器提供）
 
@@ -101,8 +128,7 @@ MinGW-w64 GCC 13.1.0），组件清单与 `MANIFEST.txt` 对应。
   - **libwinpthread-1.dll 不在 GCC 例外范围内**：winpthreads 是 mingw-w64 项目独立
     组件，其 `COPYING`（57 行，MIT 式，Copyright (c) 2011 mingw-w64 project）为独立
     许可，不并入 GCC 条目。完整文本单独提供：`licenses/winpthreads-COPYING.txt`。
-- 来源：本机 `E:/InstallApplication/Qt/Tools/mingw1310_64/bin/`（Qt 官方在线安装器
-  的 mingw1310_64 工具链组件）
+- 来源：Qt 官方在线安装器捆绑的 mingw1310_64 工具链组件（MinGW-Builds 13.1.0 发行）原样部署
 - 对应源码：GCC 13.1.0（含 libgcc/libstdc++/winpthreads 构建脚本）官方发布点
   https://gcc.gnu.org/pub/gcc/releases/gcc-13.1.0/ ；
   MinGW-w64 项目源码 https://www.mingw-w64.org/downloads/ ；

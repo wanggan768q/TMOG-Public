@@ -50,10 +50,11 @@ $exes = @($files | Where-Object { $_.Extension -eq '.exe' })
 if ($exes.Count -gt 1) { Fail ("多个 exe: " + ($exes.Name -join ', ')) }
 elseif ($exes.Count -eq 1) { Pass '单一 exe（TmogReplica.exe）' }
 
-# 文本文件不含绝对开发路径（C:\、E:\ 等）
+# 文本文件不含绝对开发路径（C:\、C:/、E:\、E:/ 等两种分隔符形式）。
+# 用行首/空白锚定 + 排除 http(s) scheme：URL 里的 "s:"/"g:" 后跟 // 是 scheme 片段，
+# 真实盘符路径是行首或空白后的单字母盘符；官方许可全文内的 URL 不得误伤。
 foreach ($f in ($files | Where-Object { $_.Extension -in '.md','.txt' })) {
-    if ((Get-Content $f.FullName -Raw) -match '[A-Za-z]:\\') { Fail "文本含绝对开发路径: $($f.Name)" }
-}
+    if ((Get-Content $f.FullName -Raw) -match '(?m)(?:^|(?<=\s))[A-Za-z]:[\\/](?!/)') { Fail "文本含绝对开发路径: $($f.Name)" }}
 
 # 组件白名单（计划 §1.3：未知新组件不默认许可；windeployqt 增加新插件必须先更新此清单）
 $whitelist = @(

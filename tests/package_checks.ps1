@@ -28,7 +28,10 @@ $SourceDir = (Resolve-Path $SourceDir).Path
 $checkScript = Join-Path $PSScriptRoot '..\scripts\check-package.ps1'
 if (-not (Test-Path $checkScript)) { throw "check-package.ps1 未找到: $checkScript" }
 
-# WorkDir 边界：必须位于 <SourceDir>/build/issue6-package-checks* 内，不存在则创建
+# WorkDir 边界：必须位于 <SourceDir>/build/issue6-* 专用目录内（leaf 正则，与
+# package-portable.ps1 的 BuildDir 规则对称），不存在则创建。
+# 严格性：根边界用 StartsWith 前缀而非子串；leaf 必须整体匹配 issue6- 前缀名；
+# 子目录使用仍须以该专用目录为前缀，未放宽任意 substring 逃逸。
 $WorkDirFull = if ([System.IO.Path]::IsPathRooted($WorkDir)) {
     [System.IO.Path]::GetFullPath($WorkDir)
 } else {
@@ -37,9 +40,12 @@ $WorkDirFull = if ([System.IO.Path]::IsPathRooted($WorkDir)) {
 if (-not $WorkDirFull.StartsWith((Join-Path $SourceDir 'build') + [System.IO.Path]::DirectorySeparatorChar)) {
     throw "WorkDir 必须位于 <SourceDir>/build/ 内: $WorkDirFull"
 }
-if ($WorkDirFull -notmatch 'issue6-package-checks') {
-    throw "WorkDir 必须是 issue6-package-checks 专用目录: $WorkDirFull"
+$workLeaf = Split-Path $WorkDirFull -Leaf
+if ($workLeaf -notmatch '^issue6-[a-z0-9-]+$') {
+    throw ("WorkDir 必须是 <SourceDir>/build/issue6-* 专用目录（leaf 正则 ^issue6-[a-z0-9-]+$）: {0} (leaf={1})") -f $WorkDirFull, $workLeaf
 }
+$srcRootItem = Get-Item $SourceDir
+if ($srcRootItem.LinkType) { throw "SourceDir 不得是链接/重解析点: $($srcRootItem.LinkType)" }
 New-Item -ItemType Directory -Force $WorkDirFull | Out-Null
 
 $script:failed_negatives = 0
@@ -55,7 +61,7 @@ function Run-Negative([string]$id, [scriptblock]$body) {
     if ($code -ne 0) {
         Write-Host "PASS: 负例 $id 如预期失败 (exit=$code)"
     } else {
-        Write-Host "FAIL: ���例 $id 意外通过（检查失效）"
+        Write-Host "FAIL: 负例 $id 意外通过（检查失效）"
         $script:failed_negatives++
     }
 }
@@ -180,6 +186,49 @@ Run-Negative 'N10-unknown-dll-rewritten-manifest' {
     New-BasePackage $d
     New-Placeholder (Join-Path $d 'styles\evilstyle.dll') 'unknown plugin component'
     Write-Manifest $d
+}
+
+# N11 NOTICES 含正斜杠绝对开发路径（C:/ 形式，本轮修复的绕过路径）
+Run-Negative 'N11-absolute-path-forward-slash' {
+    param($d)
+    New-BasePackage $d
+    Set-Content (Join-Path $d 'THIRD-PARTY-NOTICES.md') 'source: E:/InstallApplication/dev/path' -Encoding ascii
+    Write-Manifest $d
+}
+
+# N12 NOTICES 含反斜杠绝对开发路径（C:\ 形式，回归覆盖）
+Run-Negative 'N12-absolute-path-backslash' {
+    param($d)
+    New-BasePackage $d
+    Set-Content (Join-Path $d 'README-PACKAGE.md') 'build dir: E:\Dev\build\secret' -Encoding ascii
+    Write-Manifest $d
+}
+
+# N13 未知顶层 exe（重写 manifest 仍被白名单拒绝；与 N9 区别：N9 不重写清单）
+Run-Negative 'N13-unknown-exe-rewritten-manifest' {
+    param($d)
+    New-BasePackage $d
+    New-Placeholder (Join-Path $d 'unknown-helper.exe') 'unknown executable component'
+    Write-Manifest $d
+}
+
+# N14 未知插件子目录组件（不在任何白名单目录内，重写 manifest 仍拒绝）
+Run-Negative 'N14-unknown-plugin-subdir' {
+    param($d)
+    New-BasePackage $d
+    New-Placeholder (Join-Path $d 'sensors\fakeqtsensorsplugin.dll') 'unknown sensor plugin component'
+    Write-Manifest $d
+}
+
+# N15 清单行被篡改（size 字段伪造为非数字）
+Run-Negative 'N15-manifest-size-malformed' {
+    param($d)
+    New-BasePackage $d
+    Write-Manifest $d
+    $m = Join-Path $d 'MANIFEST.txt'
+    $lines = Get-Content $m
+    $lines = $lines | ForEach-Object { if ($_ -match 'README-PACKAGE\.md$') { ($_ -split "`t")[0] + "`tnot-a-number`tREADME-PACKAGE.md" } else { $_ } }
+    Set-Content $m -Value $lines -Encoding utf8
 }
 
 # 正例对照：干净占位包必须通过（证明负例失败是因为检查逻辑而非占位包构造错误）

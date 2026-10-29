@@ -14,13 +14,16 @@
 `E:/Git/TMOG-Public-WorkTree/issue-6-portable-package`，固定 HEAD
 `c62992b837e20665399798a46e170b85ce5bde06`（只读核对时 `git status --short` 为空）。
 
-| 新文件 | 迁入来源（旧树 c62992b8 固定对象） | 迁入方式 |
-|---|---|---|
-| CMakeLists.txt（portable 段） | 旧 CMakeLists L13–15, L61–95 | 重写适配：新树 Qt Core 可选/AUTOMOC 前置/stale 检查等 6 测试结构保留；strict 检查挪到 target 定义后（WINDEPLOYQT_EXE 已解析）；portable staging 逻辑同旧版 |
-| scripts/package-portable.ps1 | 旧 scripts/package-portable.ps1 | 重写：见 §2 修正清单 |
-| scripts/check-package.ps1 | 旧 scripts/check-package.ps1 | 重写增强：见 §2 |
-| packaging/README-PACKAGE.md | 旧 packaging/README-PACKAGE.md | 保留 5 点人工清单，补包内容结构与 6H 边界说明 |
-| packaging/THIRD-PARTY-NOTICES.md | 旧 packaging/THIRD-PARTY-NOTICES.md | 重写为逐组件表，见 §3 |
+| 新文件 | 迁入来源（旧树 c62992b8 固定对象） | 旧来源 SHA-256 | 迁入后新文件 SHA-256（attempt=2 修复后，见 §8） | 迁入方式 |
+|---|---|---|---|---|
+| CMakeLists.txt（portable 段） | 旧 CMakeLists L13–15, L61–95 | 01e3c3789bef416cbf08a0071064cfafa2bdf8c7182e60d4389e68de52286a61 | c031086827bf96f29df9225c3c6f22f12cb565fbb44d6c341c732f4aaf1b1816 | 重写适配：新树 Qt Core 可选/AUTOMOC 前置/stale 检查等 6 测试结构保留；strict 检查挪到 target 定义后（WINDEPLOYQT_EXE 已解析）；portable staging 逻辑同旧版 |
+| scripts/package-portable.ps1 | 旧 scripts/package-portable.ps1 | 177db2a5455fc30eb1947647e9e1c29cc51b1aafa5ef8099d6bc7d97ffd91b9a | c9e8432feefc25d4d5b554e920c6e0aa9b0b52d39adaccb979c6c95900f9f8ee | 重写：见 §2 修正清单 |
+| scripts/check-package.ps1 | 旧 scripts/check-package.ps1 | 5404dbad4ae4456b8d09925f901f6bdf96276b753e2811763e20a0a8d1c82bdc | 8df346c183655622099b867377781b5faab21f5056179748339c3df14b91960d | 重写增强：见 §2 |
+| packaging/README-PACKAGE.md | 旧 packaging/README-PACKAGE.md | 3a5071b5ed295a7521d4fbe267df50d8775e2268b7907253f124597987237206 | bf7c1812362ed10634fe9d4caa0bf7f0c7c6c7ddc585c1ba3354813fdef7bb79 | 保留 5 点人工清单，补包内容结构与 6H 边界说明 |
+| packaging/THIRD-PARTY-NOTICES.md | 旧 packaging/THIRD-PARTY-NOTICES.md | c3c4302cc7e3e50fc05a66dda867a1be8467ca2dfe9a67eb883e730db3aac3c3 | 4a1fc86812d1156e7c627b93edf57561054eb3694ba325a3c88cd48e60ebec96 | 重写为逐组件表，见 §3 |
+
+新迁入文件 hash 在 attempt=2 修复后重测（含 NOTICES 表补全、脚本检查修复）；旧来源
+hash 取自 `git show <c62992b8>:<path> | sha256sum` 固定对象。
 
 未迁入：旧 `tests/smoke_enumerate.cpp` 之外的旧测试基线（新树已有 6 测试更全）、
 旧 `.gitignore`（禁止修改域）、旧 build 产物。
@@ -159,3 +162,39 @@ winpthreads-COPYING、mingw-w64-runtime-COPYING）。
 - 技能使用：本任务未调用 Skill 工具（计划指定的 superpowers:executing-plans 属流程
   方法，其"逐项落实+如实证据"要求已直接体现在本记录与 ops.jsonl 结构中；如实声明，
   不伪造调用记录）。
+
+## 8. attempt=2（repair_round=1）返工记录
+
+Review 裁定（review-1-adjudication，SHA
+`1833bd118df03666e2121ef369504777cbe7e95d2f759784462a923cd1aa65e3`）整体 FAIL，
+本轮按返工合同完成以下修复（不降验收、不下载外部法律材料）：
+
+1. **检查绕过（adjudication §2.4a）**：check-package.ps1 绝对路径检查正则由
+   `[A-Za-z]:\\` 扩为 `[A-Za-z]:[\\/]`，两种分隔符均拒绝；NOTICES 内 2 处
+   `E:/InstallApplication/...` 本机绝对路径删除，来源改为一般合法名称描述（官方
+   安装器组件说明），不泄漏开发机布局。
+2. **WorkDir 硬编码（DEF-1）**：package_checks.ps1 WorkDir 由子串匹配
+   `issue6-package-checks` 改为 leaf 正则 `^issue6-[a-z0-9-]+$`（与
+   package-portable 的 BuildDir 规则对称），根边界 StartsWith 保留、SourceDir
+   LinkType 检查新增；未放宽任意 substring 逃逸。负例实测：`build/not-issue6-dir`
+   → throw exit 1；review 专用 `issue6-review-package-checks` 顶层目录可接受。
+3. **U+FFFD 乱码（adjudication §2.4b）**：package_checks.ps1 内 3 处替换字符修复
+   （"负例"/"检"字），提交文本 `efbfbd` 字节计数复测为 0。
+4. **NOTICES 字段补全（S1 版本列/S3 逐组件/S5 插件版权列）**：内嵌 11 组件表补
+   SBOM 实测版本列（1.3.2/1.6.58/3.2.0/10.48/2.14.3/14.5.0/36/v48.2/3.4.0/7.0/
+   unknown）；版权列改录 SBOM copyrightText 摘录；逐组件修改状态/替换途径/调试
+   权利段落补齐；插件表 11 行补版权列。数据来源为本机 Qt 6.12.0 安装 SBOM
+   （qtbase-6.12.0.spdx.json / qtsvg-6.12.0.spdx.json）只读解析。
+5. **负例补强**：新增 N11（正斜杠绝对路径）、N12（反斜杠绝对路径）、N13（未知
+   exe+重写清单）、N14（未知插件子目录组件）、N15（清单 size 字段非法），全部
+   实测非零退出；连同原 N1-N10 与正例对照共 16 案例全过（exit 0，16/16）。
+6. **迁入文件 hash（S4）**：§1 表补旧来源 SHA-256（git show 固定对象）与迁入后
+   新文件 SHA-256（attempt=2 修复后实测）。
+
+**材料声明纠正（诚实边界）**：本记录此前"第三方材料完整"表述以 L62 为准纠正——
+Qt 内嵌 11 组件的**许可全文未随包附带且当前不可获取**（本机 Qt 安装批准范围内无
+对应全文源；工具链 zlib 文本系 MinGW-builds 2013 版本，与内嵌 1.3.2 非同一来源，
+不得冒替）。NOTICES 已如实标注交付状态 pending。**在维护者批准全文获取方式并
+扩包前，本包不得声称第三方许可材料完整；完整验收（含材料项）不能在此状态宣称
+ALL PASS。**本轮安全/脚本/清单类检查项与材料项分列：前者全部完成并验证，后者
+BLOCKED（缺合法源，需用户决定获取方式）。
