@@ -31,6 +31,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QTableView>
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -52,6 +53,12 @@ void check(bool ok, const std::string& what) {
     std::cout << (ok ? "PASS" : "FAIL") << ": " << what << std::endl;
     if (!ok) ++failures;
 }
+
+// attempt3 裁定3：heartbeat 分段基线哨兵——未建立基线 = 断言必败（不默认绿）
+constexpr int kHbUnset = (1 << 30);
+// attempt3 裁定1：模态内程序化选择 B 动作接通哨兵。red=false：断言在位但
+// 动作未接通 → Y 场景红灯（证明缺口的断言真实运行真实失败）；green=true。
+constexpr bool kSelectWired = true;
 
 constexpr std::uint64_t kTickA = 132000000000000000ULL;
 constexpr std::uint64_t kTickB = 132000000000000001ULL;
@@ -106,11 +113,25 @@ public:
             return empty_ok_frame();   // 超时/停止：可收束空帧，不挂死 worker
         auto frame = std::move(frames_.front());
         frames_.pop_front();
+        // attempt3 裁定2（green）：真实消费 permit 处记录逐消费 seq（同一
+        // mutex 保护）；wall_ns 取帧内真实单调时钟（duration_cast 纳秒）。
+        ++consume_seq_;
+        consume_log_.push_back(ConsumeRecord{
+            consume_seq_, frame.wall_clock_ns, QThread::currentThread()});
+        last_seq_ = consume_seq_;
         return frame;   // wall_clock_ns 已由 push 时写入（真实单调递增）
     }
     // 场景驱动：投递一帧 permit（模态轮次 / drain）
     void push(SampleResult frame) {
-        frame.wall_clock_ns = monotonic_ns();
+        // attempt3 裁定2：真实单调纳秒；若时钟分辨率内重复则按测试许可真实
+        // 等待时钟前进（不伪造/复用旧时间戳）
+        std::uint64_t ns = monotonic_ns();
+        while (ns <= last_push_ns_) {
+            QThread::msleep(1);
+            ns = monotonic_ns();
+        }
+        last_push_ns_ = ns;
+        frame.wall_clock_ns = ns;
         {
             std::lock_guard<std::mutex> lk(m_);
             frames_.push_back(std::move(frame));
@@ -133,11 +154,30 @@ public:
         std::lock_guard<std::mutex> lk(m_);
         return active_;
     }
+    // attempt3 裁定2：真实消费序号观测。red 阶段：记录未接通（返回空/0），
+    // 断言先行证明缺口真实存在；green 阶段在 take_sample 真实消费 permit 处
+    // 以同一 mutex 记录。
+    struct ConsumeRecord {
+        int seq = 0;                  // 每次真正消费 permit 从 1 递增
+        std::uint64_t wall_ns = 0;    // 该帧 wall_clock_ns（duration_cast 纳秒）
+        const QThread* thread = nullptr;   // 消费线程（worker，非 GUI）
+    };
+    std::vector<ConsumeRecord> consumed() {
+        std::lock_guard<std::mutex> lk(m_);
+        return consume_log_;
+    }
+    int last_consumed_seq() {
+        std::lock_guard<std::mutex> lk(m_);
+        return last_seq_;
+    }
 
 private:
     static std::uint64_t monotonic_ns() {
+        // attempt3 裁定2：真实纳秒单位（duration_cast，非 count() 原生单位）
         return static_cast<std::uint64_t>(
-            std::chrono::steady_clock::now().time_since_epoch().count());
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
     }
     static SampleResult empty_ok_frame() { return SampleResult{}; }   // ok=true、空表
 
@@ -147,6 +187,12 @@ private:
     bool stop_ = false;
     int calls_ = 0;
     int active_ = 0;
+    // attempt3 裁定2（green）：逐消费 seq 记录（m_ 保护，take_sample 真实
+    // 消费 permit 处写入；含初始帧与 drain 帧，每次真正消费从 1 递增）
+    int consume_seq_ = 0;
+    int last_seq_ = 0;
+    std::vector<ConsumeRecord> consume_log_;
+    std::uint64_t last_push_ns_ = 0;   // push 时钟前进守卫（裁定2 严格递增）
 };
 
 // ---- fake ops：仅记录，绝不触碰任何平台 API --------------------------------
@@ -266,6 +312,12 @@ struct Drive {
     // 模态内 source identity 观测证据（R/X 场景断言依据）
     bool reuse_visible_in_source = false;
     bool original_a_absent_in_source = false;
+    // ---- attempt3 裁定1/2/3 观测字段（red：仅声明，接通在 green）----
+    int hb_modal_before = kHbUnset;      // 模态内第一轮投递前 heartbeat 基线
+    int hb_after_delivery = kHbUnset;    // 结束投递完成（terminate 记录确认后）基线
+    int round_seq_at[4] = {0, 0, 0, 0};  // 轮 N processed 观测点的真实消费 seq
+    int round_seq_prev[4] = {0, 0, 0, 0}; // 轮 N push 前的已消费 seq（绑定用）
+    bool b_selected_modal = false;       // Y：模态内程序化选择 B 已执行
 };
 
 // 模态轮次帧构造：round 1..3。A/B CPU 逐轮不同且互不相等（排序方向翻转
@@ -304,6 +356,7 @@ struct ScenarioCfg {
     const char* outcome_text_contains = nullptr;  // 结果框必须包含的串
     bool expect_reuse_visible = false;            // R：模态内复用身份必须实入 source model
     bool expect_a_absent_before_click = false;    // X：点击前原A必须已从 source 消失
+    bool expect_selection_change = false;         // Y：模态内当前选择必须真实变化为 B
 };
 
 // source model 内按 identity 精确查找（观测证据，非构造帧自证）
@@ -370,8 +423,12 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
                 frame_ok = !source_has_identity(model, orig_a_id);
             else
                 frame_ok = true;   // 常规轮：reset 到达即 processed
-            if (d.observed_modal_resets > d.round_baseline && frame_ok)
+            if (d.observed_modal_resets > d.round_baseline && frame_ok) {
                 d.round_frame_in_source = true;
+                // attempt3 裁定2：该观测点绑定真实消费 seq（red 阶段 stub 返回
+                // 0 → 断言失败证明缺口；green 从 take_sample 真实消费处记录）
+                d.round_seq_at[d.round] = raw->last_consumed_seq();
+            }
         }
     });
 
@@ -446,6 +503,8 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
             d.round_baseline = d.observed_modal_resets;
             d.round_frame_is_reuse = false;
             d.round_frame_drops_a = false;   // round1 仍含 A（X 场景 r1 也在）
+            // attempt3 裁定3（green）：模态内第一轮投递前 heartbeat 基线
+            d.hb_modal_before = heartbeat_ticks;
             check(box->button(QMessageBox::Yes) != nullptr &&
                       box->button(QMessageBox::No) != nullptr,
                   "modal is real question box (Yes/No buttons)");
@@ -456,6 +515,7 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
             SampleResult f;
             f.ok = true;
             f.processes = cfg.frame_for_round(1);
+            d.round_seq_prev[1] = raw->last_consumed_seq();   // 裁定2：本轮 push 前已消费 seq
             raw->push(std::move(f));
             ++d.frames_applied;
             std::cout << "   round 1 frame sent (driver)" << std::endl;
@@ -490,10 +550,58 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
                       "proxy order changed at round " +
                           std::to_string(d.round));
                 d.last_order = order;
+                // attempt3 裁定2：真实消费 seq 断言——processed 观测点 seq 必须
+                // 恰为本轮 push 前已消费 seq+1（逐消费一致，非 driver 轮次；
+                // red stub at=0 必败）
+                check(d.round_seq_at[d.round] == d.round_seq_prev[d.round] + 1,
+                      "enumerator consumed seq == prev+1 at round " +
+                          std::to_string(d.round) +
+                          " processed observation point (real consume record, "
+                          "not driver round)");
+                // attempt3 裁定2：输出行（场景/seq/真实单位）
+                std::cout << "   round " << d.round
+                          << " seq=" << d.round_seq_at[d.round]
+                          << " (real consume seq)" << std::endl;
                 // 真实 proxy sort 请求切换顺序（程序化，非人工交互）
                 proxy->sort(ProcessTableModel::ColCpu,
                             d.round % 2 ? Qt::AscendingOrder
                                         : Qt::DescendingOrder);
+                // attempt3 裁定1（Y）：模态内程序化当前选择变化 → B（red：
+                // expect_selection_change 未在场景配置接通，断言仍执行——
+                // cfg 值为 false 时不进入，green 接通后生效）。生产 on_end_task
+                // 值冻结（模态前快照），Yes 仍传原 A——由既有 target 断言证明。
+                if (cfg.expect_selection_change) {
+                    const int row_b = find_proxy_row(proxy, kPidB);
+                    check(row_b >= 0, "fixture-B found in modal (round " +
+                                          std::to_string(d.round) + ")");
+                    if (row_b >= 0) {
+                        if (kSelectWired) {
+                            auto* tbl = table_of(win);
+                            const QModelIndex idx_b =
+                                proxy->index(row_b, 0);
+                            tbl->selectionModel()->select(
+                                idx_b, QItemSelectionModel::ClearAndSelect |
+                                           QItemSelectionModel::Rows);
+                            tbl->setCurrentIndex(idx_b);
+                            const QModelIndex src_b =
+                                proxy->mapToSource(tbl->currentIndex());
+                            const auto* sel_b =
+                                qobject_cast<ProcessTableModel*>(
+                                    proxy->sourceModel())
+                                    ->row_at(src_b.row());
+                            check(sel_b &&
+                                      sel_b->snapshot.identity.pid == kPidB &&
+                                      sel_b->snapshot.identity.creation_tick ==
+                                          kTickB,
+                                  "modal round " + std::to_string(d.round) +
+                                      ": current selection changed to B "
+                                      "(pid 202, tick B) via proxy->source");
+                            d.b_selected_modal = true;
+                        }
+                        // red：kSelectWired=false → 无选择变化动作，
+                        // b_selected_modal 保持 false → 下方末尾断言红灯
+                    }
+                }
                 if (d.round < kModalRounds) {
                     // 下一轮：显式 round+1（独立序列）
                     ++d.round;
@@ -506,6 +614,8 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
                     SampleResult f;
                     f.ok = true;
                     f.processes = cfg.frame_for_round(d.round);
+                    d.round_seq_prev[d.round] =
+                        raw->last_consumed_seq();   // 裁定2：本轮 push 前已消费 seq
                     raw->push(std::move(f));
                     ++d.frames_applied;
                     std::cout << "   round " << d.round
@@ -535,6 +645,15 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
     const int hb_before = heartbeat_ticks;
     if (end_act) end_act->trigger();
     check(d.confirm_seen, "real modal appeared (activeModalWidget with parent)");
+
+    // attempt3 裁定3：模态内（第一轮投递前）heartbeat 基线 + 实测增量断言
+    // （模态可见期间主循环必须持续 tick；red 阶段基线未赋值=kHbUnset 必败）
+    check(d.hb_modal_before != kHbUnset, "modal-before heartbeat baseline established");
+    if (d.hb_modal_before != kHbUnset) {
+        check(heartbeat_ticks > d.hb_modal_before,
+              "heartbeat advanced during modal (before delivery baseline, +" +
+                  std::to_string(heartbeat_ticks - d.hb_modal_before) + ")");
+    }
     check(!d.force_closed, "modal not force-closed by watchdog");
     check(d.modal_resets >= kModalRounds,
           std::to_string(kModalRounds) +
@@ -592,6 +711,11 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
         check(recorded_thread != nullptr &&
                   recorded_thread != app.instance()->thread(),
               "terminate ran on non-GUI thread (async kill worker)");
+        // attempt3 裁定3：结束投递后独立基线（terminate 记录确认后此刻取值；
+        // red 阶段无此赋值行 → kHbUnset 必败，模态内累计 tick 不能替代）
+        d.hb_after_delivery = heartbeat_ticks;   // green：基线建立于投递记录确认处
+        check(d.hb_after_delivery != kHbUnset,
+              "post-delivery heartbeat baseline established (independent)");
     } else {
         // C 取消：零 ops 调用，模型仍 A
         pump_ms(500);
@@ -607,6 +731,55 @@ void run_scenario(QApplication& app, const ScenarioCfg& cfg) {
     pump_ms(300);
     check(heartbeat_ticks > hb_before,
           "main-loop heartbeat advanced across end-task delivery");
+    // attempt3 裁定3：投递后实测增量（独立于模态内累计；red 基线未赋值必败）
+    if (d.hb_after_delivery != kHbUnset) {
+        check(heartbeat_ticks > d.hb_after_delivery,
+              "heartbeat advanced AFTER delivery (post-delivery baseline, +" +
+                  std::to_string(heartbeat_ticks - d.hb_after_delivery) + ")");
+    }
+
+    // attempt3 裁定2：场景级 seq 全量输出与逐消费一致性断言（red：consumed()
+    // 为空必败；green 断言 seq 连续 1..N、wall_ns 严格递增、线程为 worker）
+    const auto cons = raw->consumed();
+    std::cout << "   seq records: n=" << cons.size();
+    for (const auto& cr : cons)
+        std::cout << " [s=" << cr.seq << " w=" << cr.wall_ns << "]";
+    std::cout << std::endl;
+    check(!cons.empty(), "enumerator produced real per-consume seq records");
+    if (!cons.empty()) {
+        for (std::size_t i = 0; i < cons.size(); ++i) {
+            const int expect_seq = static_cast<int>(i) + 1;
+            if (cons[i].seq != expect_seq)
+                check(false, "seq continuity broken at record " +
+                                 std::to_string(i) + " (got " +
+                                 std::to_string(cons[i].seq) + ")");
+            if (i > 0 && cons[i].wall_ns <= cons[i - 1].wall_ns)
+                check(false, "wall_ns not strictly increasing at record " +
+                                 std::to_string(i) + " (" +
+                                 std::to_string(cons[i - 1].wall_ns) + " -> " +
+                                 std::to_string(cons[i].wall_ns) +
+                                 " ns, duration_cast real nanoseconds)");
+        }
+        // 裁定2：消费线程为 worker（非 GUI 线程）——take_sample 在真实
+        // SamplingWorker 线程执行
+        const bool all_worker =
+            std::all_of(cons.begin(), cons.end(), [&](const auto& cr) {
+                return cr.thread != nullptr &&
+                       cr.thread != app.instance()->thread();
+            });
+        check(all_worker,
+              "all consume records from worker thread (non-GUI, " +
+                  std::to_string(cons.size()) + " records)");
+    }
+    // attempt3 裁定1：Y 模态内选择变化必须实际发生（red kSelectWired=false
+    // → 必败）
+    if (cfg.expect_selection_change) {
+        check(d.b_selected_modal,
+              "Y: modal current-selection change actually executed (select B "
+              "wired)");
+    }
+
+    // ---- 收束：drain（Ok 路径刷新帧）→ stop → worker 实际退出 ----
 
     // 结果对话框断言（X/R：真实 UI 呈现失败/身份变化；Y/N：静默无框）
     if (cfg.expect_outcome_dialog) {
@@ -695,11 +868,14 @@ int main(int argc, char** argv) {
     run_scenario(app, {"C-cancel", frames_common(false, false), QMessageBox::No,
                        {tmog::KillResult::Ok, {}}, id_a,
                        "A (original identity)"});
-    // Y 确认：Yes；exactly1 原身份/3000ms/非GUI线程；Ok 静默 + 刷新 drain
+    // Y 确认：Yes；exactly1 原身份/3000ms/非GUI线程；Ok 静默 + 刷新 drain；
+    // attempt3 裁定1：额外当前选择变化（模态内程序化 select B）期望接通
     run_scenario(app, {"Y-confirm", frames_common(false, false), QMessageBox::Yes,
                        {tmog::KillResult::Ok, {}}, expect_y,
                        negative ? "B (negative-oracle expectation)"
-                                : "A (original identity)"});
+                                : "A (original identity)",
+                       /*expect_outcome_dialog=*/false, nullptr, false, false,
+                       /*expect_selection_change=*/true});
     // X 目标已退出：r2 删 A；Failed("fixture exited")；Yes 仍传原 A；UI 失败框；
     // 点击前原 A 必须已从 source 消失
     run_scenario(app, {"X-exited", frames_common(true, false), QMessageBox::Yes,
