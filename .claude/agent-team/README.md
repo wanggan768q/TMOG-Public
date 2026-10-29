@@ -51,12 +51,14 @@ CLI 按技能解析一次：ORCA_CLI_COMMAND 有值用其值；否则 ORCA_DEV_R
 
 - 每个角色会话都用 `terminal create` 建立**独立标签页**，不使用 split，不与其他角色共用一个窗口。Plan/IssueWriter 使用 `--worktree path:<主工程>`；Dev/Review 使用 `--worktree path:<任务worktree>`，使标签页归入对应 worktree。
 - create 直接支持 `--shell`/`--title`，启动命令仍先 `Set-Location` 到实际 cwd。
-- 超时或结果未知时，先 `orca terminal list` 核查是否已有同名新终端，不盲目重复 create。收到 background handle 时如实报告“未可见”，不算布局成功。
+- 超时或结果未知时，先 `orca terminal list` 核查是否已有同名新终端，不盲目重复 create。
+- **可见性核验（必做）**：create 后立即 `orca terminal list --json` 查新 handle。若 `orphaned=true` 或 `tabId` 以 `pty:` 开头，说明终端只在后台运行、主界面没有标签页（任务 worktree 尚未在 Orca 界面打开时常见）。此时执行 `orca terminal switch --terminal <handle> --json`，返回 `navigated:true` 后再查一次，确认已获得真实 tabId 且 `orphaned=false`。仍不可见则在自己终端告知用户该会话名与 handle，不算布局成功，也不重复 create。
 
 以下是需由 Product 按真实路径构造的命令形态，不直接运行占位符：
 
 ```text
 orca terminal create --worktree 'path:<主工程或任务worktree绝对路径>' --shell pwsh.exe --title '<会话名>' --command '<已校验PowerShell启动命令>' --json
+orca terminal switch --terminal <新handle> --json   # orphaned 或 tabId 为 pty: 时
 ```
 
 启动命令先 `Set-Location -LiteralPath <实际cwd>`，再 `claude -n <唯一会话名> --agent <role> --settings <settings绝对路径> --add-dir <project_root> --agents <角色JSON>`。参数由 PowerShell 的逐参数引用构造；单引号路径用双单引号转义，不把路径或任务正文当任意可执行代码拼接。
