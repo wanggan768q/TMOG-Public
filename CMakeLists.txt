@@ -217,3 +217,36 @@ if(TARGET Qt6::Widgets)
         endif()
     endif()
 endif()
+
+# W02：便携包发布严格模式——GUI/部署工具不齐备时配置失败，不静默跳过。
+# strict 模式供 scripts/package-portable.ps1 使用；默认开发构建不受影响。
+option(TMOG_PORTABLE_STRICT "便携包发布：缺 Qt 或 windeployqt 时配置失败" OFF)
+if(TMOG_PORTABLE_STRICT)
+    if(NOT TARGET Qt6::Widgets)
+        message(FATAL_ERROR "TMOG_PORTABLE_STRICT=ON 但未找到 Qt6 Widgets：便携包要求 GUI 与部署工具齐备")
+    endif()
+    if(WIN32 AND NOT WINDEPLOYQT_EXE)
+        message(FATAL_ERROR "TMOG_PORTABLE_STRICT=ON 但未找到 windeployqt：便携包要求部署工具齐备")
+    endif()
+endif()
+
+# W02：独立 staging 便携包（cmake --install 到专用构建目录内 portable/，
+# 对 staged exe 再跑 windeployqt；不触及源码目录或工程根）。
+if(WIN32 AND TARGET Qt6::Widgets AND WINDEPLOYQT_EXE)
+    install(TARGETS TmogReplica RUNTIME DESTINATION . COMPONENT portable)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/packaging/THIRD-PARTY-NOTICES.md"
+        "${CMAKE_SOURCE_DIR}/packaging/README-PACKAGE.md"
+        DESTINATION . COMPONENT portable)
+    set(TMOG_PORTABLE_DIR "${CMAKE_BINARY_DIR}/portable")
+    add_custom_target(portable_package
+        COMMAND ${CMAKE_COMMAND} -E remove_directory "${TMOG_PORTABLE_DIR}"
+        COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}"
+                --component portable --prefix "${TMOG_PORTABLE_DIR}"
+        COMMAND "${WINDEPLOYQT_EXE}" --no-translations
+                --no-system-d3d-compiler --no-opengl-sw
+                "${TMOG_PORTABLE_DIR}/TmogReplica.exe"
+        COMMENT "portable_package: staging into ${TMOG_PORTABLE_DIR}"
+        VERBATIM)
+    add_dependencies(portable_package TmogReplica)
+endif()
