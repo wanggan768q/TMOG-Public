@@ -20,7 +20,7 @@ try {
     $settingsKeys = $teamSettings + @('TeamReview_Setting')
     $readyKeys = if ($Role -eq 'team-review') { @('TeamReview_Setting') } else { $teamSettings }
     $limitKeys = @('Max_Dev', 'Max_Review', 'Max_IssueWriter')
-    $required = $settingsKeys + $limitKeys + @('Worktree_Root', 'Dev_Split_Direction', 'Review_Split_Direction', 'Merge_Method')
+    $required = $settingsKeys + $limitKeys + @('Worktree_Root', 'Merge_Method')
     Assert-Condition ($config -is [System.Collections.IDictionary]) '配置必须是 JSON 对象。'
     Assert-Condition ($config.Count -eq $required.Count) '配置字段数量不匹配；Plan 和 TeamReview 固定单例，不配置数量上限。'
     foreach ($key in $required) {
@@ -35,9 +35,6 @@ try {
     Assert-Condition ($root -is [string] -and -not [string]::IsNullOrWhiteSpace($root)) 'Worktree_Root 必须是非空字符串。'
     Assert-Condition ([IO.Path]::IsPathFullyQualified($root)) 'Worktree_Root 必须是绝对路径。'
     Assert-Condition ([IO.Path]::GetFullPath($root).TrimEnd('\', '/') -ne $projectRoot.TrimEnd('\', '/')) 'Worktree_Root 不能等于当前工程根目录。'
-    foreach ($key in @('Dev_Split_Direction', 'Review_Split_Direction')) {
-        Assert-Condition ($config[$key] -cin @('vertical', 'horizontal')) "$key 必须是 vertical 或 horizontal。"
-    }
     Assert-Condition ($config['Merge_Method'] -cin @('merge', 'squash', 'rebase')) 'Merge_Method 必须是 merge、squash 或 rebase。'
     foreach ($key in $settingsKeys) {
         $value = $config[$key]
@@ -53,13 +50,17 @@ try {
     foreach ($name in @('product', 'plan', 'dev', 'review', 'issue-writer', 'team-review')) {
         $path = Join-Path $projectRoot ".claude/agents/$name.md"
         $text = Get-Content -LiteralPath $path -Raw
-        Assert-Condition ($text -match "(?s)\A---\r?\nname: $([regex]::Escape($name))\r?\ndescription: [^\r\n]+\r?\n---\r?\n") "角色 frontmatter 无效：$name"
+        Assert-Condition ($text -match "(?s)\A---\r?\nname: $([regex]::Escape($name))\r?\ndescription: [^\r\n]+\r?\ntools: [^\r\n]+\r?\n---\r?\n") "角色 frontmatter 无效（需 name/description/tools）：$name"
+        $roleTools = ($text -split '\r?\n')[3].Substring(7) -split ',\s*'
+        if ($name -in @('review', 'issue-writer', 'team-review')) {
+            Assert-Condition ('Edit' -notin $roleTools -and 'NotebookEdit' -notin $roleTools) "只读/发布角色不得持有 Edit：$name"
+        }
         Assert-Condition ($text.Contains('.claude/agent-team/README.md')) "角色缺少共享合同指针：$name"
         if ($name -eq 'team-review') {
             Assert-Condition ($text.Contains('.claude/agent-team/team-review.md')) 'TeamReview 缺少独立审计合同指针。'
             Assert-Condition ($text.Contains('只向用户负责')) 'TeamReview 缺少独立管理边界。'
         } else {
-            Assert-Condition ($text.Contains('INTENT_RECORDED')) "角色缺少副作用落盘确认：$name"
+            Assert-Condition ($text.Contains('ops.jsonl')) "角色缺少副作用日志规则：$name"
         }
         Assert-Condition (-not $text.Contains([char]0xfffd)) "角色包含乱码替换字符：$name"
     }

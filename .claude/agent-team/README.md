@@ -10,6 +10,7 @@
 - Plan 新计划和扩大范围的修订必须获用户批准。维护者合同确认、人工验收、外部发布、安装、环境修改或系统级实验等原任务门槛不能由技术 Review 替代。
 - 自动 GitHub 操作限定本流程登记、用户指定且达到验收门槛的任务；不接管已有无关 PR／Issue。通过 gh 操作，遵循 `docs/agents/issue-tracker.md` 的原生依赖，不按编号猜测就绪。
 - 角色提示词不是安全沙箱。`--settings` 是额外设置，不隔离其他设置来源；权限拒绝／审批必须保留，不使用绕过权限的启动参数。不自动放宽 settings 或安装工具。
+- 每个角色 frontmatter 的 `tools` 是工具白名单，经 `--agent` 加载后对该会话生效：Review/IssueWriter/TeamReview 无 Edit，只用 Write 写自己的报告与 ops.jsonl；只有 Product 持有 Cron；Dev/Review 持有 REA 与 LSP。白名单只限定可调用的工具，Bash 内的具体命令仍由 settings 权限和本合同约束。
 - 自动角色 role name 为 `product|plan|dev|review|issue-writer`；会话显示名为 `Product|Plan_XXX|Dev_XXX|Review_XXX|IssueWriter_XXX`。独立审计 role 为 `team-review`，会话名 `TeamReview_XXX`，只有用户主动授权才运行。新会话必须显式加载角色，命名不等于加载角色。
 
 ## 配置与预检
@@ -22,10 +23,9 @@
 | TeamReview_Setting | 独立审计 settings 路径；相对主工程解析，仅用户启动 TeamReview 时要求就绪，固定单例 |
 | Max_Dev / Max_Review / Max_IssueWriter | 正整数，默认各 1；计入启动中、执行、待命、阻塞和关闭未确认的窗口 |
 | Worktree_Root | 允许创建任务 worktree 的绝对根目录 |
-| Dev_Split_Direction / Review_Split_Direction | vertical 左右／horizontal 上下；仅相对拆分，不指定比例或新 pane 必在哪一侧 |
 | Merge_Method | merge 默认；可明确配置 squash/rebase；仓库不支持所选方式时暂停，不静默切换 |
 
-Plan 固定最多一个未关闭窗口，没有 Max_Plan 配置。已有实例复用；忙时排队。不同计划请求清楚交接，先核查现存实例而非另开。其他角色按任务创建，第一版串行推进，每一时刻只有一个开发／审查阶段；调高数量上限不启用并行代码修改。
+Plan 固定最多一个未关闭窗口，没有 Max_Plan 配置。忙时排队；每个计划请求用新会话，交付后关闭（见“关闭与清理”）。其他角色按任务创建，**不同任务可并行**，各自在独立 worktree 推进，总数受 Max_* 上限约束（上限不是必须开满）。并行规则：同一任务同一时刻只有一个写者，Review 期间该任务 Dev 停止写代码；Product 派发前比对各任务允许修改路径，有重叠的任务按依赖串行；合并到 main 逐个进行，前一个合并后，后续任务按“PR、Issue 和本地同步”第 4 条重新评估基点，必要时由 Dev 更新分支并复审新 SHA。
 
 Product 每次执行解析并保存配置快照及 SHA-256；恢复时核对差异，权限、根目录、合并策略变化须重新确认。不保存 settings 密钥或正文，日志只留路径和摘要。
 
@@ -49,22 +49,19 @@ CLI 按技能解析一次：ORCA_CLI_COMMAND 有值用其值；否则 ORCA_DEV_R
 
 ### 布局与启动
 
-- Product 单独标签页；第一个执行终端使用 create 建立工作标签页。后续 Dev/Review/IssueWriter/Plan 相对已记录的工作组 terminal split，尽量集中；Plan/IssueWriter 使用 vertical。关闭组内基准后选择组内另一个经核实的存活终端；没有存活终端则新建工作标签页。
-- create 支持 shell/title；split 不支持单独 shell/title，先确认父 shell 能运行命令，创建后按 handle 设置标题。为 Dev/Review 运行命令先在新 pane 切到其 worktree cwd；拆分不会自动切代码目录。
-- split 明确失败且没有残留新终端时允许 fallback create；超时/结果未知先核查原操作，按 receipt 的 retry-split/leafId 恢复，不再盲目 split/create。
-- 不保证新 pane 固定落右上/右下，也不把 background handle 算作可见分屏成功。收到 background/不支持布局结果就明确报告。
+- 每个角色会话都用 `terminal create` 建立**独立标签页**，不使用 split，不与其他角色共用一个窗口。Plan/IssueWriter 使用 `--worktree path:<主工程>`；Dev/Review 使用 `--worktree path:<任务worktree>`，使标签页归入对应 worktree。
+- create 直接支持 `--shell`/`--title`，启动命令仍先 `Set-Location` 到实际 cwd。
+- 超时或结果未知时，先 `orca terminal list` 核查是否已有同名新终端，不盲目重复 create。收到 background handle 时如实报告“未可见”，不算布局成功。
 
 以下是需由 Product 按真实路径构造的命令形态，不直接运行占位符：
 
 ```text
-orca terminal create --worktree 'path:<主工程绝对路径>' --shell pwsh.exe --title '<会话名>' --command '<已校验PowerShell启动命令>' --json
-orca terminal split --terminal <工作组真实handle> --direction vertical --command '<已校验PowerShell启动命令>' --json
-orca terminal rename --terminal <新handle> --title '<会话名>' --json
+orca terminal create --worktree 'path:<主工程或任务worktree绝对路径>' --shell pwsh.exe --title '<会话名>' --command '<已校验PowerShell启动命令>' --json
 ```
 
 启动命令先 `Set-Location -LiteralPath <实际cwd>`，再 `claude -n <唯一会话名> --agent <role> --settings <settings绝对路径> --add-dir <project_root> --agents <角色JSON>`。参数由 PowerShell 的逐参数引用构造；单引号路径用双单引号转义，不把路径或任务正文当任意可执行代码拼接。
 
-`--agents` 的 JSON 只传一个角色，结构为 `{"dev":{"description":"…","prompt":"…"}}`。Product 读取主工程 `.claude/agents/<role>.md`，剥离 YAML frontmatter，把完整正文作为 prompt，用 ConvertTo-Json 压缩并转义成一个 shell 参数；不手工截断角色正文。这样 `--agent` 明确加载角色，不依赖外部 worktree 的文件发现版本。`--add-dir` 为访问主工程合同与报告提供显式目录，不把 additionalDirectories 设置当作角色加载证明。
+`--agents` 的 JSON 只传一个角色，结构为 `{"dev":{"description":"…","tools":["…"],"prompt":"…"}}`。Product 读取主工程 `.claude/agents/<role>.md`，把 frontmatter 的 `tools`（逗号分隔）拆成数组原样放入 `tools`，剥离 frontmatter 后把完整正文作为 prompt，用 ConvertTo-Json 压缩并转义成一个 shell 参数；不手工截断角色正文。这样 `--agent` 明确加载角色，不依赖外部 worktree 的文件发现版本。`--add-dir` 为访问主工程合同与报告提供显式目录，不把 additionalDirectories 设置当作角色加载证明。
 
 任务详情由 SendMessage 发送，不塞进 shell 命令。会话的第一条就绪提示仅包含项目根路径、执行目录、角色、协调者名字和任务身份；其读取合同后向 Product 回复 READY，不开始业务工作。
 
@@ -76,6 +73,7 @@ orca terminal rename --terminal <新handle> --title '<会话名>' --json
 4. Product 的 @名字派发落实为 `SendMessage(to=<名字或实时ref>, message=<任务合同>)`；正文中的 @文本本身不是送达。工具返回只证明送达/排队，等待对方 ACK 的任务ID、attempt、计划摘要后才认定接受。权限 hold/拒收报告用户，不越权代发。
 5. 各角色结果使用 SendMessage 回 Product，携带任务ID、attempt、计划版本、SHA、状态和报告路径。普通消息不调用 slash 命令。READY/ACK/DONE/FAILED 是本合同的消息文本标签，不是 Orca 生命周期事件。
 6. 后台或跨会话空闲通知仅供唤醒；不将 idle 当 DONE，不靠短间隔轮询或固定 sleep 判断完成。Product 自己也必须是可寻址的存活会话。
+7. 防止互等：发送方结束 turn 前，给每条待回复消息（READY/ACK/DONE）记下预期回复和超时（默认 10 分钟）。工具报告未送达即按未发送处理，合并成一条新消息重发一次，不循环重试；超时或再次失败时，用 `orca terminal read` 看对方画面再决定。执行角色只等待任务合同或修复合同；结束 turn 前必须已发出 DONE、FAILED 或 BLOCKED 之一。
 
 ## 任务合同与状态
 
@@ -85,11 +83,11 @@ Product 每次派发包含：执行ID、任务ID、attempt、role、project_root
 
 - `state.json`：Product 是唯一写者，保存 schema_version=1、run_id、project_root、配置摘要、计划版本及批准记录、任务合同、current_phase、attempt、repair_rounds、base/head/reviewed SHA、角色会话/handle、资源归属、PR/评论/merge SHA、阻塞及同步/清理状态。
 - `events.jsonl`：Product 追加事件，至少包含 event_id、UTC 时间、task_id、attempt、操作、阶段、outcome、证据路径；不包含凭证。
-- `<task-id>/<role>-<attempt>.md`：执行角色写自己的报告，报告包含任务合同摘要、实际变化、完整命令和退出结果、未验证项、SHA、建议及结果状态。只有 Product 修改 state/events；报告被 Product 引用后不覆写，修订使用新文件。
+- `<task-id>/<role>-<attempt>.md`：执行角色写自己的报告。**开头必须是不超过 20 行的“摘要”节**，包含状态、SHA、验收结论、阻塞及所需决定；Product 默认只读摘要，有疑点才读正文，以节省上下文。报告包含任务合同摘要、实际变化、完整命令和退出结果、未验证项、SHA、建议及结果状态。只有 Product 修改 state/events；报告被 Product 引用后不覆写，修订使用新文件。
 
 状态：`planned → awaiting_approval → queued → starting → ready → dev_running → review_running → accepted → publishing → merge_pending → merged → issue_written → cleanup_pending → completed`。纯 review 跳过开发/发布；无需 GitHub 的计划任务只完成其计划交付。失败显式 `blocked`，保留最近成功阶段；开发已验收但发布失败不倒退开发状态。每任务最多两轮 `repair → re-review`，仍不通过交用户。
 
-**执行角色的副作用握手：** Plan 写计划、Dev 初始化/同步索引、生成产物或提交、Review 同步索引/生成审查产物、IssueWriter 发布前，先 SendMessage 给 Product 操作意图，包含 operation_id、task_id、attempt、命令组、修改/输出边界和预期结果；收到 Product 对同一 operation_id 的 `INTENT_RECORDED` 回复后才执行。可按明确边界的一组命令预登记，不要求逐条只读查询握手。Product 先落 intent 和资源基线再回复；执行角色回报退出码、实际文件清单/摘要与 receipt。输出越界或结果未知就停止下一组并报告；若回报前会话退出，Product 据 intent 核查实际状态，不直接重执行。任务 ACK 不代替这项确认。
+**执行角色的操作日志（异步，不等待确认）：** 任务合同的允许修改范围和输出边界即预先授权。执行角色在边界内直接执行副作用，不向 Product 请求确认。每组副作用前后，向自己的 `<task-id>/<role>-<attempt>.ops.jsonl` 追加 intent（operation_id、UTC 时间、命令组、边界）和 receipt（退出码、实际文件清单/摘要）；该文件只由所属角色写。超出边界、结果未知或需要新授权时停止该组，向 Product 发 BLOCKED 并写明需要的决定。会话中途退出时，Product 据有 intent 无 receipt 的行核查实际状态，不直接重执行。IssueWriter 发布仍以 Product 固定 SHA 放行为前提，放行后每步只记日志。
 
 **落盘纪律：** 副作用前追加 intent 事件并原子写 state；副作用后保存 receipt/结果，追加 result 并更新 state。临时状态文件与 state 同目录，关闭文件句柄后用原子替换；首次创建用同卷重命名。出错保留旧 state，不截断它；events 末行不完整时保留原文件，核查后再修复。报告写入失败时不宣告阶段完成。主工程私有运行记录不会随 worktree 删除；需跨机器保存或备份须用户另行授权。
 
@@ -99,7 +97,7 @@ Product 每次派发包含：执行ID、任务ID、attempt、role、project_root
 
 所有角色（含 Product/TeamReview）在各自报告中保留技能使用清单：task_id/audit_id、attempt、角色/会话、精确技能调用名、来源（工程/全局/插件）、目的、目标/脱敏参数、调用结果、执行结果、可取得的版本或 SKILL.md 内容 SHA-256，以及证据引用。调用接受/技能加载/方法执行/工作验收分别记录；未使用清单也需注明本次覆盖范围和已知/未知情况。
 
-成员自报标为 self_report；只有引用允许范围内可核对的 tool receipt/调用记录才能标为 tool_evidence。不能伪造版本、成功或节省量；无法取得写 unknown，不为补证据读取全局历史、凭证或无关工程。当前记录使用已可取得的数据，不新增 hooks/采集服务，不为逐次技能调用增加额外消息握手；技能产生业务副作用仍按原合同登记操作意图。
+成员自报标为 self_report；只有引用允许范围内可核对的 tool receipt/调用记录才能标为 tool_evidence。不能伪造版本、成功或节省量；无法取得写 unknown，不为补证据读取全局历史、凭证或无关工程。当前记录使用已可取得的数据，不新增 hooks/采集服务，不为逐次技能调用增加额外消息握手；技能产生业务副作用仍按原合同写入 ops.jsonl。
 
 Product 记录自己的清单并汇总成员报告引用，不改写成员证据级别；TeamReview 据用户指定范围审计。复制清单与调用清单分别留存；复制了不代表调用，缺少调用证据不代表没使用，一次未使用不代表以后无用。全量复制策略保持不变；选择性复制及新增/合并/精简角色只是建议，用户另行批准后由指定执行者落实，TeamReview 不自动实施。
 
@@ -137,7 +135,14 @@ IssueWriter 只在 Product 明确放行的固定 SHA 上操作；先读取远程
 
 ## 关闭与清理
 
-Product 按真实 handle 关闭本流程终端，不使用 tab 级关闭误伤同标签页其他任务。Dev/Review 验收且报告落盘后可以先关闭；Plan 空闲、计划保存且没有排队请求时可关闭；失败/阻塞会话默认保留。同票需后续修复时从交接恢复。所有待清理 worktree 关联终端与进程退出后才删除目录。
+**一个会话只服务一个任务阶段，用完即关，不跨任务复用**，目的是让下一任务从干净上下文开始；交接只靠磁盘报告与 state，不靠会话记忆。Product 按真实 handle 用 `orca terminal close --terminal <handle>` 单独关闭，不使用 `--tab` 或按 worktree 批量关闭。必须关闭的时机：
+
+- Dev/Review：其报告落盘且 Product 已读取摘要并记账后立即关闭。同票返工新开 attempt 会话，从上轮报告恢复，不唤回旧会话。
+- Plan：每个计划请求交付并落盘后关闭；下个计划请求新开会话。Plan 单例指同时最多一个未关闭实例。
+- IssueWriter：PR、合并、Issue 链接及状态核实且报告落盘后关闭。
+- 例外仅限：失败或阻塞且需保留画面供用户查看，或结果未知待核查；保留时在 state 写明理由与关闭条件，条件满足后关闭。
+
+关闭后用 `orca terminal list` 和 ListAgents 确认已退出，再释放额度。所有待清理 worktree 关联终端与进程退出后才删除目录。
 
 清理条件：PR 确认 merged；任务全部报告/链接/批准与资源清单已保存在主工程；资源由本次流程创建并登记；当前真实路径仍在 Worktree_Root 内且 Git 注册匹配。纯 review/无 PR 任务不因此自动清理既有目录。
 
