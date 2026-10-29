@@ -18,7 +18,7 @@
 |---|---|---|---|---|
 | CMakeLists.txt（portable 段） | 旧 CMakeLists L13–15, L61–95 | 01e3c3789bef416cbf08a0071064cfafa2bdf8c7182e60d4389e68de52286a61 | c031086827bf96f29df9225c3c6f22f12cb565fbb44d6c341c732f4aaf1b1816 | 重写适配：新树 Qt Core 可选/AUTOMOC 前置/stale 检查等 6 测试结构保留；strict 检查挪到 target 定义后（WINDEPLOYQT_EXE 已解析）；portable staging 逻辑同旧版 |
 | scripts/package-portable.ps1 | 旧 scripts/package-portable.ps1 | 177db2a5455fc30eb1947647e9e1c29cc51b1aafa5ef8099d6bc7d97ffd91b9a | c9e8432feefc25d4d5b554e920c6e0aa9b0b52d39adaccb979c6c95900f9f8ee | 重写：见 §2 修正清单 |
-| scripts/check-package.ps1 | 旧 scripts/check-package.ps1 | 5404dbad4ae4456b8d09925f901f6bdf96276b753e2811763e20a0a8d1c82bdc | 8df346c183655622099b867377781b5faab21f5056179748339c3df14b91960d | 重写增强：见 §2 |
+| scripts/check-package.ps1 | 旧 scripts/check-package.ps1 | 5404dbad4ae4456b8d09925f901f6bdf96276b753e2811763e20a0a8d1c82bdc | 13156d8cb16e74d45c827d06dfab0a051ea2fc45c295ce9f65def510f96540f2 | 重写增强：见 §2 |
 | packaging/README-PACKAGE.md | 旧 packaging/README-PACKAGE.md | 3a5071b5ed295a7521d4fbe267df50d8775e2268b7907253f124597987237206 | bf7c1812362ed10634fe9d4caa0bf7f0c7c6c7ddc585c1ba3354813fdef7bb79 | 保留 5 点人工清单，补包内容结构与 6H 边界说明 |
 | packaging/THIRD-PARTY-NOTICES.md | 旧 packaging/THIRD-PARTY-NOTICES.md | c3c4302cc7e3e50fc05a66dda867a1be8467ca2dfe9a67eb883e730db3aac3c3 | 4a1fc86812d1156e7c627b93edf57561054eb3694ba325a3c88cd48e60ebec96 | 重写为逐组件表，见 §3 |
 
