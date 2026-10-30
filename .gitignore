@@ -9,6 +9,7 @@
 !.claude/agent-team/team-review.md
 !.claude/agent-team/config.example.json
 !.claude/agent-team/check.ps1
+!.claude/agent-team/branches.ps1
 !.claude/workflow/
 .claude/workflow/*
 !.claude/workflow/README.md
