@@ -205,3 +205,53 @@ ALL PASS（51 checks）exit 0。
 - 未执行（合同禁止，不豁免）：--allow-controlled-io 授权路径、真实 CreateProcess
   spawn/EOF、真实 I/O、TerminateProcess、真实 GUI、smoke、全量 CTest。授权路径动
   态行为仅有静态编译+审查证据；真实 helper/实机门槛按计划 §6 另批。
+## hb_coverage_stage（HBC-D）验证证据
+
+- 计划：doc/plans/2026-10-30-issue-11-hb-coverage-repair-plan-v1.md v1（SHA-256
+  b2614b353cca24151a3dc597b5f64f2656980e695183be1ae34edad767828fb9，主工程批准
+  文件与 WT 副本字节一致）。base=53fd43efd85308133adfb6acc7812c1495c5410f。
+- 同源改造（§2 三接口全部落地，main 与检查同调用）：
+  HelperOps（13 个 Win32 函数指针 + now_ms/sleep_ms/write_identity 回调，生产
+  默认真实 API）/ prepare_helper→own_executable_path / start_verified_helper
+  （main :997-1188 真实语句移入）/ read_helper_identity（完整 WriteFile、可读
+  后 ReadFile、255 上限、≤5s 且 ≤剩余预算、精确前缀 `helper-identity pid=` 与
+  分隔符 ` creation_tick=` 切纯数字解析——修复旧 :1162 尾空格进数值解析的协议
+  缺陷）/ bounded_teardown（TeardownObservation 由函数填写）/ query_full_image
+  _path / helper_failure_diagnostic（UTF-8 映像或 unknown）。
+- 可信日志次序修正（D5/HB5）：write_identity 移至 start_verified_helper 内
+  映像/PID/tick gate 与握手响应全部核实成功之后；之前任何失败零日志。
+  main 删除 gate 通过后的独立日志块。
+- 末 --work-dir 小 guard（D4）：无授权末 --work-dir → exit 2（授权 gate 一致
+  性）；有授权但缺值 → exit 4。纯解析，未以 allow 运行真实入口。
+- exit9 诊断（D5）：main 失败出口统一 helper_failure_diagnostic（pid/tick/
+  handle + UTF-8 映像或 unknown）；删除恒空 image_chars 字段。
+- 删除旧镜像断言（PathReadProbe/probe_own_path/SpawnVerificationInputs/
+  verify_spawn_gate、旧 HB6 常量断言 true/8-9、旧 PipeTeardown 局部模拟、旧
+  3 分片字符串拼接检查）；删除未使用的 query_creation_tick/sample_segment。
+- HB 检查（--check-helper-binding-only）：113 PASS / 0 FAIL，Debug 与 Release
+  均 exit 0。fake HelperOps API 脚本驱动真实同源函数：16 fake API 全记账
+  （2000 调用护栏、唯一 token、双关/未持句柄/未脚本化即 FAIL）、fake 时钟仅
+  sleep/脚本推进、子进程存活建模（EOF 关 stdin 写端→自然退出；可脚本挂起）。
+- 验收映射（§4 表逐项）：
+  HB3-A GetModuleFileNameW 返回 0→无 PreparedHelper+error+CreatePipe/Process 0
+  ✓；HB3-B 持续截断 8 次调用（256..32768）零 pipe/spawn ✓、256→512 成功逐
+  UTF-16 等值 ✓；HB5-A 全匹配 ready+日志恰 1 次且在最终核实 ReadFile 后+零活
+  动命令 ✓；HB5-B 五类不符（映像不同/查询失败/PID0/tick0/响应不符）ready=
+  false+零日志+stdin 写端 CloseHandle 恰 1+真实 teardown API 证明 ✓；HB6-A 第
+  二管道失败两句柄各关 1+CreateProcess 0 ✓、SetHandleInfo 失败四句柄各关 1 ✓；
+  HB6-B 分片握手 2 次真实 ReadFile 解析成功 ✓、PID/tick 替换失败 ✓；HB6-C
+  avail 0 时 100ms/5s 到期失败（sleep+wait 推进 ≤ 预算+轮询容差）✓、子提前退
+  出/断管/ReadFile 失败/超长均失败 ✓；HB6-D WAIT_OBJECT_0+exit 成功(0/非0)→
+  8、持续 TIMEOUT→9、WAIT_FAILED→9、exit 查询失败→9（observation 由函数填
+  写，返回值来自真实 exit 查询——7 观测值断言）✓、timeout ≤10000ms+100ms 容
+  差 ✓；HB-DIAG Unicode 映像非空路径+unknown 明确+PID/tick/句柄存在 ✓。
+- Gate（双配置）：无 flag exit 2、--helper 单独 exit 2、检查 flag 混用 exit 4。
+- 库存与回归（双配置）：ctest -N 六项正则恰 6 项；ctest -j1 --timeout 120
+  --output-on-failure 同正则 6/6 passed exit 0（R1/R2/R3 安全项不退化，各
+  ~30s）。
+- 产物：仅 build/issue11-hb-coverage-dev/{debug,release}（本阶段唯一登记构建
+  目录）；日志/探针均在该目录；无 TEMP/build 根/工程外写入。
+- 未执行（合同禁止，不豁免）：真实 helper spawn/EOF/有效 I/O、--allow-
+  controlled-io 授权路径动态行为、TerminateProcess、真实 GUI、smoke、全量
+  CTest、推送发布。§7 段协议问题（取消后仍发活动命令、最终成功必然 false）
+  按批准范围不含本轮，保持阻塞记录。

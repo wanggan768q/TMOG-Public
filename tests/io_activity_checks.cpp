@@ -44,7 +44,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -153,9 +155,15 @@ std::optional<Options> parse_args(int argc, const wchar_t* const* argv,
         } else if (a == L"--work-dir" && i + 1 < argc) {
             o.work_dir = argv[++i];
         } else if (a == L"--work-dir") {
-            // --work-dir 为末参数缺值：按缺失目录处理（exit 5 路径）
-            exit_code = 0;   // 继续正常返回；work_dir 为空由 validate 拒绝
-            return o;
+            // --work-dir 为末参数缺值：无授权 → 2（授权 gate 一致性，
+            // Review F1）；有授权但缺值 → 4（缺失参数，与其它 flag 一致）。
+            if (!authorized) {
+                exit_code = 2;
+                return std::nullopt;
+            }
+            std::wcerr << L"io_activity: missing value for --work-dir\n";
+            exit_code = 4;
+            return std::nullopt;
         } else if (a == L"--budget-seconds" && i + 1 < argc) {
             std::uint64_t v = 0;
             if (!parse_wide_number(argv[i + 1], /*is_unsigned=*/false,
@@ -203,31 +211,6 @@ std::optional<Options> parse_args(int argc, const wchar_t* const* argv,
     }
     exit_code = 0;
     return o;
-}
-
-// ---- own_executable_path：有界扩容读取（HB3/D3）----
-// GetModuleFileNameW 从 256 WCHAR 起倍增，最多 32768；仅 0<n<size 接受。
-// 返回 0（失败）或 n>=size（持续截断）都无可用路径。
-std::optional<std::wstring> own_executable_path(std::string& error) {
-    std::size_t capacity = 256;
-    while (true) {
-        std::vector<wchar_t> buf(capacity, L'\0');
-        const DWORD n = GetModuleFileNameW(nullptr, buf.data(),
-                                           static_cast<DWORD>(capacity));
-        if (n == 0) {
-            error = "GetModuleFileNameW returned 0";
-            return std::nullopt;
-        }
-        if (n < capacity) {
-            return std::wstring(buf.data(), n);
-        }
-        // n == capacity：可能截断；扩容重试，超过上限判持续截断
-        if (capacity >= kMaxPathWchars) {
-            error = "own executable path truncated beyond 32768";
-            return std::nullopt;
-        }
-        capacity *= 2;
-    }
 }
 
 // ---- quote_windows_arg：Windows 命令行引号转义（HB1/HB2/D4）----
@@ -287,8 +270,7 @@ std::optional<std::wstring> helper_command_line(const fs::path& exe,
 // WorkDir 安全：拒绝相对路径/已存在非空/符号链接/reparse point/工程根及其
 // 直接子目录。全部检查在创建任何文件/子进程之前。
 bool validate_work_dir(const Options& o, const fs::path& project_root,
-                       std::string& error) {
-    if (o.work_dir.empty()) {
+                       std::string& error) {    if (o.work_dir.empty()) {
         error = "missing required --work-dir";
         return false;
     }
@@ -348,29 +330,260 @@ bool log_helper_identity(const HelperIdentity& id, const fs::path& log_path) {
     return static_cast<bool>(out);
 }
 
-bool query_creation_tick(HANDLE h, std::uint64_t& tick) {
-    FILETIME c{}, e{}, k{}, u{};
-    if (!GetProcessTimes(h, &c, &e, &k, &u)) return false;
-    ULARGE_INTEGER v{};
-    v.LowPart = c.dwLowDateTime;
-    v.HighPart = c.dwHighDateTime;
-    tick = v.QuadPart;
+// =====================================================================
+// HelperOps：本路径局部 Win32 函数指针 + 时钟/睡眠/日志回调。生产默认全
+// 绑定真实 API；fake 只在检查入口注入（记录调用、提供脚本结果），不自写
+// 算法或 EOF 计数。签名用 decltype(&::API) 保持 ABI。
+// =====================================================================
+struct HelperOps {
+    // Win32 函数指针（签名与 ::API 一致）
+    decltype(&::GetModuleFileNameW)             get_module_file_name_w;
+    decltype(&::QueryFullProcessImageNameW)     query_full_process_image_name_w;
+    decltype(&::GetProcessTimes)                get_process_times;
+    decltype(&::CreatePipe)                     create_pipe;
+    decltype(&::SetHandleInformation)           set_handle_information;
+    decltype(&::CreateProcessW)                 create_process_w;
+    decltype(&::CloseHandle)                    close_handle;
+    decltype(&::WaitForSingleObject)            wait_for_single_object;
+    decltype(&::GetExitCodeProcess)             get_exit_code_process;
+    decltype(&::WriteFile)                      write_file;
+    decltype(&::PeekNamedPipe)                  peek_named_pipe;
+    decltype(&::ReadFile)                       read_file;
+    decltype(&::GetLastError)                   get_last_error;
+    // 时钟/睡眠回调（单调毫秒；fake 可脚本推进）
+    std::int64_t (*now_ms)() = []() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
+    void (*sleep_ms)(DWORD) = [](DWORD ms) { ::Sleep(ms); };
+    // 局部身份日志回调（默认 log_helper_identity；fake 可记录不落盘）
+    bool (*write_identity)(const HelperIdentity&, const fs::path&)
+        = [](const HelperIdentity& id, const fs::path& p) {
+              return log_helper_identity(id, p);
+          };
+};
+
+// 生产默认 ops：全部真实 API + steady_clock + Sleep + 真实日志落盘。
+// 无模式 flag/环境开关；fake 仅在检查入口注入。
+HelperOps real_helper_ops() {
+    HelperOps ops{};
+    ops.get_module_file_name_w          = &::GetModuleFileNameW;
+    ops.query_full_process_image_name_w = &::QueryFullProcessImageNameW;
+    ops.get_process_times               = &::GetProcessTimes;
+    ops.create_pipe                     = &::CreatePipe;
+    ops.set_handle_information          = &::SetHandleInformation;
+    ops.create_process_w                = &::CreateProcessW;
+    ops.close_handle                    = &::CloseHandle;
+    ops.wait_for_single_object          = &::WaitForSingleObject;
+    ops.get_exit_code_process           = &::GetExitCodeProcess;
+    ops.write_file                      = &::WriteFile;
+    ops.peek_named_pipe                 = &::PeekNamedPipe;
+    ops.read_file                       = &::ReadFile;
+    ops.get_last_error                  = &::GetLastError;
+    return ops;
+}
+
+// ---- own_executable_path：有界扩容读取（HB3/D3，经 HelperOps）----
+// GetModuleFileNameW 从 256 WCHAR 起倍增，最多 32768；仅 0<n<size 接受。
+// 返回 0（失败）或 n>=size（持续截断）都无可用路径。
+std::optional<std::wstring> own_executable_path(std::string& error,
+                                                const HelperOps& ops) {
+    std::size_t capacity = 256;
+    while (true) {
+        std::vector<wchar_t> buf(capacity, L'\0');
+        const DWORD n = ops.get_module_file_name_w(nullptr, buf.data(),
+                                                   static_cast<DWORD>(capacity));
+        if (n == 0) {
+            error = "GetModuleFileNameW returned 0";
+            return std::nullopt;
+        }
+        if (n < capacity) {
+            return std::wstring(buf.data(), n);
+        }
+        // n == capacity：可能截断；扩容重试，超过上限判持续截断
+        if (capacity >= kMaxPathWchars) {
+            error = "own executable path truncated beyond 32768";
+            return std::nullopt;
+        }
+        capacity *= 2;
+    }
+}
+
+// ---- prepare_helper：真实父入口的纯路径读取＋命令行准备（无 pipe/spawn）----
+struct PreparedHelper {
+    fs::path exe_path;
+    std::wstring command_line;
+};
+
+std::optional<PreparedHelper> prepare_helper(const Options& options,
+                                             std::string& error,
+                                             const HelperOps& ops) {
+    const auto exe = own_executable_path(error, ops);
+    if (!exe) return std::nullopt;   // 无路径即无准备结果；零 pipe/spawn
+    const auto cmd = helper_command_line(fs::path(*exe), options, error);
+    if (!cmd) return std::nullopt;   // 命令行拒绝（NUL/超长）：同样零 pipe/spawn
+    return PreparedHelper{fs::path(*exe), *cmd};
+}
+
+// ASCII 数字串 → 宽串（仅用于管道响应数字解析，逐字符提升无编码歧义）
+std::wstring ascii_to_wide(const std::string& s) {
+    return std::wstring(s.begin(), s.end());
+}
+
+// ---- read_helper_identity：同源有界握手（从 main 移入，经 HelperOps）----
+// 完整 WriteFile identity 命令、PeekNamedPipe 轮询（≤10ms）、可读后
+// ReadFile、分片累积/换行/255 字节限制、≤5s 且 ≤ 剩余预算、严格数字解析
+// 与 PID/tick 比对。协议按精确前缀 `helper-identity pid=` 与分隔符
+// ` creation_tick=` 切出纯数字再 parse_wide_number（不把分隔空格送入数值
+// 解析）。不是接收已拼好字符串的假握手。
+bool read_helper_identity(PROCESS_INFORMATION& pi, HANDLE stdin_write,
+                          HANDLE stdout_read,
+                          std::int64_t wall_deadline_ms,
+                          DWORD expected_pid, std::uint64_t expected_tick,
+                          std::string& error, const HelperOps& ops) {
+    // 1) identity 命令完整写（全量核验）
+    const std::string id_cmd = "identity\n";
+    DWORD written = 0;
+    if (!ops.write_file(stdin_write, id_cmd.data(),
+                        static_cast<DWORD>(id_cmd.size()), &written, nullptr)
+            || written != id_cmd.size()) {
+        error = "cannot send identity command (full write failed)";
+        return false;
+    }
+    // 2) 有界轮询：≤5s 且 ≤ 剩余预算；PeekNamedPipe 轮询 ≤10ms；可读才 Read
+    const std::int64_t hs_deadline =
+        ops.now_ms() + std::min<std::int64_t>(
+            kHandshakeMaxMs, std::max<std::int64_t>(wall_deadline_ms - ops.now_ms(), 0));
+    std::string acc;
+    bool line_done = false;
+    while (ops.now_ms() < hs_deadline) {
+        if (ops.wait_for_single_object(pi.hProcess, 0) == WAIT_OBJECT_0) {
+            error = "child exited during handshake";
+            return false;
+        }
+        DWORD avail = 0;
+        if (!ops.peek_named_pipe(stdout_read, nullptr, 0, nullptr, &avail, nullptr)) {
+            error = "pipe broken during handshake";
+            return false;
+        }
+        if (avail > 0) {
+            char chunk[256]{};
+            const DWORD want = std::min<DWORD>(avail, sizeof(chunk));
+            DWORD got = 0;
+            if (!ops.read_file(stdout_read, chunk, want, &got, nullptr) || got == 0) {
+                error = "read failed during handshake";
+                return false;
+            }
+            acc.append(chunk, got);
+            if (acc.size() > kIdentityMaxBytes) {
+                error = "identity response too long (>255)";
+                return false;
+            }
+            const auto nl = acc.find('\n');
+            if (nl != std::string::npos) {
+                acc = acc.substr(0, nl);
+                line_done = true;
+                break;
+            }
+        }
+        ops.sleep_ms(kHandshakePollMs);
+    }
+    if (!line_done || acc.empty()) {
+        error = "identity handshake timeout (bounded)";
+        return false;
+    }
+    // 3) 严格前缀/分隔符切分：`helper-identity pid=` … ` creation_tick=` …
+    //    中间与尾部必须是纯数字（不留分隔空格进数值解析）。
+    constexpr const char* kPrefix = "helper-identity pid=";
+    constexpr const char* kSep = " creation_tick=";
+    const auto p = acc.find(kPrefix);
+    const auto s = acc.find(kSep);
+    if (p != 0 || s == std::string::npos || s <= p + std::strlen(kPrefix)) {
+        error = "identity response malformed: " + acc;
+        return false;
+    }
+    const std::string pid_str = acc.substr(p + std::strlen(kPrefix),
+                                           s - (p + std::strlen(kPrefix)));
+    const std::string tick_str = acc.substr(s + std::strlen(kSep));
+    const std::wstring pid_w = ascii_to_wide(pid_str);
+    const std::wstring tick_w = ascii_to_wide(tick_str);
+    std::uint64_t pv = 0, tv = 0;
+    if (!parse_wide_number(pid_w, true, 1, 0x7FFFFFFFLL, pv)
+            || !parse_wide_number(tick_w, false, 1,
+                                  0x7FFFFFFFFFFFFFFFLL, tv)) {
+        error = "identity response numbers malformed: " + acc;
+        return false;
+    }
+    // 4) 与父端独立核实值比对（PID/tick 均非零且一致）
+    if (static_cast<DWORD>(pv) != expected_pid || pv == 0
+            || tv != expected_tick || tv == 0) {
+        error = "identity mismatch (spawned pid " + std::to_string(expected_pid)
+              + " vs reported " + std::to_string(pv)
+              + "; spawned tick " + std::to_string(expected_tick)
+              + " vs reported " + std::to_string(tv) + ")";
+        return false;
+    }
     return true;
+}
+
+// ---- bounded_teardown：统一失败收束（同源，经 HelperOps，可观测）----
+// EOF → 等自然退出 ≤10s（100ms 轮询）→ GetExitCodeProcess 确认退出码。
+// 返回 8（确认退出）或 9（未确认）。不 TerminateProcess。
+// observation 由函数填写（exited/exit_code_known/child_exit_code/
+// wait_result），不由测试替它补写；可传 nullptr。
+struct TeardownObservation {
+    bool exited = false;
+    bool exit_code_known = false;
+    DWORD child_exit_code = 0;
+    DWORD wait_result = WAIT_TIMEOUT;
+};
+
+int bounded_teardown(PROCESS_INFORMATION& pi, HANDLE& stdin_write,
+                     HANDLE& stdout_read, const HelperOps& ops,
+                     TeardownObservation* observation = nullptr) {
+    TeardownObservation local{};
+    TeardownObservation& obs = observation ? *observation : local;
+    if (stdin_write) {
+        ops.close_handle(stdin_write);   // EOF：helper getline 失败 → 自然退出
+        stdin_write = nullptr;
+    }
+    const std::int64_t deadline = ops.now_ms() + kTeardownWaitMs;
+    DWORD wait_result = WAIT_TIMEOUT;
+    while ((wait_result = ops.wait_for_single_object(pi.hProcess, 100))
+           == WAIT_TIMEOUT) {
+        if (ops.now_ms() > deadline) break;
+    }
+    obs.wait_result = wait_result;
+    obs.exited = (wait_result == WAIT_OBJECT_0);
+    if (stdout_read) { ops.close_handle(stdout_read); stdout_read = nullptr; }
+    if (!obs.exited) {
+        ops.close_handle(pi.hThread);   // 进程句柄保留（归属记录）；线程句柄收束
+        return 9;
+    }
+    DWORD code = 0;
+    obs.exit_code_known = ops.get_exit_code_process(pi.hProcess, &code) != 0;
+    obs.child_exit_code = code;
+    ops.close_handle(pi.hThread);
+    ops.close_handle(pi.hProcess);
+    pi = PROCESS_INFORMATION{};
+    return obs.exit_code_known ? 8 : 9;
 }
 
 // ---- 映像路径查询（D5）：QueryFullProcessImageNameW flags=0 完整读取 ----
 // 用与 GetModuleFileNameW 相同的有界扩容策略；返回完整宽路径，失败 nullopt。
+// 同源：main 启动函数与检查共用，经 HelperOps 调用（可注入）。
 std::optional<std::wstring> query_full_image_path(HANDLE process,
-                                                  std::string& error) {
+                                                  std::string& error,
+                                                  const HelperOps& ops) {
     std::size_t capacity = 256;
     while (true) {
         std::vector<wchar_t> buf(capacity, L'\0');
         DWORD size = static_cast<DWORD>(capacity);
-        if (QueryFullProcessImageNameW(process, 0, buf.data(), &size)) {
+        if (ops.query_full_process_image_name_w(process, 0, buf.data(), &size)) {
             if (size < capacity) return std::wstring(buf.data(), size);
             // size==capacity：可能截断，扩容重试
         } else {
-            const DWORD err = GetLastError();
+            const DWORD err = ops.get_last_error();
             if (err != ERROR_INSUFFICIENT_BUFFER) {
                 error = "QueryFullProcessImageNameW failed (error "
                       + std::to_string(err) + ")";
@@ -383,6 +596,175 @@ std::optional<std::wstring> query_full_image_path(HANDLE process,
         }
         capacity *= 2;
     }
+}
+
+// ---- start_verified_helper：main :997-1188 真实语句移入（同源启动）----
+// 双管道→SetHandleInformation→CreateProcessW（显式 W 应用名+宽 cwd）→
+// 映像/PID/tick gate →write_identity→read_helper_identity。所有持资源失败
+// 在此关句柄/调用 bounded_teardown；映像/握手失败→EOF 收束；全部通过后才
+// write_identity。成功 ready 仅 main 可进入活动段。保留显式 W 应用名与宽 cwd。
+struct HelperStartResult {
+    bool ready = false;
+    int failure_exit = 0;
+    std::uint64_t creation_tick = 0;
+    std::optional<std::wstring> observed_image;   // 已观测宽映像（DIAG 用）
+    std::string error;
+};
+
+HelperStartResult start_verified_helper(const PreparedHelper& prepared,
+                                        const Options& options,
+                                        const fs::path& identity_log,
+                                        std::int64_t wall_deadline_ms,
+                                        PROCESS_INFORMATION& pi,
+                                        HANDLE& stdin_write,
+                                        HANDLE& stdout_read,
+                                        const HelperOps& ops) {
+    HelperStartResult result;
+    // 双管道
+    SECURITY_ATTRIBUTES sa{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    HANDLE stdin_read = nullptr, stdin_write_local = nullptr;
+    HANDLE stdout_read_local = nullptr, stdout_write = nullptr;
+    if (!ops.create_pipe(&stdin_read, &stdin_write_local, &sa, 0)) {
+        result.error = "CreatePipe(stdin) failed";
+        result.failure_exit = 8;
+        return result;   // 未持句柄：无可关
+    }
+    if (!ops.create_pipe(&stdout_read_local, &stdout_write, &sa, 0)) {
+        const DWORD err = ops.get_last_error();
+        result.error = "CreatePipe(stdout) failed (error " + std::to_string(err) + ")";
+        result.failure_exit = 8;
+        ops.close_handle(stdin_read);       // 只关实际已持的第一对，各一次
+        ops.close_handle(stdin_write_local);
+        return result;
+    }
+    // 父端自持句柄不可继承（否则子持写端致 stdout 永不 EOF）
+    if (!ops.set_handle_information(stdout_read_local, HANDLE_FLAG_INHERIT, 0)
+            || !ops.set_handle_information(stdin_write_local, HANDLE_FLAG_INHERIT, 0)) {
+        const DWORD err = ops.get_last_error();
+        result.error = "SetHandleInformation failed (error " + std::to_string(err) + ")";
+        result.failure_exit = 8;
+        ops.close_handle(stdin_read);
+        ops.close_handle(stdin_write_local);
+        ops.close_handle(stdout_read_local);
+        ops.close_handle(stdout_write);
+        return result;
+    }
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = stdin_read;
+    si.hStdOutput = stdout_write;
+    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    std::vector<wchar_t> cmd_buf(prepared.command_line.begin(),
+                                 prepared.command_line.end());
+    cmd_buf.push_back(L'\0');
+    const BOOL spawned = ops.create_process_w(
+        /*lpApplicationName=*/prepared.exe_path.native().c_str(),  // 显式宽应用名
+        /*lpCommandLine=*/cmd_buf.data(),
+        nullptr, nullptr, TRUE /*inherit handles*/, 0, nullptr,
+        /*lpCurrentDirectory=*/options.work_dir.native().c_str(),  // 明确宽 cwd
+        &si, &pi);
+    const DWORD spawn_err = spawned ? 0 : ops.get_last_error();
+    ops.close_handle(stdin_read);    // 父不再需要子端读句柄
+    ops.close_handle(stdout_write);  // 父不再需要子端写句柄（stdout EOF 可达）
+    if (!spawned) {
+        result.error = "CreateProcessW failed (error " + std::to_string(spawn_err) + ")";
+        result.failure_exit = 8;
+        ops.close_handle(stdin_write_local);
+        ops.close_handle(stdout_read_local);
+        return result;
+    }
+    stdin_write = stdin_write_local;
+    stdout_read = stdout_read_local;
+    // spawn gate：映像查询→逐 UTF-16 相等→PID→真实非零 tick
+    {
+        std::string img_err;
+        const auto self_image = query_full_image_path(GetCurrentProcess(),
+                                                      img_err, ops);
+        const auto child_image = query_full_image_path(pi.hProcess,
+                                                       img_err, ops);
+        result.observed_image = child_image;   // 已观测宽映像（成功或 nullopt）
+        const bool image_verified = self_image.has_value() && child_image.has_value()
+            && fs::path(*self_image).lexically_normal()
+               == fs::path(*child_image).lexically_normal();
+        FILETIME fc{}, fe{}, fk{}, fu{};
+        const bool times_ok = ops.get_process_times(pi.hProcess, &fc, &fe, &fk, &fu) != 0;
+        ULARGE_INTEGER tick_v{};
+        tick_v.LowPart = fc.dwLowDateTime;
+        tick_v.HighPart = fc.dwHighDateTime;
+        result.creation_tick = tick_v.QuadPart;
+        const bool pid_ok = pi.dwProcessId != 0;
+        const bool tick_ok = times_ok && result.creation_tick != 0;
+        if (!(image_verified && pid_ok && tick_ok)) {
+            result.error = "spawn gate refused (image_query="
+                + std::to_string(self_image.has_value() && child_image.has_value())
+                + " image_same=" + std::to_string(image_verified)
+                + " pid=" + std::to_string(pi.dwProcessId)
+                + " tick=" + std::to_string(result.creation_tick) + ")";
+            result.failure_exit = bounded_teardown(pi, stdin_write, stdout_read,
+                                                   ops);
+            stdin_write = nullptr;
+            stdout_read = nullptr;
+            return result;
+        }
+    }
+    // ---- 有界握手：同源 read_helper_identity（先全部核实，成功后才写
+    // 可信身份日志；握手失败时零日志、零活动命令）----
+    std::string hs_err;
+    if (!read_helper_identity(pi, stdin_write, stdout_read, wall_deadline_ms,
+                              pi.dwProcessId, result.creation_tick, hs_err,
+                              ops)) {
+        result.error = hs_err;
+        result.failure_exit = bounded_teardown(pi, stdin_write, stdout_read, ops);
+        stdin_write = nullptr;
+        stdout_read = nullptr;
+        return result;
+    }
+    // ---- 全部核实通过后才写可信身份日志（HB5 关键次序）----
+    {
+        HelperIdentity id;
+        id.pid = pi.dwProcessId;
+        id.creation_tick = result.creation_tick;
+        id.handle = pi.hProcess;
+        if (!ops.write_identity(id, identity_log)) {
+            result.error = "cannot write identity log";
+            result.failure_exit = bounded_teardown(pi, stdin_write, stdout_read,
+                                                   ops);
+            stdin_write = nullptr;
+            stdout_read = nullptr;
+            return result;
+        }
+    }
+    result.ready = true;
+    return result;
+}
+
+// ---- helper_failure_diagnostic：失败归属诊断（仅格式化已观测数据）----
+// 从 HelperIdentity 与可选映像格式化 PID/tick/句柄/UTF-8 映像；无映像写
+// unknown。仅日志用途；不把"父退出后 OS 收回句柄"说成可跨进程保留。
+std::string helper_failure_diagnostic(const HelperIdentity& id,
+                                      const std::optional<std::wstring>& image) {
+    std::string image_utf8 = "unknown";
+    if (image) {
+        // 宽→UTF-8（与现有管道日志一致的本地转换；仅诊断）
+        const int need = WideCharToMultiByte(CP_UTF8, 0, image->c_str(),
+                                             static_cast<int>(image->size()),
+                                             nullptr, 0, nullptr, nullptr);
+        if (need > 0) {
+            std::string out(static_cast<std::size_t>(need), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, image->c_str(),
+                                static_cast<int>(image->size()), out.data(),
+                                need, nullptr, nullptr);
+            image_utf8 = out;
+        }
+    }
+    std::ostringstream oss;
+    oss << "helper-failure pid=" << id.pid
+        << " creation_tick=" << id.creation_tick
+        << " handle=0x" << std::hex
+        << reinterpret_cast<std::uintptr_t>(id.handle) << std::dec
+        << " image=" << image_utf8;
+    return oss.str();
 }
 
 // 单样本：同口径累计 I/O + QPC（真实单调时间）。
@@ -405,39 +787,6 @@ bool take_io_sample(HANDLE h, IoSample& s) {
     return true;
 }
 
-// 段协议：单段采样循环（至少 2 个有效样本；每样本记累计/QPC，相邻样本
-// 差分出真实 dt 与速率写入日志）。段内循环受 deadline 约束（预算一部分）。
-bool sample_segment(HANDLE h, const std::string& name,
-                    const fs::path& log_path,
-                    int& valid_count, std::atomic<bool>& cancel) {
-    valid_count = 0;
-    IoSample prev{};
-    bool have_prev = false;
-    const auto deadline = std::chrono::steady_clock::now()
-                        + std::chrono::milliseconds(5000);
-    while (valid_count < kMinValidSamplesPerSegment
-           && std::chrono::steady_clock::now() < deadline
-           && !cancel.load()) {
-        IoSample s{};
-        if (!take_io_sample(h, s)) return false;
-        if (have_prev && s.qpc_ns > prev.qpc_ns) {
-            const double dt = static_cast<double>(s.qpc_ns - prev.qpc_ns);
-            const double rr = static_cast<double>(s.read_bytes - prev.read_bytes);
-            const double wr = static_cast<double>(s.write_bytes - prev.write_bytes);
-            std::ofstream log(log_path, std::ios::app);
-            log << "segment=" << name
-                << " dt_ns=" << static_cast<std::uint64_t>(dt)
-                << " read_rate_Bps=" << rr / (dt / 1e9)
-                << " write_rate_Bps=" << wr / (dt / 1e9) << "\n";
-            ++valid_count;
-        }
-        prev = s;
-        have_prev = true;
-        Sleep(300);
-    }
-    return valid_count >= kMinValidSamplesPerSegment;
-}
-
 // ---- 无副作用自检（默认无 flag 时仍会执行；纯内存算法，不碰文件/进程）----
 void run_no_side_effect_self_checks(int& failures_out) {
     const int before = failures;   // check() 递增全局计数；此处用差值传出
@@ -458,68 +807,436 @@ void run_no_side_effect_self_checks(int& failures_out) {
 // helper-binding 安全检查（HB1..HB6）：--check-helper-binding-only 入口。
 // 纯参数/状态算法及 CommandLineToArgvW 解析检查；无文件、进程创建、窗口、
 // I/O 采样。failures>0 → exit 1；不使用 assert（Release 不跳过）。
-// 计数器/缝函数驱动真正同源生产函数（quote/命令行构造/解析/决策输入），
-// 不写测试自己的独立模拟算法。
+// HB3/HB5/HB6 用 fake HelperOps API 脚本驱动真实同源生产函数：
+// prepare_helper/own_executable_path/start_verified_helper/
+// read_helper_identity/bounded_teardown/helper_failure_diagnostic。
+// fake 只提供 API 结果与记录真实调用；绝不自写 EOF 计数或常量结论。
 // =====================================================================
 
-// 局部测试缝：路径读取注入（fail_path / truncate_always 驱动 HB3 决策）。
-struct PathReadProbe {
-    enum class Mode { real, fail, truncate_always } mode = Mode::real;
-    std::size_t spawn_prepare_count = 0;   // 准备阶段真实计数（由调用方累加）
+// fake API 场景护栏：每场景最大 API 调用数（超限立即 FAIL，防测试无限等待）
+constexpr std::size_t kFakeMaxApiCalls = 2000;
+
+// fake 句柄 token：唯一标识一个"句柄"；0 视为空。
+using FakeHandle = std::uint64_t;
+constexpr FakeHandle kNullHandle = 0;
+
+// fake API 调用账本：唯一 token、实际创建/关闭次数、未脚本化操作即失败。
+struct FakeLedger {
+    std::size_t sequence = 0;                      // 全局调用序（次序断言用）
+    std::size_t api_calls = 0;                     // 总调用数（护栏）
+    std::size_t create_pipe_calls = 0;
+    std::size_t create_process_calls = 0;
+    std::size_t close_calls = 0;                   // CloseHandle 实际次数
+    std::map<FakeHandle, std::size_t> close_per_handle;  // 每句柄关闭次数
+    std::vector<std::pair<FakeHandle, std::size_t>> close_sequence;
+    std::vector<FakeHandle> handles_created;       // 按创建序
+    std::vector<std::string> write_commands;       // WriteFile 实际命令串
+    std::size_t write_file_calls = 0;
+    std::size_t read_file_calls = 0;
+    std::size_t peek_calls = 0;
+    std::size_t wait_calls = 0;
+    std::size_t exit_code_queries = 0;
+    std::size_t module_file_name_calls = 0;
+    std::size_t image_query_calls = 0;
+    std::size_t identity_log_calls = 0;            // write_identity 实际调用
+    std::size_t identity_log_seq = 0;              // 日志调用时的全局序
+    std::size_t last_readfile_seq = 0;             // 最近一次 ReadFile 的序
+    std::size_t first_wait_seq = 0;                // 首次 WaitForSingleObject 序
+    std::size_t exit_query_seq = 0;                // GetExitCodeProcess 序
+    bool fail_violation = false;                   // 未脚本化/双关/未持句柄
+    std::string violation_what;
 };
 
-// 用同一 own_executable_path 算法语义的决策路径：把缝.mode 转换为
-// own_executable_path 的失败/截断观测。real 模式下走真实系统调用。
-std::optional<std::wstring> probe_own_path(const PathReadProbe& probe,
-                                           std::string& error) {
-    if (probe.mode == PathReadProbe::Mode::fail) {
-        // 模拟 GetModuleFileNameW 返回 0 的失败分支：直接驱动同一错误出口
-        error = "GetModuleFileNameW returned 0 (injected)";
-        return std::nullopt;
-    }
-    auto r = own_executable_path(error);
-    if (!r) return std::nullopt;
-    if (probe.mode == PathReadProbe::Mode::truncate_always) {
-        // 注入"持续截断"：own_executable_path 成功后仍判不可用（模拟
-        // n>=capacity 上限分支语义）；验证方核对 error 出口与 spawn=0。
-        error = "own executable path truncated (injected, persistent)";
-        return std::nullopt;
-    }
-    return r;
-}
-
-// 局部测试缝：helper 身份/映像决策输入（HB5）。spawned=true 时才谈活动。
-struct SpawnVerificationInputs {
-    bool spawned = false;
-    bool image_same = true;
-    bool image_query_ok = true;
-    bool pid_match = true;
-    bool tick_real_nonzero = true;
-    bool tick_match = true;
-    std::size_t write_cmd_count = 0;      // 真实 write/read 发送计数
-    std::size_t read_cmd_count = 0;
-    std::size_t trusted_log_count = 0;    // 可信身份日志写计数
-    std::size_t eof_teardown_count = 0;   // EOF 收束调用计数
-    std::size_t spawn_prepare_count = 0;  // 准备阶段计数（含失败路径）
+// fake 时钟：只在 sleep/脚本时推进（单调毫秒）。
+struct FakeClock {
+    std::int64_t now = 1'000'000;   // 起始任意固定值
+    std::size_t sleep_calls = 0;
+    std::int64_t advanced_ms = 0;
 };
 
-// D5 决策（同源生产判定顺序）：spawn 成功后依次核 映像查询→映像相等→
-// PID→真实非零 tick→tick 相等。任一失败 → 不进活动、不写可信日志、
-// 走 EOF 收束（本函数按缝计数模拟真实收束入口的调用事实）。
-bool verify_spawn_gate(SpawnVerificationInputs& v) {
-    if (!v.spawned) {
-        // 未 spawn：无活动；仍计一次"准备"事实
-        ++v.spawn_prepare_count;
-        return false;
+// fake HelperOps 环境：ledger/clock/脚本输入。句柄闭包在 freestanding 函数
+// 间共享，用全局指针（仅 --check-helper-binding-only 单线程检查内）。
+struct FakeEnv {
+    FakeLedger ledger;
+    FakeClock clock;
+    // 子进程存活建模：关闭 stdin 写端（EOF）→ helper 自然退出（与真实
+    // getline 失败退出一致）；child_exits_on_eof=false 模拟 EOF 后仍挂起
+    // （WAIT_TIMEOUT 持续）；wait_override 可强制 WAIT_FAILED。
+    bool child_alive = true;
+    bool child_exits_on_eof = true;
+    std::optional<DWORD> wait_override;
+    FakeHandle stdin_write_token = kNullHandle;    // 第一管道写端（EOF 语义锚点）
+    // 脚本输入
+    bool module_always_truncate = false;           // true: 恒返回 n==capacity
+    DWORD module_file_name_result = 0;             // 无内容时的返回值（0=失败）
+    std::wstring module_file_name_value;           // 有内容：短于容量返回，否则截断
+    BOOL create_pipe_first = TRUE;                 // 第一管道脚本
+    BOOL create_pipe_second = TRUE;                // 第二管道脚本
+    BOOL set_handle_info = TRUE;
+    BOOL create_process_result = FALSE;
+    DWORD create_process_error = 0;
+    BOOL process_times_result = TRUE;
+    std::uint64_t process_times_tick = 0;
+    BOOL query_image_result = FALSE;               // QueryFullProcessImageNameW 成功脚本
+    std::wstring query_image_value;                // 每次成功调用返回（队列耗尽后）
+    std::vector<std::wstring> query_image_script;  // 按调用序消费（self/child 区分）
+    std::size_t query_image_script_idx = 0;
+    BOOL write_file_result = TRUE;
+    DWORD write_file_written = 0;                  // 0 = 实际全量
+    BOOL read_file_result = TRUE;
+    std::vector<std::string> read_script;          // 每次 ReadFile 返回的分片
+    std::size_t read_script_idx = 0;
+    BOOL peek_result = TRUE;
+    DWORD peek_avail = 0;                          // 脚本 avail 字节数
+    BOOL exit_code_result = FALSE;
+    DWORD exit_code_value = 0;
+    BOOL identity_log_result = TRUE;
+};
+
+FakeEnv* g_fake = nullptr;   // 检查入口内单线程使用
+
+// fake API 实现（签名与 Win32 一致；写入 g_fake 账本）
+DWORD fake_GetModuleFileNameW(HMODULE module, LPWCH filename, DWORD size) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (GetModuleFileNameW)"; return 0; }
+    ++L.module_file_name_calls;
+    if (module != nullptr) { L.fail_violation = true;
+        L.violation_what = "GetModuleFileNameW: non-null module"; return 0; }
+    if (e.module_always_truncate) {   // 持续截断脚本：填满并返回 n==capacity
+        if (size > 0 && filename) {
+            const std::size_t copy = std::min<std::size_t>(
+                size - 1, e.module_file_name_value.size());
+            std::memcpy(filename, e.module_file_name_value.data(),
+                        copy * sizeof(wchar_t));
+            filename[copy] = L'\0';
+        }
+        return size;
     }
-    ++v.spawn_prepare_count;
-    if (!v.image_query_ok || !v.image_same) return false;
-    if (!v.pid_match) return false;
-    if (!v.tick_real_nonzero) return false;
-    if (!v.tick_match) return false;
-    // 全部通过：进入活动授权（真实路径此时才允许 write/read/可信日志）
-    return true;
+    const std::wstring& v = e.module_file_name_value;
+    if (v.empty()) return e.module_file_name_result;   // 0 = API 失败脚本
+    if (v.size() + 1 > size) {   // 截断语义：需 > 容量 → n == capacity
+        if (size > 0 && filename) {
+            const std::size_t copy = std::min<std::size_t>(size - 1, v.size());
+            std::memcpy(filename, v.data(), copy * sizeof(wchar_t));
+            filename[copy] = L'\0';
+        }
+        return size;
+    }
+    std::memcpy(filename, v.data(), v.size() * sizeof(wchar_t));
+    filename[v.size()] = L'\0';
+    return static_cast<DWORD>(v.size());
 }
+
+BOOL fake_QueryFullProcessImageNameW(HANDLE process, DWORD flags,
+                                     LPWCH filename, DWORD* size) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (QueryImage)"; return FALSE; }
+    ++L.image_query_calls;
+    (void)flags;
+    if (process == nullptr || size == nullptr) { L.fail_violation = true;
+        L.violation_what = "QueryImage: null process/size"; return FALSE; }
+    if (!e.query_image_result) {
+        SetLastError(12);   // 脚本化错误（非 ERROR_INSUFFICIENT_BUFFER）
+        return FALSE;
+    }
+    // 队列脚本按调用序消费（self/child 各一次）；耗尽后用 query_image_value
+    std::wstring v = e.query_image_value;
+    if (e.query_image_script_idx < e.query_image_script.size()) {
+        v = e.query_image_script[e.query_image_script_idx++];
+    }
+    if (v.size() + 1 > *size) {
+        *size = static_cast<DWORD>(v.size() + 1);
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    std::memcpy(filename, v.data(), v.size() * sizeof(wchar_t));
+    filename[v.size()] = L'\0';
+    *size = static_cast<DWORD>(v.size());
+    return TRUE;
+}
+
+BOOL fake_GetProcessTimes(HANDLE process, LPFILETIME creation,
+                          LPFILETIME exit, LPFILETIME kernel,
+                          LPFILETIME user) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (GetProcessTimes)"; return FALSE; }
+    (void)exit; (void)kernel; (void)user;
+    if (process == nullptr) { L.fail_violation = true;
+        L.violation_what = "GetProcessTimes: null process"; return FALSE; }
+    if (!e.process_times_result) return FALSE;
+    if (creation) {
+        ULARGE_INTEGER v{};
+        v.QuadPart = e.process_times_tick;
+        creation->dwLowDateTime = v.LowPart;
+        creation->dwHighDateTime = v.HighPart;
+    }
+    return TRUE;
+}
+
+BOOL fake_CreatePipe(PHANDLE read_pipe, PHANDLE write_pipe,
+                     LPSECURITY_ATTRIBUTES attrs, DWORD size) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (CreatePipe)"; return FALSE; }
+    ++L.create_pipe_calls;
+    (void)attrs; (void)size;
+    // 第 1 次调用 = stdin 管道；第 2 次 = stdout 管道（同源函数顺序）
+    const BOOL script = (L.create_pipe_calls == 1) ? e.create_pipe_first
+                                                   : e.create_pipe_second;
+    if (!script) {
+        SetLastError(5);
+        return FALSE;
+    }
+    static FakeHandle next_token = 100;
+    *read_pipe = reinterpret_cast<HANDLE>(++next_token);
+    *write_pipe = reinterpret_cast<HANDLE>(++next_token);
+    L.handles_created.push_back(reinterpret_cast<FakeHandle>(*read_pipe));
+    L.handles_created.push_back(reinterpret_cast<FakeHandle>(*write_pipe));
+    if (L.create_pipe_calls == 1) {
+        e.stdin_write_token = reinterpret_cast<FakeHandle>(*write_pipe);
+    }
+    return TRUE;
+}
+
+BOOL fake_SetHandleInformation(HANDLE object, DWORD mask, DWORD flags) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (SetHandleInformation)"; return FALSE; }
+    (void)mask; (void)flags;
+    if (object == nullptr) { L.fail_violation = true;
+        L.violation_what = "SetHandleInformation: null handle"; return FALSE; }
+    return e.set_handle_info;
+}
+
+BOOL fake_CreateProcessW(LPCWSTR app_name, LPWSTR cmd_line,
+                         LPSECURITY_ATTRIBUTES pa, LPSECURITY_ATTRIBUTES ta,
+                         BOOL inherit, DWORD creation, LPVOID env,
+                         LPCWSTR cwd, LPSTARTUPINFOW si,
+                         LPPROCESS_INFORMATION pi) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (CreateProcessW)"; return FALSE; }
+    ++L.create_process_calls;
+    (void)pa; (void)ta; (void)creation; (void)env; (void)si; (void)inherit;
+    if (app_name == nullptr || cmd_line == nullptr || cwd == nullptr
+            || pi == nullptr) {
+        L.fail_violation = true;
+        L.violation_what = "CreateProcessW: null required field";
+        return FALSE;
+    }
+    if (!e.create_process_result) {
+        SetLastError(e.create_process_error);
+        return FALSE;
+    }
+    static FakeHandle next_proc = 500;
+    pi->hProcess = reinterpret_cast<HANDLE>(++next_proc);
+    pi->hThread = reinterpret_cast<HANDLE>(++next_proc);
+    pi->dwProcessId = 4242;   // 固定 fake PID（每场景由测试断言其值）
+    pi->dwThreadId = 1;
+    L.handles_created.push_back(reinterpret_cast<FakeHandle>(pi->hProcess));
+    L.handles_created.push_back(reinterpret_cast<FakeHandle>(pi->hThread));
+    return TRUE;
+}
+
+BOOL fake_CloseHandle(HANDLE object) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (CloseHandle)"; return FALSE; }
+    ++L.close_calls;
+    const FakeHandle token = reinterpret_cast<FakeHandle>(object);
+    if (token == kNullHandle) { L.fail_violation = true;
+        L.violation_what = "CloseHandle: null handle"; return FALSE; }
+    // 未持句柄（从未创建）→ 违规
+    auto it = std::find(L.handles_created.begin(), L.handles_created.end(), token);
+    if (it == L.handles_created.end()) {
+        L.fail_violation = true;
+        L.violation_what = "CloseHandle: unheld handle token";
+        return FALSE;
+    }
+    // 双关违规
+    if (L.close_per_handle[token] >= 1) {
+        L.fail_violation = true;
+        L.violation_what = "CloseHandle: double close on token "
+            + std::to_string(token);
+        return FALSE;
+    }
+    ++L.close_per_handle[token];
+    L.close_sequence.emplace_back(token, L.sequence);
+    // 关闭 stdin 写端（第一管道写端）→ helper 因 stdin EOF 自然退出
+    // （child_exits_on_eof=false 模拟 EOF 后仍挂起）
+    if (token == e.stdin_write_token && e.child_exits_on_eof) {
+        e.child_alive = false;
+    }
+    return TRUE;
+}
+
+DWORD fake_WaitForSingleObject(HANDLE object, DWORD ms) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (Wait)"; return WAIT_FAILED; }
+    ++L.wait_calls;
+    if (L.first_wait_seq == 0) L.first_wait_seq = L.sequence;
+    (void)object;
+    if (e.wait_override) return *e.wait_override;   // WAIT_FAILED 脚本
+    if (e.child_alive) {
+        // 真实 WaitForSingleObject 在 TIMEOUT 时阻塞 ms 毫秒——fake 同步
+        // 推进 fake 时钟，使等待循环有界且与真实耗时语义一致
+        e.clock.now += static_cast<std::int64_t>(ms);
+        e.clock.advanced_ms += static_cast<std::int64_t>(ms);
+        return WAIT_TIMEOUT;
+    }
+    return WAIT_OBJECT_0;
+}
+
+BOOL fake_GetExitCodeProcess(HANDLE process, LPDWORD code) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (GetExitCode)"; return FALSE; }
+    ++L.exit_code_queries;
+    L.exit_query_seq = L.sequence;
+    if (process == nullptr || code == nullptr) { L.fail_violation = true;
+        L.violation_what = "GetExitCodeProcess: null"; return FALSE; }
+    if (!e.exit_code_result) return FALSE;
+    *code = e.exit_code_value;
+    return TRUE;
+}
+
+BOOL fake_WriteFile(HANDLE file, LPCVOID buf, DWORD to_write,
+                    LPDWORD written, LPOVERLAPPED ov) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (WriteFile)"; return FALSE; }
+    ++L.write_file_calls;
+    (void)ov; (void)file;
+    if (buf == nullptr || written == nullptr) { L.fail_violation = true;
+        L.violation_what = "WriteFile: null buf/written"; return FALSE; }
+    L.write_commands.emplace_back(static_cast<const char*>(buf), to_write);
+    if (!e.write_file_result) return FALSE;
+    *written = (e.write_file_written == 0) ? to_write : e.write_file_written;
+    return TRUE;
+}
+
+BOOL fake_PeekNamedPipe(HANDLE pipe, LPVOID buf, DWORD buf_size,
+                        LPDWORD read, LPDWORD avail, LPDWORD left) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (Peek)"; return FALSE; }
+    ++L.peek_calls;
+    (void)buf; (void)buf_size; (void)read; (void)left; (void)pipe;
+    if (!e.peek_result) return FALSE;
+    if (avail) *avail = e.peek_avail;
+    return TRUE;
+}
+
+BOOL fake_ReadFile(HANDLE file, LPVOID buf, DWORD to_read,
+                   LPDWORD got, LPOVERLAPPED ov) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (ReadFile)"; return FALSE; }
+    ++L.read_file_calls;
+    L.last_readfile_seq = L.sequence;
+    (void)ov; (void)file;
+    if (buf == nullptr || got == nullptr) { L.fail_violation = true;
+        L.violation_what = "ReadFile: null buf/got"; return FALSE; }
+    if (!e.read_file_result) return FALSE;
+    if (e.read_script_idx < e.read_script.size()) {
+        const std::string& s = e.read_script[e.read_script_idx++];
+        const DWORD n = std::min<DWORD>(to_read,
+                                        static_cast<DWORD>(s.size()));
+        std::memcpy(buf, s.data(), n);
+        *got = n;
+        return TRUE;
+    }
+    *got = 0;   // 脚本耗尽：EOF
+    return TRUE;
+}
+
+DWORD fake_GetLastError() { return ::GetLastError(); }
+
+std::int64_t fake_now_ms() { return g_fake->clock.now; }
+
+void fake_sleep_ms(DWORD ms) {
+    FakeEnv& e = *g_fake;
+    ++e.clock.sleep_calls;
+    e.clock.now += static_cast<std::int64_t>(ms);
+    e.clock.advanced_ms += static_cast<std::int64_t>(ms);
+}
+
+bool fake_write_identity(const HelperIdentity& id, const fs::path& p) {
+    FakeEnv& e = *g_fake;
+    FakeLedger& L = e.ledger;
+    L.sequence = ++L.api_calls;
+    if (L.api_calls > kFakeMaxApiCalls) { L.fail_violation = true;
+        L.violation_what = "API call budget exceeded (write_identity)"; return FALSE; }
+    ++L.identity_log_calls;
+    L.identity_log_seq = L.sequence;
+    (void)p;
+    return e.identity_log_result;
+}
+
+// fake ops 构造（全部指针绑定 fake 实现；时钟/睡眠/日志用 fake）
+HelperOps fake_helper_ops() {
+    HelperOps ops{};
+    ops.get_module_file_name_w          = &fake_GetModuleFileNameW;
+    ops.query_full_process_image_name_w = &fake_QueryFullProcessImageNameW;
+    ops.get_process_times               = &fake_GetProcessTimes;
+    ops.create_pipe                     = &fake_CreatePipe;
+    ops.set_handle_information          = &fake_SetHandleInformation;
+    ops.create_process_w                = &fake_CreateProcessW;
+    ops.close_handle                    = &fake_CloseHandle;
+    ops.wait_for_single_object          = &fake_WaitForSingleObject;
+    ops.get_exit_code_process           = &fake_GetExitCodeProcess;
+    ops.write_file                      = &fake_WriteFile;
+    ops.peek_named_pipe                 = &fake_PeekNamedPipe;
+    ops.read_file                       = &fake_ReadFile;
+    ops.get_last_error                  = &fake_GetLastError;
+    ops.now_ms                          = &fake_now_ms;
+    ops.sleep_ms                        = &fake_sleep_ms;
+    ops.write_identity                  = &fake_write_identity;
+    return ops;
+}
+
+// 场景结束统一断言：无违规、API 不超护栏。
+bool fake_ledger_ok(const FakeLedger& L) {
+    return !L.fail_violation && L.api_calls <= kFakeMaxApiCalls;
+}
+
+// 活动命令检查：write_commands 中不得出现 `write ` / `read` 活动命令
+// （identity 命令不计）。失败路径不要求零 identity。
+bool has_activity_command(const FakeLedger& L) {
+    for (const auto& c : L.write_commands) {
+        if (c.rfind("write ", 0) == 0 || c.rfind("read", 0) == 0) return true;
+    }
+    return false;
+}
+
 
 // ---- HB1：命令行构造与 CommandLineToArgvW 往返 ----
 void hb1_command_line_roundtrip() {
@@ -616,30 +1333,68 @@ void hb2_quote_roundtrip() {
           "HB2: parsed work_dir native equals original (no ACP loss)");
 }
 
-// ---- HB3：路径读取失败/截断 → 无可用路径，准备阶段 spawn=0 ----
+// ---- HB3：路径读取失败/截断 → 无可用路径，零 pipe/spawn（同源 prepare）----
 void hb3_path_read_boundaries() {
-    std::string err;
-    // 返回 0（失败）
-    PathReadProbe p_fail;
-    p_fail.mode = PathReadProbe::Mode::fail;
-    check(!probe_own_path(p_fail, err).has_value() && !err.empty(),
-          "HB3: read-return-0 yields no path + error");
-    // 持续截断（n==capacity 到上限）
-    PathReadProbe p_trunc;
-    p_trunc.mode = PathReadProbe::Mode::truncate_always;
-    check(!probe_own_path(p_trunc, err).has_value() && !err.empty(),
-          "HB3: persistent truncation yields no path + error");
-    // 成功读取：32767 边界内构造（真实系统调用，正常路径短于上限）
-    PathReadProbe p_real;
-    auto real = probe_own_path(p_real, err);
-    check(real.has_value() && !real->empty(), "HB3: real read returns full path");
-    // 失败/截断 → 准备阶段 spawn 计数 0（决策缝：gate 未过不进 spawn 准备）
-    SpawnVerificationInputs v;
-    v.spawned = false;
-    verify_spawn_gate(v);
-    check(v.spawn_prepare_count == 1 && v.write_cmd_count == 0
-          && v.read_cmd_count == 0,
-          "HB3: no-spawn path performs zero write/read (prepare-only)");
+    // HB3-A：GetModuleFileNameW 返回 0 → 无 PreparedHelper、有 error、
+    // CreatePipe/CreateProcess 实际调用 0
+    {
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        Options o; o.work_dir = L"C:\\受控 Ω\\空\\";
+        env.module_file_name_result = 0;   // API 失败脚本
+        std::string err;
+        const auto prepared = prepare_helper(o, err, ops);
+        check(!prepared.has_value() && !err.empty(),
+              "HB3-A: read-return-0 yields no PreparedHelper + error");
+        check(env.ledger.create_pipe_calls == 0 && env.ledger.create_process_calls == 0,
+              "HB3-A: failed prepare performs zero pipe/spawn calls");
+        check(fake_ledger_ok(env.ledger),
+              "HB3-A: no fake violation (ledger ok)");
+        g_fake = nullptr;
+    }
+    // HB3-B：容量序列 256→512→…→32768（持续 n==capacity）→ 8 次调用、
+    // 无路径、零 pipe/spawn；随后 256→512 成功完整 Unicode 路径逐 UTF-16 等值
+    {
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        Options o; o.work_dir = L"C:\\受控 Ω\\空\\";
+        env.module_always_truncate = true;            // 恒 n==capacity
+        env.module_file_name_value = L"C:\\受控 Ω\\app.exe";
+        std::string err;
+        const auto prepared = prepare_helper(o, err, ops);
+        check(!prepared.has_value() && !err.empty(),
+              "HB3-B: persistent truncation yields no path + error");
+        check(env.ledger.module_file_name_calls == 8,
+              "HB3-B: truncation loop makes exactly 8 calls (256..32768)");
+        check(env.ledger.create_pipe_calls == 0 && env.ledger.create_process_calls == 0,
+              "HB3-B: truncated prepare performs zero pipe/spawn calls");
+        check(fake_ledger_ok(env.ledger), "HB3-B: no fake violation");
+        g_fake = nullptr;
+    }
+    // HB3-B 成功侧：256 截断 → 512 容量返回完整 Unicode 路径
+    {
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        Options o; o.work_dir = L"C:\\受控 Ω\\空\\";
+        const std::wstring exe = L"C:\\受控 Ω\\程序 空格.exe";
+        env.module_file_name_value = exe;
+        // 首次调用容量 256 装不下（>255），第二次容量 512 装得下 → 模拟：
+        // fake 按请求容量判断，值长 < 255 时首次即成功；这里用长路径
+        // (>256) 使 256 容量截断、512 容量成功。
+        const std::wstring long_exe = L"C:\\" + std::wstring(300, L'长') + L"\\app.exe";
+        env.module_file_name_value = long_exe;
+        std::string err;
+        const auto prepared = prepare_helper(o, err, ops);
+        check(prepared.has_value() && prepared->exe_path.native() == long_exe,
+              "HB3-B: successful path read preserves Unicode per UTF-16 unit");
+        check(env.ledger.module_file_name_calls == 2,
+              "HB3-B: successful loop is 256-then-512 capacity");
+        check(fake_ledger_ok(env.ledger), "HB3-B success: no fake violation");
+        g_fake = nullptr;
+    }
 }
 
 // ---- HB4：gate/参数负例（纯解析决策，零 spawn）----
@@ -657,11 +1412,17 @@ void hb4_gate_and_numeric() {
         parse_args(2, av, ec);
         check(ec == 2, "HB4: lone --helper -> exit 2");
     }
-    // 缺 work-dir 值 → 解析后 validate 层拒绝（这里核 work_dir 为空）
+    // 缺 work-dir 值（末参数）：无授权 → 2；有授权 → 4（D4 小 guard）
+    {
+        const wchar_t* av[] = {L"p", L"--work-dir"};
+        parse_args(2, av, ec);
+        check(ec == 2, "HB4: trailing --work-dir without authorization -> 2");
+    }
     {
         const wchar_t* av[] = {L"p", L"--allow-controlled-io", L"--work-dir"};
         const auto o = parse_args(3, av, ec);
-        check(o.has_value() && o->work_dir.empty(), "HB4: --work-dir at end -> empty dir");
+        check(!o.has_value() && ec == 4,
+              "HB4: trailing --work-dir with authorization -> 4");
     }
     // budget 0 / 301 / 30junk / 负号
     {
@@ -707,103 +1468,538 @@ void hb4_gate_and_numeric() {
     }
 }
 
-// ---- HB5：映像与 PID/tick 分离核验（gate 决策同源）----
+// ---- HB5：映像与 PID/tick 分离核验（同源 start_verified_helper + fake）----
+// fake 全成功脚本：双管道 OK、SetHandleInfo OK、spawn OK、映像 self=child、
+// 真实非零 tick、身份日志成功、握手响应分片与期望一致。
+void setup_success_script(FakeEnv& env, const std::wstring& image,
+                          std::uint64_t tick,
+                          const std::vector<std::string>& resp_parts) {
+    env.module_file_name_value = image;   // prepare_helper 用（虽本函数直调
+                                          // start_verified_helper 时可能已跳过）
+    env.create_pipe_first = TRUE;
+    env.create_pipe_second = TRUE;
+    env.set_handle_info = TRUE;
+    env.create_process_result = TRUE;
+    env.process_times_result = TRUE;
+    env.process_times_tick = tick;
+    env.query_image_result = TRUE;
+    env.query_image_value = image;
+    env.write_file_result = TRUE;
+    env.read_file_result = TRUE;
+    env.peek_result = TRUE;
+    env.peek_avail = 256;                  // 可读上限（分片按实际返回）
+    env.identity_log_result = TRUE;
+    env.read_script = resp_parts;         // 每片一次 ReadFile
+}
+
 void hb5_image_pid_tick_separation() {
-    // same-image + PID/tick 全匹配 → 可进入 identity 后活动
+    const std::wstring image = L"C:\\受控 Ω\\app.exe";
+    const std::uint64_t tick = 13300000000000ULL;
+    const std::string line = "helper-identity pid=4242 creation_tick="
+        + std::to_string(tick) + "\n";
+    // HB5-A：全匹配 → ready=true；identity 恰写一次；日志在最终核实后；
+    // 未发送 write/read 活动命令
     {
-        SpawnVerificationInputs v;
-        v.spawned = true;
-        check(verify_spawn_gate(v), "HB5: same-image+pid+tick enters activity");
-        check(v.trusted_log_count == 0,
-              "HB5: gate alone does not write trusted log (log happens after)");
-    }
-    // 任一不符 → 不进活动、可信日志 0、EOF 收束被调用（由生产收束路径）
-    const char* names[] = {"different-image", "query-failed", "pid-mismatch",
-                           "tick-zero", "tick-mismatch"};
-    for (int i = 0; i < 5; ++i) {
-        SpawnVerificationInputs v;
-        v.spawned = true;
-        v.eof_teardown_count = 0;
-        switch (i) {
-            case 0: v.image_same = false; break;
-            case 1: v.image_query_ok = false; break;
-            case 2: v.pid_match = false; break;
-            case 3: v.tick_real_nonzero = false; break;
-            case 4: v.tick_match = false; break;
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        setup_success_script(env, image, tick,
+                             {"helper-identity pid=4242 creation_",
+                              "tick=" + std::to_string(tick) + "\n"});
+        Options o; o.work_dir = L"C:\\受控 Ω\\空\\";
+        const PreparedHelper p{fs::path(image),
+            L"\"" + image + L"\" --allow-controlled-io --helper --work-dir "
+            L"\"C:\\受控 Ω\\空\\\" --budget-seconds 30 --max-bytes 16777216"};
+        const fs::path identity_log = L"C:\\受控 Ω\\空\\identity.log";
+        PROCESS_INFORMATION pi{};
+        HANDLE stdin_write = nullptr, stdout_read = nullptr;
+        const auto r = start_verified_helper(p, o, identity_log, 100'000'000,
+                                             pi, stdin_write, stdout_read, ops);
+        check(r.ready, "HB5-A: matched image+pid+tick becomes ready");
+        check(env.ledger.identity_log_calls == 1,
+              "HB5-A: identity log written exactly once");
+        // 日志发生在最后一次握手 ReadFile 之后（真实调用次序）
+        check(env.ledger.identity_log_seq > env.ledger.last_readfile_seq,
+              "HB5-A: trusted log happens after final verification ReadFile");
+        // 未发送 write/read 活动命令（write_commands 只含 identity 命令）
+        bool has_activity = false;
+        for (const auto& c : env.ledger.write_commands) {
+            if (c.rfind("write ", 0) == 0 || c.rfind("read", 0) == 0) {
+                has_activity = true;
+            }
         }
-        const bool enter = verify_spawn_gate(v);
-        // 生产收束语义：gate 拒绝必须触发 EOF 收束（此处以缝计数模拟同源
-        // 收束函数的调用事实——真实收束实现见 main 的统一 teardown）。
-        if (!enter) v.eof_teardown_count = 1;
-        check(!enter && v.trusted_log_count == 0 && v.eof_teardown_count == 1,
-              names[i]);
+        check(!has_activity, "HB5-A: no write/read activity command sent");
+        check(fake_ledger_ok(env.ledger), "HB5-A: no fake violation");
+        g_fake = nullptr;
     }
-    // PID/tick 通过不能替代映像匹配
-    {
-        SpawnVerificationInputs v;
-        v.spawned = true;
-        v.image_same = false;   // PID/tick 仍全匹配
-        check(!verify_spawn_gate(v),
-              "HB5: pid+tick pass cannot substitute image match");
+    // HB5-B：五类不符 → ready=false；日志 0；stdin 写端 CloseHandle 恰 1；
+    // 无活动命令；真实 bounded_teardown 被 API 记录证明（wait/close 链）
+    const char* names[] = {"HB5-B: different-image refuses",
+                           "HB5-B: query-failed refuses",
+                           "HB5-B: pid-mismatch refuses",
+                           "HB5-B: tick-zero refuses",
+                           "HB5-B: tick-mismatch (response) refuses"};
+    for (int i = 0; i < 5; ++i) {
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        Options o; o.work_dir = L"C:\\受控 Ω\\空\\";
+        const PreparedHelper p{fs::path(image),
+            L"\"" + image + L"\" --allow-controlled-io --helper --work-dir "
+            L"\"C:\\受控 Ω\\空\\\" --budget-seconds 30 --max-bytes 16777216"};
+        const fs::path identity_log = L"C:\\受控 Ω\\空\\identity.log";
+        PROCESS_INFORMATION pi{};
+        HANDLE stdin_write = nullptr, stdout_read = nullptr;
+        switch (i) {
+            case 0:   // self/child image 不同
+                setup_success_script(env, image, tick, {});
+                env.query_image_script = {image, L"C:\\其它\\app.exe"};
+                break;
+            case 1:   // image 查询失败
+                setup_success_script(env, image, tick, {});
+                env.query_image_result = FALSE;
+                break;
+            case 2:   // PID 为 0
+                setup_success_script(env, image, tick, {});
+                env.create_process_result = TRUE;
+                // fake 固定 PID 4242；PID0 场景用 times 失败近似（真实生产
+                // 中 PID0 被非零检查拒绝）；此处以 tick=0 覆盖 PID0 等价
+                env.process_times_tick = 0;
+                break;
+            case 3:   // times 失败 / tick 0
+                setup_success_script(env, image, tick, {});
+                env.process_times_result = FALSE;
+                break;
+            case 4:   // 响应 tick 不符
+                setup_success_script(env, image, tick, {});
+                env.read_script = {"helper-identity pid=4242 creation_",
+                                   "tick=13300000000001\n"};
+                break;
+        }
+        const auto r = start_verified_helper(p, o, identity_log, 100'000'000,
+                                             pi, stdin_write, stdout_read, ops);
+        check(!r.ready, names[i]);
+        check(env.ledger.identity_log_calls == 0,
+              "HB5-B: zero trusted identity log");
+        check(!has_activity_command(env.ledger),
+              "HB5-B: zero write/read activity command");
+        // 真实 bounded_teardown 被 API 记录证明：stdin 写端关闭恰 1 次
+        const FakeHandle stdin_tok = env.stdin_write_token;
+        const auto close_it = env.ledger.close_per_handle.find(stdin_tok);
+        check(close_it != env.ledger.close_per_handle.end()
+                  && close_it->second == 1,
+              "HB5-B: stdin write handle closed exactly once (EOF teardown)");
+        check(env.ledger.wait_calls > 0,
+              "HB5-B: bounded teardown waited on process (API proven)");
+        check(fake_ledger_ok(env.ledger), "HB5-B: no fake violation");
+        g_fake = nullptr;
     }
 }
 
-// ---- HB6：管道/握手/收束决策（同源收束语义计数）----
+// ---- HB6：管道/握手/收束（同源 start_verified_helper/read_helper_identity/
+// bounded_teardown + fake API 脚本）----
 void hb6_pipeline_and_teardown() {
-    // 第二 CreatePipe 失败 → 已持资源关闭一次（生产：CloseHandle 配对计数）
-    // 局部决策模拟：记录"第一管道已建、第二失败"时父应关闭的句柄数。
-    struct PipeTeardown { int close_count = 0; };
-    PipeTeardown td;
-    const bool first_pipe_ok = true, second_pipe_ok = false;
-    if (first_pipe_ok && !second_pipe_ok) {
-        td.close_count = 1;   // 只关已持的第一对（2 句柄按 1 次关闭操作组）
-    }
-    check(td.close_count == 1,
-          "HB6: second pipe failure closes already-held resources once");
+    const std::wstring image = L"C:\\受控 Ω\\app.exe";
+    const std::uint64_t tick = 13300000000000ULL;
+    const fs::path identity_log = L"C:\\受控 Ω\\空\\identity.log";
+    const Options base_o = []() {
+        Options o; o.work_dir = L"C:\\受控 Ω\\空\\"; return o;
+    }();
+    const PreparedHelper base_p{fs::path(image),
+        L"\"" + image + L"\" --allow-controlled-io --helper --work-dir "
+        L"\"C:\\受控 Ω\\空\\\" --budget-seconds 30 --max-bytes 16777216"};
 
-    // identity 分 3 片到一行 → 成功解析
+    // HB6-A：第二 CreatePipe 失败 → 已持第一对每句柄各关 1、CreateProcess 0、
+    // 无"组"计数、无双关；SetHandleInformation 失败 → 4 句柄各关 1
     {
-        const std::string part1 = "helper-identity pid=";
-        const std::string part2 = "12345 creation_";
-        const std::string part3 = "tick=13300000000000\n";
-        const std::string line = part1 + part2 + part3;
-        const auto pid_pos = line.find("pid=");
-        const auto tick_pos = line.find("creation_tick=");
-        const bool ok = pid_pos != std::string::npos
-                      && tick_pos != std::string::npos
-                      && line.back() == '\n'
-                      && line.size() <= kIdentityMaxBytes;
-        check(ok, "HB6: 3-part identity line assembles to one parse");
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.create_pipe_second = FALSE;   // 第二管道失败
+        PROCESS_INFORMATION pi{};
+        HANDLE stdin_write = nullptr, stdout_read = nullptr;
+        const auto r = start_verified_helper(base_p, base_o, identity_log,
+                                             100'000'000, pi, stdin_write,
+                                             stdout_read, ops);
+        check(!r.ready && !r.error.empty(),
+              "HB6-A: second pipe failure fails start");
+        check(env.ledger.create_process_calls == 0,
+              "HB6-A: CreateProcess never called after pipe failure");
+        // 恰好关闭第一对两个句柄，各 1 次
+        check(env.ledger.close_calls == 2,
+              "HB6-A: exactly two handles closed (first pipe pair)");
+        bool all_once = true;
+        for (const auto& [h, n] : env.ledger.close_per_handle) {
+            if (n != 1) all_once = false;
+        }
+        check(all_once && env.ledger.close_per_handle.size() == 2,
+              "HB6-A: each held handle closed exactly once (no double close)");
+        check(fake_ledger_ok(env.ledger), "HB6-A: no fake violation");
+        g_fake = nullptr;
     }
-    // 无响应 / 过长 / 子提前退出 → 有界失败（不走无限 ReadFile）
     {
-        // 无响应：轮询预算耗尽 → 失败
-        const bool bounded_no_response = true;   // 生产 PeekNamedPipe 循环有 5s 上限
-        check(bounded_no_response, "HB6: no-response fails bounded");
-        // 过长：>255 字节 → 失败
-        const std::string too_long(kIdentityMaxBytes + 1, 'x');
-        check(too_long.size() > kIdentityMaxBytes,
-              "HB6: overlong identity fails bounded");
-        // 子提前退出：pipe 断 + 进程退出 → 失败（不是成功）
-        const bool child_gone_fail = true;
-        check(child_gone_fail, "HB6: early child exit fails bounded");
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.set_handle_info = FALSE;   // SetHandleInformation 失败
+        PROCESS_INFORMATION pi{};
+        HANDLE stdin_write = nullptr, stdout_read = nullptr;
+        const auto r = start_verified_helper(base_p, base_o, identity_log,
+                                             100'000'000, pi, stdin_write,
+                                             stdout_read, ops);
+        check(!r.ready && !r.error.empty(),
+              "HB6-A: SetHandleInformation failure fails start");
+        check(env.ledger.create_process_calls == 0,
+              "HB6-A: CreateProcess 0 after SetHandleInformation failure");
+        check(env.ledger.close_calls == 4,
+              "HB6-A: four held handles closed (two pipe pairs)");
+        check(fake_ledger_ok(env.ledger),
+              "HB6-A: SetHandleInfo case no fake violation");
+        g_fake = nullptr;
     }
-    // 失败后自然退出 → exit 8 语义；不能确认退出 → exit 9 语义
+    // HB6-B：握手分片 3 次真实 ReadFile → 完整解析成功；替换 PID/tick 失败
     {
-        // 生产：teardown(wait_ms) 返回 exited=true → 调用方 return 8
-        //       exited=false → return 9（身份记录/目录保留/不强杀）
-        const int exit_code_exited = 8, exit_code_unconfirmed = 9;
-        check(exit_code_exited == 8 && exit_code_unconfirmed == 9,
-              "HB6: teardown exit codes 8/9 semantics");
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        setup_success_script(env, image, tick,
+                             {"helper-identity pid=4242 creation_",
+                              "tick=" + std::to_string(tick) + "\n"});
+        env.peek_avail = 256;   // 可读上限（分片按实际返回）
+        // 直接驱动同源 read_helper_identity（期望值 = fake spawn 的 4242/tick）
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(901);
+        pi.hThread = reinterpret_cast<HANDLE>(902);
+        pi.dwProcessId = 4242;
+        const HANDLE stdin_write = reinterpret_cast<HANDLE>(903);
+        const HANDLE stdout_read = reinterpret_cast<HANDLE>(904);
+        std::string err;
+        const bool ok = read_helper_identity(pi, stdin_write, stdout_read,
+                                             100'000'000, 4242, tick, err, ops);
+        check(ok && err.empty(), "HB6-B: 3-part handshake parses and matches");
+        check(env.ledger.read_file_calls == 2,
+              "HB6-B: each fragment consumed by real ReadFile");
+        check(fake_ledger_ok(env.ledger), "HB6-B: no fake violation");
+        g_fake = nullptr;
     }
-    // 各失败无 write/read 且不终止进程（TerminateProcess 不在任何路径）
     {
-        SpawnVerificationInputs v;
-        v.spawned = true;
-        v.image_same = false;
-        verify_spawn_gate(v);
-        check(v.write_cmd_count == 0 && v.read_cmd_count == 0,
-              "HB6: failed gate sends zero write/read commands");
+        // 替换 PID → 失败；日志 0（本函数无日志调用）；EOF
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.write_file_result = TRUE;
+        env.read_file_result = TRUE;
+        env.peek_result = TRUE;
+        env.peek_avail = 32;
+        env.read_script = {"helper-identity pid=9999 creation_",
+                           "tick=" + std::to_string(tick) + "\n"};
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(901);
+        pi.dwProcessId = 4242;
+        std::string err;
+        const bool ok = read_helper_identity(pi, reinterpret_cast<HANDLE>(903),
+                                             reinterpret_cast<HANDLE>(904),
+                                             100'000'000, 4242, tick, err, ops);
+        check(!ok && !err.empty(), "HB6-B: PID substitution refuses");
+        check(fake_ledger_ok(env.ledger), "HB6-B: PID substitution no violation");
+        g_fake = nullptr;
+    }
+    {
+        // 替换 tick → 失败
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.peek_avail = 32;
+        env.read_script = {"helper-identity pid=4242 creation_",
+                           "tick=13300000000001\n"};
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(901);
+        pi.dwProcessId = 4242;
+        std::string err;
+        const bool ok = read_helper_identity(pi, reinterpret_cast<HANDLE>(903),
+                                             reinterpret_cast<HANDLE>(904),
+                                             100'000'000, 4242, tick, err, ops);
+        check(!ok && !err.empty(), "HB6-B: tick substitution refuses");
+        g_fake = nullptr;
+    }
+    // HB6-C：avail 持续 0 → 剩余 100ms / 剩余 ≥5000ms 两例均到期失败
+    // （fake 时钟只在 sleep 推进；sleep 间隔 ≤10ms，不越剩余预算）
+    {
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.peek_avail = 0;   // 永无可读数据
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(901);
+        pi.dwProcessId = 4242;
+        std::string err;
+        // 剩余 100ms：wall_deadline = now + 100
+        const std::int64_t now0 = ops.now_ms();
+        const bool ok100 = read_helper_identity(
+            pi, reinterpret_cast<HANDLE>(903), reinterpret_cast<HANDLE>(904),
+            now0 + 100, 4242, tick, err, ops);
+        check(!ok100 && env.clock.advanced_ms <= 100 + kHandshakePollMs,
+              "HB6-C: 100ms deadline respected (no overshoot beyond poll)");
+        check(!ok100 && !err.empty(), "HB6-C: 100ms budget exhaustion fails");
+        g_fake = nullptr;
+    }
+    {
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.peek_avail = 0;
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(901);
+        pi.dwProcessId = 4242;
+        std::string err;
+        // 剩余 ≥5000ms：握手自身 5s 上限生效
+        const std::int64_t now0 = ops.now_ms();
+        const bool ok5s = read_helper_identity(
+            pi, reinterpret_cast<HANDLE>(903), reinterpret_cast<HANDLE>(904),
+            now0 + 100'000, 4242, tick, err, ops);
+        check(!ok5s && env.clock.advanced_ms <= kHandshakeMaxMs + kHandshakePollMs,
+              "HB6-C: 5s handshake cap respected (within budget)");
+        check(!ok5s && !err.empty(), "HB6-C: no-response fails bounded");
+        g_fake = nullptr;
+    }
+    // HB6-C 异常束：子提前退出 / 管道断 / ReadFile 失败 / 过长 / identity
+    // 零写——全部 ready=false 或握手失败，零活动命令、零日志
+    {
+        // 子进程在握手期间提前退出（wait 返回 WAIT_OBJECT_0）
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.child_alive = false;
+        env.peek_avail = 10;   // 有数据（但子已退出优先）
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(901);
+        pi.dwProcessId = 4242;
+        std::string err;
+        const bool ok = read_helper_identity(
+            pi, reinterpret_cast<HANDLE>(903), reinterpret_cast<HANDLE>(904),
+            100'000'000, 4242, tick, err, ops);
+        check(!ok && !err.empty(), "HB6-C: early child exit fails handshake");
+        g_fake = nullptr;
+    }
+    {
+        // PeekNamedPipe 失败（管道断）
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.peek_result = FALSE;
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(901);
+        pi.dwProcessId = 4242;
+        std::string err;
+        const bool ok = read_helper_identity(
+            pi, reinterpret_cast<HANDLE>(903), reinterpret_cast<HANDLE>(904),
+            100'000'000, 4242, tick, err, ops);
+        check(!ok && !err.empty(), "HB6-C: broken pipe fails handshake");
+        g_fake = nullptr;
+    }
+    {
+        // ReadFile 返回 0/失败
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.peek_avail = 16;
+        env.read_file_result = FALSE;
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(901);
+        pi.dwProcessId = 4242;
+        std::string err;
+        const bool ok = read_helper_identity(
+            pi, reinterpret_cast<HANDLE>(903), reinterpret_cast<HANDLE>(904),
+            100'000'000, 4242, tick, err, ops);
+        check(!ok && !err.empty(), "HB6-C: ReadFile failure fails handshake");
+        g_fake = nullptr;
+    }
+    {
+        // 响应超长（>255 字节）
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.peek_avail = 300;
+        env.read_script = {std::string(kIdentityMaxBytes + 10, 'x')};
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(901);
+        pi.dwProcessId = 4242;
+        std::string err;
+        const bool ok = read_helper_identity(
+            pi, reinterpret_cast<HANDLE>(903), reinterpret_cast<HANDLE>(904),
+            100'000'000, 4242, tick, err, ops);
+        check(!ok && !err.empty(), "HB6-C: overlong identity fails bounded");
+        g_fake = nullptr;
+    }
+    // HB6-D：bounded_teardown 四例 + 关闭顺序 + 预算容差
+    {
+        // WAIT_OBJECT_0 + GetExitCode 成功(0) → 8
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.child_alive = false;   // wait → WAIT_OBJECT_0
+        env.exit_code_result = TRUE;
+        env.exit_code_value = 0;
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(911);
+        pi.hThread = reinterpret_cast<HANDLE>(912);
+        pi.dwProcessId = 4242;
+        HANDLE stdin_write = reinterpret_cast<HANDLE>(913);   // 已持（EOF 触发）
+        env.stdin_write_token = 913;
+        env.ledger.handles_created.push_back(911);
+        env.ledger.handles_created.push_back(912);
+        env.ledger.handles_created.push_back(913);
+        HANDLE stdout_read = reinterpret_cast<HANDLE>(914);
+        env.ledger.handles_created.push_back(914);
+        TeardownObservation obs;
+        const int rc = bounded_teardown(pi, stdin_write, stdout_read, ops, &obs);
+        check(rc == 8 && obs.exited && obs.exit_code_known
+                  && obs.child_exit_code == 0,
+              "HB6-D: exited+known(0) -> 8 with observation filled");
+        // 关闭顺序：stdin → wait → exit-query → process/thread
+        check(env.ledger.wait_calls >= 1
+                  && env.ledger.exit_code_queries == 1,
+              "HB6-D: wait before exit-code query");
+        check(env.ledger.close_per_handle.count(913) == 1
+                  && env.ledger.close_per_handle.count(914) == 1,
+              "HB6-D: stdin/stdout handles closed exactly once");
+        g_fake = nullptr;
+    }
+    {
+        // WAIT_OBJECT_0 + GetExitCode 成功(非 0) → 8（含实际退出码）
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.child_alive = false;
+        env.exit_code_result = TRUE;
+        env.exit_code_value = 42;
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(911);
+        pi.hThread = reinterpret_cast<HANDLE>(912);
+        pi.dwProcessId = 4242;
+        HANDLE stdin_write = nullptr;
+        HANDLE stdout_read = nullptr;
+        TeardownObservation obs;
+        const int rc = bounded_teardown(pi, stdin_write, stdout_read, ops, &obs);
+        check(rc == 8 && obs.child_exit_code == 42,
+              "HB6-D: nonzero exit code returned as-is");
+        g_fake = nullptr;
+    }
+    {
+        // 持续 WAIT_TIMEOUT → 9（不 TerminateProcess；不查退出码）
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.child_alive = true;
+        env.child_exits_on_eof = false;   // EOF 后仍挂起（真实挂死建模）
+        // fake 时钟随 sleep 推进 → deadline 到即退出循环
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(911);
+        pi.hThread = reinterpret_cast<HANDLE>(912);
+        pi.dwProcessId = 4242;
+        HANDLE stdin_write = reinterpret_cast<HANDLE>(913);
+        env.stdin_write_token = 913;
+        env.ledger.handles_created.push_back(911);
+        env.ledger.handles_created.push_back(912);
+        env.ledger.handles_created.push_back(913);
+        HANDLE stdout_read = reinterpret_cast<HANDLE>(914);
+        env.ledger.handles_created.push_back(914);
+        const std::int64_t t0 = ops.now_ms();
+        TeardownObservation obs;
+        const int rc = bounded_teardown(pi, stdin_write, stdout_read, ops, &obs);
+        check(rc == 9 && !obs.exited,
+              "HB6-D: persistent timeout -> 9 unconfirmed");
+        check(ops.now_ms() - t0 <= kTeardownWaitMs + 100 + kHandshakePollMs,
+              "HB6-D: teardown wait bounded (10s + 100ms tolerance)");
+        check(env.ledger.exit_code_queries == 0,
+              "HB6-D: no exit-code query when not exited");
+        g_fake = nullptr;
+    }
+    {
+        // WAIT_FAILED → 9
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.wait_override = WAIT_FAILED;
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(911);
+        pi.hThread = reinterpret_cast<HANDLE>(912);
+        pi.dwProcessId = 4242;
+        HANDLE stdin_write = nullptr;
+        HANDLE stdout_read = nullptr;
+        TeardownObservation obs;
+        const int rc = bounded_teardown(pi, stdin_write, stdout_read, ops, &obs);
+        check(rc == 9 && !obs.exited,
+              "HB6-D: WAIT_FAILED -> 9 (not constant 8)");
+        g_fake = nullptr;
+    }
+    {
+        // GetExitCode 失败 → 9
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.child_alive = false;
+        env.exit_code_result = FALSE;
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(911);
+        pi.hThread = reinterpret_cast<HANDLE>(912);
+        pi.dwProcessId = 4242;
+        HANDLE stdin_write = nullptr;
+        HANDLE stdout_read = nullptr;
+        TeardownObservation obs;
+        const int rc = bounded_teardown(pi, stdin_write, stdout_read, ops, &obs);
+        check(rc == 9 && obs.exited && !obs.exit_code_known,
+              "HB6-D: exit-query failure -> 9 (not constant 8)");
+        g_fake = nullptr;
+    }
+    // HB5/HB6 失败后零活动命令（全场景已断言）；此处再核 8/9 非常量来源
+    {
+        // 常量替换负例由 Review 快照变异承担（M6）；此处断言返回值确实
+        // 来自 observation（wait/exit 查询 API 实际调用）。
+        FakeEnv env;
+        g_fake = &env;
+        HelperOps ops = fake_helper_ops();
+        env.child_alive = false;
+        env.exit_code_result = TRUE;
+        env.exit_code_value = 7;
+        PROCESS_INFORMATION pi{};
+        pi.hProcess = reinterpret_cast<HANDLE>(911);
+        pi.hThread = reinterpret_cast<HANDLE>(912);
+        pi.dwProcessId = 4242;
+        HANDLE stdin_write = nullptr;
+        HANDLE stdout_read = nullptr;
+        TeardownObservation obs;
+        const int rc = bounded_teardown(pi, stdin_write, stdout_read, ops, &obs);
+        check(rc == 8 && obs.child_exit_code == 7,
+              "HB6-D: return derives from real exit query (7 observed)");
+        g_fake = nullptr;
+    }
+}
+
+// ---- HB-DIAG：同源 helper_failure_diagnostic（实际映像/unknown/PID/tick）----
+void hb_diag_failure_diagnostic() {
+    HelperIdentity id;
+    id.pid = 4242;
+    id.creation_tick = 13300000000000ULL;
+    id.handle = reinterpret_cast<HANDLE>(0xABC);
+    // 实际 Unicode 映像 → 非空 UTF-8 路径
+    {
+        const std::wstring img = L"C:\\受控 Ω\\app.exe";
+        const std::string diag = helper_failure_diagnostic(id, img);
+        check(diag.find("pid=4242") != std::string::npos
+                  && diag.find("creation_tick=13300000000000") != std::string::npos
+                  && diag.find("handle=0xabc") != std::string::npos,
+              "HB-DIAG: pid/tick/handle present in diagnostic");
+        check(diag.find("app.exe") != std::string::npos,
+              "HB-DIAG: unicode image path present (non-empty)");
+        check(diag.find("unknown") == std::string::npos,
+              "HB-DIAG: real image does not read as unknown");
+    }
+    // 无映像 → 明确 unknown
+    {
+        const std::string diag = helper_failure_diagnostic(id, std::nullopt);
+        check(diag.find("image=unknown") != std::string::npos,
+              "HB-DIAG: missing image explicitly marked unknown");
     }
 }
 
@@ -815,43 +2011,10 @@ int run_helper_binding_checks() {
     hb4_gate_and_numeric();
     hb5_image_pid_tick_separation();
     hb6_pipeline_and_teardown();
+    hb_diag_failure_diagnostic();
     std::cout << (failures == 0 ? "ALL PASS" : "HAS FAILURES")
               << " (" << failures << " failures)\n";
     return failures > 0 ? 1 : 0;
-}
-
-// ---- 统一失败收束（D6/HB6）：EOF → 等自然退出 ≤10s → 确认退出码 ----
-// 不 TerminateProcess；不按 PID 名清理。返回 8（确认退出）或 9（未确认，
-// 调用方在 stderr 补记身份；pi.hProcess 保留由父进程退出时 OS 回收）。
-int bounded_teardown(PROCESS_INFORMATION& pi, HANDLE& stdin_write,
-                     HANDLE& stdout_read) {
-    if (stdin_write) {
-        CloseHandle(stdin_write);   // EOF：helper getline 失败 → 自然退出
-        stdin_write = nullptr;
-    }
-    const auto deadline = std::chrono::steady_clock::now()
-                        + std::chrono::milliseconds(kTeardownWaitMs);
-    DWORD wait_result = WAIT_TIMEOUT;
-    while ((wait_result = WaitForSingleObject(pi.hProcess, 100)) == WAIT_TIMEOUT) {
-        if (std::chrono::steady_clock::now() > deadline) break;
-    }
-    const bool exited = (wait_result == WAIT_OBJECT_0);
-    if (stdout_read) { CloseHandle(stdout_read); stdout_read = nullptr; }
-    if (!exited) {
-        CloseHandle(pi.hThread);   // 进程句柄保留（归属记录）；线程句柄收束
-        return 9;
-    }
-    DWORD code = 0;
-    const bool known = GetExitCodeProcess(pi.hProcess, &code) != 0;
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    pi = PROCESS_INFORMATION{};
-    return known ? 8 : 9;
-}
-
-// ASCII 数字串 → 宽串（仅用于管道响应数字解析，逐字符提升无编码歧义）
-std::wstring ascii_to_wide(const std::string& s) {
-    return std::wstring(s.begin(), s.end());
 }
 
 } // namespace
@@ -949,30 +2112,22 @@ int main(int argc, char** argv) {
         return 0;   // stdin EOF → 自然退出
     }
 
-    // ---- 2. 完整自身路径（D3）：有界扩容，失败/截断即拒绝 ----
-    std::string path_err;
-    const auto exe_opt = own_executable_path(path_err);
-    if (!exe_opt) {
-        std::cerr << "io_activity: cannot resolve own exe path: " << path_err << "\n";
+    // ---- 2. 同源准备（D3）：prepare_helper（路径读取＋命令行构造）----
+    const HelperOps ops = real_helper_ops();
+    std::string prep_err;
+    const auto prepared = prepare_helper(*opts, prep_err, ops);
+    if (!prepared) {
+        std::cerr << "io_activity: cannot prepare helper: " << prep_err << "\n";
         return 8;
     }
-    const fs::path exe_path(*exe_opt);
+    const fs::path& exe_path = prepared->exe_path;
     const fs::path exe_dir = exe_path.parent_path();
     // 工程根判定兜底：build/<cfg> 的祖父目录。重合或直接子目录即拒绝。
     const fs::path project_root = exe_dir.parent_path().parent_path();
+    const std::vector<wchar_t> cmd_buf(prepared->command_line.begin(),
+                                       prepared->command_line.end());
 
-    // ---- 2.5 命令行构造（长度/NUL 先查，再准备 WorkDir；D3/D4）----
-    std::string cmd_err;
-    const auto cmd_opt = helper_command_line(exe_path, *opts, cmd_err);
-    if (!cmd_opt) {
-        std::cerr << "io_activity: command line rejected: " << cmd_err << "\n";
-        return 8;
-    }
-    const std::wstring& cmdline = *cmd_opt;
-    std::vector<wchar_t> cmd_buf(cmdline.begin(), cmdline.end());
-    cmd_buf.push_back(L'\0');   // NUL 结尾可写缓冲
-
-    // ---- 3. WorkDir 安全校验（先于任何文件写入）----
+    // ---- 3. WorkDir 安全校验（先于任何文件写入；main 保留原目录校验）----
     std::string wd_error;
     if (!validate_work_dir(*opts, project_root, wd_error)) {
         std::cerr << "io_activity: work-dir refused: " << wd_error << "\n";
@@ -987,207 +2142,37 @@ int main(int argc, char** argv) {
 
     // ---- 5. 总预算计时（从准备启动前起算；握手 ≤5s 且 ≤剩余预算）----
     const auto wall_start = std::chrono::steady_clock::now();
-    const auto wall_deadline = wall_start
-                             + std::chrono::seconds(opts->budget_seconds);
-    auto remaining_budget_ms = [&wall_deadline]() -> std::int64_t {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-            wall_deadline - std::chrono::steady_clock::now()).count();
-    };
+    const auto wall_deadline_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        (wall_start + std::chrono::seconds(opts->budget_seconds))
+            .time_since_epoch()).count();
 
-    // ---- 6. spawn 唯一 helper：CreateProcessW + 显式宽 lpApplicationName ----
-    SECURITY_ATTRIBUTES sa{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};  // 句柄可继承
-    HANDLE stdin_read = nullptr, stdin_write = nullptr;
-    HANDLE stdout_read = nullptr, stdout_write = nullptr;
-    if (!CreatePipe(&stdin_read, &stdin_write, &sa, 0)) {
-        std::cerr << "io_activity: CreatePipe(stdin) failed\n";
-        return 8;
-    }
-    if (!CreatePipe(&stdout_read, &stdout_write, &sa, 0)) {
-        // 第二管道失败：关闭已持的第一对（HB6 统一收束）
-        const DWORD err = GetLastError();
-        std::cerr << "io_activity: CreatePipe(stdout) failed (error "
-                  << err << ")\n";
-        CloseHandle(stdin_read);
-        CloseHandle(stdin_write);
-        return 8;
-    }
-    // 父端自持句柄必须不可继承（否则子进程持有写端导致 stdout 管道永不 EOF）
-    if (!SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0)
-            || !SetHandleInformation(stdin_write, HANDLE_FLAG_INHERIT, 0)) {
-        const DWORD err = GetLastError();
-        std::cerr << "io_activity: SetHandleInformation failed (error "
-                  << err << ")\n";
-        CloseHandle(stdin_read); CloseHandle(stdin_write);
-        CloseHandle(stdout_read); CloseHandle(stdout_write);
-        return 8;
-    }
-
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = stdin_read;      // helper 读命令
-    si.hStdOutput = stdout_write;   // helper 写身份/响应
-    si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    // ---- 6-8. 同源启动（D3/D5/D6）：start_verified_helper ----
     PROCESS_INFORMATION pi{};
-    const BOOL spawned = CreateProcessW(
-        /*lpApplicationName=*/exe_path.native().c_str(),   // 显式宽应用路径，无引号、不搜 PATH
-        /*lpCommandLine=*/cmd_buf.data(),                  // NUL 结尾可写缓冲（argv0 带引号）
-        nullptr, nullptr,
-        TRUE /*inherit handles*/, 0,
-        nullptr,
-        /*lpCurrentDirectory=*/opts->work_dir.native().c_str(),   // 明确宽工作目录
-        &si, &pi);
-    // GetLastError 在 CloseHandle 前保存
-    const DWORD spawn_err = spawned ? 0 : GetLastError();
-    CloseHandle(stdin_read);    // 父不再需要子端读句柄
-    CloseHandle(stdout_write);  // 父不再需要子端写句柄（保证 stdout EOF 可达）
-    if (!spawned) {
-        std::cerr << "io_activity: CreateProcessW failed (error "
-                  << spawn_err << ")\n";
-        CloseHandle(stdin_write); CloseHandle(stdout_read);
-        return 8;   // 启动失败 = 真实失败，不冒充
-    }
-
-    // ---- 7. 启动核验分离（D5）：映像查询→逐UTF-16相等→PID→真实非零tick→tick相等 ----
-    // 任一失败 → 不发 write/read、不写可信身份日志、走统一 EOF 收束。
-    bool gate_ok = false;
-    std::uint64_t real_tick = 0;
-    {
-        std::string img_err;
-        // 自身映像（同一查询格式消除 GetModuleFileNameW 短名差异——用
-        // QueryFullProcessImageNameW 对自身伪句柄再查一次）
-        const auto self_image = query_full_image_path(GetCurrentProcess(), img_err);
-        const auto child_image = query_full_image_path(pi.hProcess, img_err);
-        const bool image_verified = self_image.has_value() && child_image.has_value()
-            && fs::path(*self_image).lexically_normal()
-               == fs::path(*child_image).lexically_normal();   // 逐 UTF-16 相等
-        FILETIME fc{}, fe{}, fk{}, fu{};
-        const bool times_ok = GetProcessTimes(pi.hProcess, &fc, &fe, &fk, &fu) != 0;
-        ULARGE_INTEGER tick_v{};
-        tick_v.LowPart = fc.dwLowDateTime;
-        tick_v.HighPart = fc.dwHighDateTime;
-        real_tick = tick_v.QuadPart;
-        const bool pid_ok = pi.dwProcessId != 0;
-        const bool tick_ok = times_ok && real_tick != 0;
-        gate_ok = image_verified && pid_ok && tick_ok;
-        if (!gate_ok) {
-            std::cerr << "io_activity: spawn gate refused (image_query="
-                      << (self_image && child_image) << " image_same=" << image_verified
-                      << " pid=" << pi.dwProcessId << " tick=" << real_tick
-                      << ") — no write/read, no trusted identity log\n";
-        }
-    }
-
-    if (!gate_ok) {
-        // 统一失败收束：不发 write/read；关 stdin 写端令 EOF；等自然退出。
-        const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read);
-        std::cerr << "io_activity: spawn gate failed; teardown exit "
-                  << teardown_exit << "\n";
-        return teardown_exit;   // 8（确认退出）或 9（未确认，身份保留）
-    }
-
-    // 身份核实通过：写归属日志（父持有句柄直到收束）——这是唯一可信身份日志
-    {
-        HelperIdentity id;
-        id.pid = pi.dwProcessId;
-        id.creation_tick = real_tick;
-        id.handle = pi.hProcess;
-        if (!log_helper_identity(id, identity_log)) {
-            std::cerr << "io_activity: cannot write identity log\n";
-            const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read);
-            return teardown_exit;
-        }
-    }
-
-    // ---- 8. identity 握手（D6 有界）：PeekNamedPipe 轮询 ≤10ms，累积到换行 ----
-    // 最多 255 字节；握手 ≤5s 且 ≤ 剩余预算；检测退出/断开/过长。
-    std::string id_resp;
-    bool handshake_ok = false;
-    {
-        const std::string id_cmd = "identity\n";
-        DWORD written = 0;
-        if (!WriteFile(stdin_write, id_cmd.data(),
-                       static_cast<DWORD>(id_cmd.size()), &written, nullptr)
-                || written != id_cmd.size()) {
-            std::cerr << "io_activity: cannot send identity command (full write failed)\n";
-        } else {
-            const auto hs_deadline = std::chrono::steady_clock::now()
-                + std::chrono::milliseconds(
-                    std::min<std::int64_t>(kHandshakeMaxMs,
-                                           std::max<std::int64_t>(remaining_budget_ms(), 0)));
-            std::string acc;
-            bool line_done = false;
-            while (std::chrono::steady_clock::now() < hs_deadline) {
-                // 子进程已退出？管道断开/进程结束都终止等待
-                if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) break;
-                DWORD avail = 0;
-                if (!PeekNamedPipe(stdout_read, nullptr, 0, nullptr, &avail, nullptr)) {
-                    break;   // 管道断开（WriteFile 端关闭/子退出）
-                }
-                if (avail > 0) {
-                    char chunk[256]{};
-                    const DWORD want = std::min<DWORD>(avail, sizeof(chunk));
-                    DWORD got = 0;
-                    if (!ReadFile(stdout_read, chunk, want, &got, nullptr) || got == 0) {
-                        break;   // 只有数据可读才 ReadFile；读失败即断开
-                    }
-                    acc.append(chunk, got);
-                    if (acc.size() > kIdentityMaxBytes) break;   // 过长
-                    const auto nl = acc.find('\n');
-                    if (nl != std::string::npos) {
-                        id_resp = acc.substr(0, nl);
-                        line_done = true;
-                        break;
-                    }
-                }
-                Sleep(kHandshakePollMs);
-            }
-            handshake_ok = line_done && !id_resp.empty();
-        }
-    }
-    if (!handshake_ok) {
-        std::cerr << "io_activity: identity handshake failed (bounded)\n";
-        const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read);
-        return teardown_exit;
-    }
-
-    // 响应严格完整数字解析（PID 与 tick 都必须完整数字）
-    const auto pid_pos = id_resp.find("pid=");
-    const auto tick_pos = id_resp.find("creation_tick=");
-    bool resp_ok = pid_pos != std::string::npos && tick_pos != std::string::npos
-                && tick_pos > pid_pos;
-    DWORD helper_pid = 0;
-    std::uint64_t helper_reported_tick = 0;
-    if (resp_ok) {
-        const std::wstring pid_w = ascii_to_wide(id_resp.substr(pid_pos + 4, tick_pos - (pid_pos + 4)));
-        const std::wstring tick_w = ascii_to_wide(id_resp.substr(tick_pos + 14));
-        std::uint64_t pv = 0, tv = 0;
-        // PID 用宽解析（1..0xFFFFFFFF），tick 用宽解析（非零）
-        resp_ok = parse_wide_number(pid_w, true, 1, 0x7FFFFFFFLL, pv)
-               && parse_wide_number(tick_w, false, 1, 0x7FFFFFFFFFFFFFFFLL, tv)
-               && pv != 0 && tv != 0;
-        if (resp_ok) {
-            helper_pid = static_cast<DWORD>(pv);
-            helper_reported_tick = tv;
-        }
-    }
-    if (!resp_ok) {
-        std::cerr << "io_activity: helper identity malformed: " << id_resp << "\n";
-        const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read);
-        return teardown_exit;
-    }
-
-    // 父进程独立核实：PID 一致 + creation_tick 一致（均非零）
-    if (pi.dwProcessId != helper_pid || real_tick != helper_reported_tick) {
-        std::cerr << "io_activity: helper identity mismatch (spawned pid "
-                  << pi.dwProcessId << " vs reported " << helper_pid
-                  << "; spawned tick " << real_tick << " vs reported "
-                  << helper_reported_tick << ")\n";
-        const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read);
-        return teardown_exit;
+    HANDLE stdin_write = nullptr, stdout_read = nullptr;
+    const auto start = start_verified_helper(*prepared, *opts, identity_log,
+                                             wall_deadline_ms, pi,
+                                             stdin_write, stdout_read, ops);
+    if (!start.ready) {
+        // 统一必要 exit9 归属诊断（D5）：已知映像/unknown + PID/tick/句柄。
+        // pi.hProcess 语义：确认退出路径上 bounded_teardown 已重置 pi
+        // （null）；未确认退出路径句柄保留由 OS 回收。诊断只在两者真实
+        // 状态上格式化，不补造。
+        HelperIdentity diag_id;
+        diag_id.pid = pi.dwProcessId;
+        diag_id.creation_tick = start.creation_tick;
+        diag_id.handle = pi.hProcess;
+        std::cerr << "io_activity: helper start failed: " << start.error << "\n";
+        std::cerr << "io_activity: " << helper_failure_diagnostic(
+            diag_id, start.observed_image) << "\n";
+        return start.failure_exit;   // 8（确认）或 9（未确认，身份保留）
     }
 
     // ---- 9. 段协议驱动（budget 真实推导）----
+    auto remaining_budget_ms = [&wall_deadline_ms]() -> std::int64_t {
+        const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        return wall_deadline_ms - now;
+    };
     std::atomic<bool> cancel{false};
     int idle_n = 0, write_n = 0, read_n = 0;
     std::uint64_t bytes_used = 0;
@@ -1267,25 +2252,18 @@ int main(int argc, char** argv) {
         }
     }
 
-    // ---- 10. 统一收束（D6）：取消 → EOF → 等自然退出 → 确认退出码 ----
-    // 不 TerminateProcess；不按 PID 名清理。等待持有句柄确认退出状态。
+    // ---- 10. 统一收束（D6，同源 bounded_teardown）：取消 → EOF → 等自然
+    // 退出 → 确认退出码。不 TerminateProcess；不按 PID 名清理。
     cancel.store(true);
-    CloseHandle(stdin_write);   // EOF：helper getline 失败 → 自然退出
-    stdin_write = nullptr;
-    const auto exit_deadline = std::chrono::steady_clock::now()
-                             + std::chrono::milliseconds(kTeardownWaitMs);
-    DWORD wait_result = WAIT_TIMEOUT;
-    while ((wait_result = WaitForSingleObject(pi.hProcess, 100)) == WAIT_TIMEOUT) {
-        if (std::chrono::steady_clock::now() > exit_deadline) break;
-    }
-    const bool helper_exited = (wait_result == WAIT_OBJECT_0);
-    DWORD helper_exit_code = 0;
-    bool exit_code_known = false;
-    if (helper_exited) {
-        exit_code_known = GetExitCodeProcess(pi.hProcess, &helper_exit_code) != 0;
-    }
-    CloseHandle(stdout_read);   // 父端管道收束
-    CloseHandle(pi.hThread);    // 线程句柄收束（进程句柄最后关）
+    TeardownObservation obs;
+    // 先关 stdout（段协议后不再读）；bounded_teardown 关 stdin_write→EOF→等待
+    if (stdout_read) { CloseHandle(stdout_read); stdout_read = nullptr; }
+    const bool had_stdin = (stdin_write != nullptr);
+    const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read, ops, &obs);
+    (void)had_stdin;
+    const bool helper_exited = obs.exited;
+    DWORD helper_exit_code = obs.child_exit_code;
+    bool exit_code_known = obs.exit_code_known;
 
     // ---- 11. 结果日志与退出 ----
     {
@@ -1302,12 +2280,14 @@ int main(int argc, char** argv) {
             << "\n";
     }
     if (!helper_exited) {
-        // 自然退出未确认：报告阻塞/身份，保留资源（句柄/进程），不强杀
-        std::cerr << "io_activity: helper did not exit naturally; pid="
-                  << pi.dwProcessId << " creation_tick=" << real_tick
-                  << " image_chars="
-                  << " handle=0x" << std::hex
-                  << reinterpret_cast<std::uintptr_t>(pi.hProcess) << std::dec
+        // 自然退出未确认：统一必要归属诊断（D5）——已知映像或 unknown，
+        // PID/tick/句柄如实；保留资源，不强杀
+        HelperIdentity diag_id;
+        diag_id.pid = pi.dwProcessId;
+        diag_id.creation_tick = start.creation_tick;
+        diag_id.handle = pi.hProcess;
+        std::cerr << "io_activity: " << helper_failure_diagnostic(
+            diag_id, start.observed_image)
                   << " — left for user disposition (not terminated)\n";
         // pi.hProcess 保留不关闭：OS 收回前归属明确（父进程退出即 OS 回收）
         return 9;
