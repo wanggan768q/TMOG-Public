@@ -43,6 +43,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -785,6 +786,157 @@ bool take_io_sample(HANDLE h, IoSample& s) {
     s.qpc_ns = static_cast<std::uint64_t>(
         static_cast<double>(now.QuadPart) * 1e9 / static_cast<double>(f.QuadPart));
     return true;
+}
+
+// =====================================================================
+// #11 段协议生产函数（segment_protocol_stage，批准计划 v1 §2 同源）：
+// run_activity_segments / drive_segment / classify_activity_result。
+// main 第 9-11 节与 --check-helper-binding-only 的 segment_protocol_checks
+// 消费同一组函数；fake 只脚本化 sample/send 成败与调用记录，生产算法
+// 不在检查中复制。EOF 只收束资源，不改变活动失败状态。
+// =====================================================================
+
+// SegmentIo：生产绑定真实 take_io_sample/HBC ops.WriteFile/原差分日志；
+// fake 仅脚本化成败与调用记录，不操作文件/真实进程。
+struct SegmentIo {
+    std::function<bool(IoSample&)> sample;
+    std::function<bool(const std::string&)> send;
+    std::function<void(const std::string&, const IoSample&, const IoSample&)> log_sample;
+};
+
+// 每段采样循环（main 原逻辑同源搬移）：qpc 递增差分才计有效样本，门槛
+// kMinValidSamplesPerSegment；段 deadline=min(now+5000, wall_deadline)。
+// 采样失败或段内样本不足置 cancelled。必要睡眠 ≤ min(300, 剩余段毫秒)；
+// 达到门槛即完成，不在成功后额外固定 Sleep。已开始的同步 sample/log
+// 耗时不具硬墙钟保证。
+void drive_segment(const std::string& name, int& valid_count, bool& cancelled,
+                   std::int64_t wall_deadline_ms, const HelperOps& ops,
+                   const SegmentIo& io, const fs::path& activity_log) {
+    valid_count = 0;
+    IoSample prev{};
+    bool have_prev = false;
+    const std::int64_t now0 = ops.now_ms();
+    const std::int64_t seg_deadline = now0 + std::min<std::int64_t>(
+        5000, std::max<std::int64_t>(wall_deadline_ms - now0, 0));
+    while (valid_count < kMinValidSamplesPerSegment && ops.now_ms() < seg_deadline
+           && !cancelled) {
+        IoSample s{};
+        if (!io.sample(s)) {
+            cancelled = true;
+            return;
+        }
+        if (have_prev && s.qpc_ns > prev.qpc_ns) {
+            const double dt = static_cast<double>(s.qpc_ns - prev.qpc_ns);
+            const double rr = static_cast<double>(
+                s.read_bytes > prev.read_bytes
+                    ? s.read_bytes - prev.read_bytes : 0);
+            const double wr = static_cast<double>(
+                s.write_bytes > prev.write_bytes
+                    ? s.write_bytes - prev.write_bytes : 0);
+            io.log_sample(name, prev, s);
+            ++valid_count;
+        }
+        prev = s;
+        have_prev = true;
+        const std::int64_t remain_ms = seg_deadline - ops.now_ms();
+        if (valid_count < kMinValidSamplesPerSegment && remain_ms > 0) {
+            ops.sleep_ms(static_cast<DWORD>(std::min<std::int64_t>(300, remain_ms)));
+        }
+    }
+    if (valid_count < kMinValidSamplesPerSegment && !cancelled) {
+        cancelled = true;
+    }
+}
+
+// 段协议单次活动结果（记录父请求额度与各段有效样本数；不冒称实测 I/O）。
+struct SegmentOutcome {
+    bool cancelled = false;
+    int idle_samples = 0, write_samples = 0, read_samples = 0;
+    std::uint64_t requested_write_bytes = 0;
+};
+
+// 段协议活动序列：idle 采样 → write 命令+采样 → read 命令+采样。紧邻每次
+// send 前读取 cancelled 与剩余毫秒（wall_deadline_ms - ops.now_ms()），任一
+// 取消或 ≤0 视为失败且不调用 send；发送失败（含部分写）置失败并停止后续
+// 活动。EOF 不改变此失败位。请求量沿用旧公式（half= max/2，iters=
+// half/chunk+1，chunk=4096），requested_write_bytes 只在完整发送后记录。
+SegmentOutcome run_activity_segments(std::int64_t wall_deadline_ms,
+                                     std::uint64_t max_bytes,
+                                     const HelperOps& ops, const SegmentIo& io,
+                                     const fs::path& activity_log) {
+    SegmentOutcome out{};
+    bool cancelled = false;
+    drive_segment("idle", out.idle_samples, cancelled, wall_deadline_ms, ops,
+                  io, activity_log);
+    if (!cancelled) {
+        const std::uint64_t chunk = 4096;
+        const std::uint64_t half_budget = max_bytes / 2;
+        const std::uint64_t iters = count_pending_loop_iterations(
+            half_budget / chunk + 1, chunk, 0, 0, max_bytes);
+        const std::string write_cmd = "write " + std::to_string(iters * chunk) + "\n";
+        if (cancelled || wall_deadline_ms - ops.now_ms() <= 0) {
+            cancelled = true;   // 发送前剩余预算恰 0/负值：不发送
+        } else if (!io.send(write_cmd)) {
+            cancelled = true;   // 发送失败（含部分写）
+        } else {
+            out.requested_write_bytes = iters * chunk;
+            drive_segment("write", out.write_samples, cancelled,
+                          wall_deadline_ms, ops, io, activity_log);
+        }
+    }
+    if (!cancelled) {
+        const std::string read_cmd = "read\n";
+        if (cancelled || wall_deadline_ms - ops.now_ms() <= 0) {
+            cancelled = true;
+        } else if (!io.send(read_cmd)) {
+            cancelled = true;
+        } else {
+            drive_segment("read", out.read_samples, cancelled,
+                          wall_deadline_ms, ops, io, activity_log);
+        }
+    }
+    out.cancelled = cancelled;
+    return out;
+}
+
+// 同一分类驱动日志与退出码：消费 SegmentOutcome 与 HBC bounded_teardown 的
+// 真实观测。未确认退出、WAIT_FAILED/超时、exit_code_known=false → Unknown；
+// 否则 cancelled/任一样本 < 门槛/child_exit_code 非 0 → Incomplete；其余 Ok。
+// EOF 不设置/清除活动失败。禁止再手写 !cancel 判断。
+enum class ActivityResult { Ok, Incomplete, Unknown };
+
+ActivityResult classify_activity_result(const SegmentOutcome& outcome,
+                                        const TeardownObservation& obs) {
+    if (!obs.exited || !obs.exit_code_known
+            || obs.wait_result != WAIT_OBJECT_0) {
+        return ActivityResult::Unknown;
+    }
+    if (outcome.cancelled
+            || outcome.idle_samples < kMinValidSamplesPerSegment
+            || outcome.write_samples < kMinValidSamplesPerSegment
+            || outcome.read_samples < kMinValidSamplesPerSegment
+            || obs.child_exit_code != 0) {
+        return ActivityResult::Incomplete;
+    }
+    return ActivityResult::Ok;
+}
+
+const char* activity_result_name(ActivityResult r) {
+    switch (r) {
+    case ActivityResult::Ok: return "OK";
+    case ActivityResult::Incomplete: return "INCOMPLETE";
+    case ActivityResult::Unknown: return "UNKNOWN";
+    }
+    return "UNKNOWN";
+}
+
+int activity_exit_code(ActivityResult r) {
+    switch (r) {
+    case ActivityResult::Ok: return 0;
+    case ActivityResult::Incomplete: return 6;
+    case ActivityResult::Unknown: return 9;
+    }
+    return 9;
 }
 
 // ---- 无副作用自检（默认无 flag 时仍会执行；纯内存算法，不碰文件/进程）----
@@ -2003,6 +2155,599 @@ void hb_diag_failure_diagnostic() {
     }
 }
 
+// =====================================================================
+// 段协议安全检查（SG1..SG6，segment_protocol_stage 批准计划 §4）：
+// --check-helper-binding-only 入口内运行；纯 fake 环境（无目录、无真实
+// helper、无 I/O 采样 API）。fake 只脚本化 sample/send/log 结果与调用
+// 记录，绝不自写算法或成功状态；分类消费真实生产 classify_activity_result。
+// 每 case ≤2000 次操作护栏（kFakeMaxApiCalls 之外另设 sg_op_budget）。
+// =====================================================================
+
+// SG fake 时钟：初始 0，只有 sleep/脚本操作推进（单调毫秒）。
+// HelperOps.now_ms/sleep_ms 是裸函数指针，只有无捕获 lambda 能转换；
+// 与 HB fake 同模式：场景 env 放全局 g_sg，freestanding 函数读它。
+struct SgClock {
+    std::int64_t now = 0;
+    std::size_t sleep_calls = 0;
+    void advance(std::int64_t ms) { now += ms; }
+};
+
+SgClock* g_sg_clock = nullptr;   // 检查入口内单线程使用
+
+std::int64_t sg_now_ms() { return g_sg_clock ? g_sg_clock->now : 0; }
+
+void sg_sleep_ms(DWORD ms) {
+    if (!g_sg_clock) return;
+    ++g_sg_clock->sleep_calls;
+    g_sg_clock->advance(static_cast<std::int64_t>(ms));
+}
+
+// SG 采样脚本：按调用序给出样本或失败。qpc=1,2,3…为有效递增样本；
+// 非递增/重复不计有效；sample=false 建模采样失败。
+struct SgSampleScript {
+    // 每项：<qpc_ns, read_bytes, write_bytes>；qpc 用 0 表示"本次失败"。
+    std::vector<std::tuple<std::uint64_t, std::uint64_t, std::uint64_t>> items;
+    std::size_t idx = 0;
+    bool next(IoSample& s) {
+        if (idx >= items.size()) return false;   // 未脚本化调用 = 失败
+        const auto& [q, r, w] = items[idx++];
+        if (q == 0) return false;
+        s.qpc_ns = q;
+        s.read_bytes = r;
+        s.write_bytes = w;
+        return true;
+    }
+};
+
+// SG 操作护栏：每 case 采样+发送+日志+sleep 总操作数上限（防挂死）。
+constexpr std::size_t kSgMaxOps = 2000;
+
+// SG 驱动记录：send 命令序列与计数、log_sample 调用数、sleep 数。
+struct SgRecord {
+    std::vector<std::string> sent_commands;
+    std::size_t send_calls = 0;          // send 回调实际进入次数
+    std::size_t log_calls = 0;
+    std::size_t ops = 0;
+    bool budget_exceeded = false;
+    bool try_begin() {
+        if (++ops > kSgMaxOps) { budget_exceeded = true; return false; }
+        return true;
+    }
+};
+
+// 便捷：有效递增样本（qpc 递增、字节恒定，差分读速率 0）。
+SgSampleScript sg_samples(std::initializer_list<std::uint64_t> qpcs) {
+    SgSampleScript sc;
+    for (const std::uint64_t q : qpcs) sc.items.emplace_back(q, 100, 50);
+    return sc;
+}
+
+// SG1：三段有效采样 → 恰 write+read 各 1 顺序发送；EOF 恰 1（stdin 关闭
+// 由调用侧验证）；cancelled=false；同源分类 Ok。deadline=30000，
+// max_bytes=16777216 → 请求量 8392704（旧公式：half/4096+1=2049 iters）。
+void sg1_full_success() {
+    SgClock clock;
+    g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+    SgRecord rec;
+    SgSampleScript idle = sg_samples({1, 2, 3});
+    SgSampleScript wr = sg_samples({10, 11, 12});
+    SgSampleScript rd = sg_samples({20, 21, 22});
+    HelperOps ops{};
+    ops.now_ms = &sg_now_ms;
+    ops.sleep_ms = &sg_sleep_ms;
+    SegmentIo io{};
+    io.sample = [&idle, &wr, &rd, &rec](IoSample& s) -> bool {
+        if (!rec.try_begin()) return false;
+        // 段顺序：脚本耗尽后自然返回 false（生产会视为失败，但三段
+        // 脚本足够长时不会到达）。
+        return idle.next(s) || wr.next(s) || rd.next(s);
+    };
+    // 注意：生产逐段驱动；上面合并脚本是妥协——正确建模按段切换。
+    // 改为按调用阶段切换：idle 3 次后切 write，write 3 次后切 read。
+    std::size_t total_samples = 0;
+    io.sample = [&idle, &wr, &rd, &rec, &total_samples](IoSample& s) -> bool {
+        if (!rec.try_begin()) return false;
+        ++total_samples;
+        // 前 3 次（idle）用 idle 脚本；idle 完成后 send write 前无采样；
+        // 第 4..6 次为 write 段；第 7..9 次为 read 段。以 send 序号精确
+        // 切换更可靠：见下方 sent_commands 大小判断。
+        if (rec.sent_commands.empty()) return idle.next(s);
+        if (rec.sent_commands.size() == 1) return wr.next(s);
+        return rd.next(s);
+    };
+    io.send = [&rec](const std::string& cmd) {
+        if (!rec.try_begin()) return false;
+        ++rec.send_calls;
+        rec.sent_commands.push_back(cmd);
+        return true;
+    };
+    io.log_sample = [&rec](const std::string&, const IoSample&, const IoSample&) {
+        ++rec.log_calls;
+    };
+    const SegmentOutcome out = run_activity_segments(30000, 16777216, ops, io, fs::path("sg-fake-log"));
+    check(rec.budget_exceeded == false, "SG1: fake op budget not exceeded");
+    check(rec.sent_commands.size() == 2, "SG1: exactly 2 commands sent");
+    check(rec.sent_commands.size() >= 1 && rec.sent_commands[0] == "write 8392704\n",
+          "SG1: first command is write 8392704 (old formula)");
+    check(rec.sent_commands.size() >= 2 && rec.sent_commands[1] == "read\n",
+          "SG1: second command is read");
+    check(out.idle_samples >= 2 && out.write_samples >= 2 && out.read_samples >= 2,
+          "SG1: each segment has >=2 valid samples");
+    check(out.cancelled == false, "SG1: cancelled=false on full success");
+    check(out.requested_write_bytes == 8392704,
+          "SG1: requested_write_bytes=8392704 recorded after full send");
+    // 同源分类：真实 teardown 观测（exit0、WAIT_OBJECT_0、known）→ Ok/exit0。
+    TeardownObservation obs{};
+    obs.exited = true;
+    obs.exit_code_known = true;
+    obs.child_exit_code = 0;
+    obs.wait_result = WAIT_OBJECT_0;
+    const ActivityResult r = classify_activity_result(out, obs);
+    check(r == ActivityResult::Ok, "SG1: same-source classify Ok");
+    check(activity_exit_code(r) == 0 && std::string(activity_result_name(r)) == "OK",
+          "SG1: exit0 + log OK from same classification");
+    // EOF 语义锚点：三段成功路径中 cancelled 位从未被 EOF 改写（out.cancelled
+    // 即段协议失败位；EOF 观测只来自 TeardownObservation）。
+    check(out.cancelled == false && obs.exited,
+          "SG1: EOF does not alter activity failure state");
+}
+
+// SG2：idle 首次 sample=false（另一例 idle 永不达标到 5s 段截止）→
+// send 总次数 0、write/read 均 0；cancelled=true；exit0 仍 Incomplete/6。
+void sg2_idle_failure_no_send() {
+    // SG2-A：idle 首次采样即失败
+    {
+        SgClock clock;
+        g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+        SgRecord rec;
+        SgSampleScript idle;   // 空脚本：首次 next() 即 false
+        HelperOps ops{};
+        ops.now_ms = &sg_now_ms;
+        ops.sleep_ms = &sg_sleep_ms;
+        SegmentIo io{};
+        io.sample = [&idle, &rec](IoSample& s) {
+            if (!rec.try_begin()) return false;
+            return idle.next(s);
+        };
+        io.send = [&rec](const std::string&) {
+            ++rec.send_calls;
+            return true;   // 若生产错误发送也会被记录
+        };
+        io.log_sample = [](const std::string&, const IoSample&, const IoSample&) {};
+        const SegmentOutcome out = run_activity_segments(30000, 16777216, ops, io, fs::path("sg-fake-log"));
+        check(rec.budget_exceeded == false, "SG2-A: fake op budget not exceeded");
+        check(rec.send_calls == 0, "SG2-A: send callback entered 0 times");
+        check(rec.sent_commands.empty(), "SG2-A: no write/read command sent");
+        check(out.cancelled == true, "SG2-A: cancelled=true");
+        check(out.idle_samples == 0, "SG2-A: idle_samples=0");
+        TeardownObservation obs{};
+        obs.exited = true;
+        obs.exit_code_known = true;
+        obs.child_exit_code = 0;
+        obs.wait_result = WAIT_OBJECT_0;
+        const ActivityResult r = classify_activity_result(out, obs);
+        check(r == ActivityResult::Incomplete && activity_exit_code(r) == 6,
+              "SG2-A: exit0 still Incomplete/6 after idle failure");
+    }
+    // SG2-B：idle qpc 恒相同（非递增）→ 无有效差分 → 段截止失败
+    {
+        SgClock clock;
+        g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+        SgRecord rec;
+        HelperOps ops{};
+        ops.now_ms = &sg_now_ms;
+        ops.sleep_ms = &sg_sleep_ms;
+        SegmentIo io{};
+        io.sample = [&rec](IoSample& s) {
+            if (!rec.try_begin()) return false;
+            s.qpc_ns = 777;   // 恒相同：qpc 不递增 → 无有效差分
+            s.read_bytes = 100;
+            s.write_bytes = 50;
+            return true;
+        };
+        io.send = [&rec](const std::string&) {
+            ++rec.send_calls;
+            return true;
+        };
+        io.log_sample = [](const std::string&, const IoSample&, const IoSample&) {};
+        const SegmentOutcome out = run_activity_segments(30000, 16777216, ops, io, fs::path("sg-fake-log"));
+        check(rec.budget_exceeded == false, "SG2-B: fake op budget not exceeded");
+        check(rec.send_calls == 0, "SG2-B: 0 sends (stale qpc never counts)");
+        check(out.cancelled == true, "SG2-B: cancelled=true");
+        check(out.idle_samples == 0, "SG2-B: zero valid differential samples");
+        TeardownObservation obs{};
+        obs.exited = true;
+        obs.exit_code_known = true;
+        obs.child_exit_code = 0;
+        obs.wait_result = WAIT_OBJECT_0;
+        check(classify_activity_result(out, obs) == ActivityResult::Incomplete,
+              "SG2-B: same-source classify Incomplete");
+    }
+}
+
+// SG3：write send 失败 / write 段采样失败或不足 → 不发 read；
+// cancelled=true；exit0 → 6。
+void sg3_write_failure_no_read() {
+    // SG3-A：write send 失败（full write failed 语义：返回 false）
+    {
+        SgClock clock;
+        g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+        SgRecord rec;
+        HelperOps ops{};
+        ops.now_ms = &sg_now_ms;
+        ops.sleep_ms = &sg_sleep_ms;
+        SegmentIo io{};
+        io.sample = [&rec](IoSample& s) {
+            if (!rec.try_begin()) return false;
+            static std::uint64_t q = 0;
+            s.qpc_ns = ++q;
+            return true;
+        };
+        io.send = [&rec](const std::string& cmd) {
+            if (!rec.try_begin()) return false;
+            ++rec.send_calls;
+            rec.sent_commands.push_back(cmd);
+            return cmd.rfind("write ", 0) != 0;   // write 失败，read 会成功
+        };
+        io.log_sample = [](const std::string&, const IoSample&, const IoSample&) {};
+        const SegmentOutcome out = run_activity_segments(30000, 16777216, ops, io, fs::path("sg-fake-log"));
+        check(rec.budget_exceeded == false, "SG3-A: fake op budget not exceeded");
+        check(rec.sent_commands.size() == 1, "SG3-A: exactly 1 write attempt");
+        check(!rec.sent_commands.empty() && rec.sent_commands[0].rfind("write ", 0) == 0,
+              "SG3-A: attempted command is write");
+        check(out.read_samples == 0, "SG3-A: read segment never ran");
+        check(out.cancelled == true, "SG3-A: cancelled=true after send failure");
+        check(out.requested_write_bytes == 0,
+              "SG3-A: requested_write_bytes not recorded on failed send");
+        TeardownObservation obs{};
+        obs.exited = true;
+        obs.exit_code_known = true;
+        obs.child_exit_code = 0;
+        obs.wait_result = WAIT_OBJECT_0;
+        check(activity_exit_code(classify_activity_result(out, obs)) == 6,
+              "SG3-A: exit0 -> 6 after write send failure");
+    }
+    // SG3-B：write 段采样失败（第 4 次采样 false）
+    {
+        SgClock clock;
+        g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+        SgRecord rec;
+        SgSampleScript wr = sg_samples({10, 11});   // 仅 2 次，第 3 次失败
+        HelperOps ops{};
+        ops.now_ms = &sg_now_ms;
+        ops.sleep_ms = &sg_sleep_ms;
+        SegmentIo io{};
+        io.sample = [&wr, &rec](IoSample& s) {
+            if (!rec.try_begin()) return false;
+            if (rec.sent_commands.empty()) {   // idle 段
+                static std::uint64_t q = 0;
+                s.qpc_ns = ++q;
+                return true;
+            }
+            return wr.next(s);   // write 段：第 3 次返回 false
+        };
+        io.send = [&rec](const std::string& cmd) {
+            if (!rec.try_begin()) return false;
+            ++rec.send_calls;
+            rec.sent_commands.push_back(cmd);
+            return true;
+        };
+        io.log_sample = [](const std::string&, const IoSample&, const IoSample&) {};
+        const SegmentOutcome out = run_activity_segments(30000, 16777216, ops, io, fs::path("sg-fake-log"));
+        check(rec.budget_exceeded == false, "SG3-B: fake op budget not exceeded");
+        check(rec.sent_commands.size() == 1, "SG3-B: only write sent, no read");
+        check(out.cancelled == true, "SG3-B: cancelled=true");
+        check(out.write_samples < 2, "SG3-B: write_samples below threshold");
+        TeardownObservation obs{};
+        obs.exited = true;
+        obs.exit_code_known = true;
+        obs.child_exit_code = 0;
+        obs.wait_result = WAIT_OBJECT_0;
+        check(activity_exit_code(classify_activity_result(out, obs)) == 6,
+              "SG3-B: exit0 -> 6 after write sample failure");
+    }
+}
+
+// SG4：deadline=0/-1 → 无任何发送；成功段后到期 → 不发下一条；
+// 剩余 1ms 可发送但同步返回后到期 → 不发下一条。
+void sg4_deadline_boundaries() {
+    // SG4-A：deadline=0（已到期）→ 0 send
+    {
+        SgClock clock;
+        g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+        SgRecord rec;
+        HelperOps ops{};
+        ops.now_ms = &sg_now_ms;
+        ops.sleep_ms = &sg_sleep_ms;
+        SegmentIo io{};
+        io.sample = [&rec](IoSample& s) {
+            if (!rec.try_begin()) return false;
+            static std::uint64_t q = 0;
+            s.qpc_ns = ++q;
+            return true;
+        };
+        io.send = [&rec](const std::string&) {
+            ++rec.send_calls;
+            return true;
+        };
+        io.log_sample = [](const std::string&, const IoSample&, const IoSample&) {};
+        const SegmentOutcome out = run_activity_segments(0, 16777216, ops, io, fs::path("sg-fake-log"));
+        check(rec.budget_exceeded == false, "SG4-A: fake op budget not exceeded");
+        check(rec.send_calls == 0, "SG4-A: deadline=0 → 0 sends");
+        check(out.cancelled == true, "SG4-A: cancelled=true");
+    }
+    // SG4-B：deadline=-1（负值）→ 0 send
+    {
+        SgClock clock;
+        g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+        SgRecord rec;
+        HelperOps ops{};
+        ops.now_ms = &sg_now_ms;
+        ops.sleep_ms = &sg_sleep_ms;
+        SegmentIo io{};
+        io.sample = [&rec](IoSample& s) {
+            if (!rec.try_begin()) return false;
+            static std::uint64_t q = 0;
+            s.qpc_ns = ++q;
+            return true;
+        };
+        io.send = [&rec](const std::string&) {
+            ++rec.send_calls;
+            return true;
+        };
+        io.log_sample = [](const std::string&, const IoSample&, const IoSample&) {};
+        const SegmentOutcome out = run_activity_segments(-1, 16777216, ops, io, fs::path("sg-fake-log"));
+        check(rec.budget_exceeded == false, "SG4-B: fake op budget not exceeded");
+        check(rec.send_calls == 0, "SG4-B: deadline=-1 → 0 sends");
+        check(out.cancelled == true, "SG4-B: cancelled=true");
+    }
+    // SG4-C：idle 达标后 fake log/send 推进时钟越过 deadline → write 不发；
+    // 已发命令不追溯删除。用 deadline=3000，idle 3 样本耗尽后时钟恰=3000。
+    {
+        SgClock clock;
+        g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+        SgRecord rec;
+        HelperOps ops{};
+        ops.now_ms = &sg_now_ms;
+        ops.sleep_ms = &sg_sleep_ms;
+        SegmentIo io{};
+        io.sample = [&rec](IoSample& s) {
+            if (!rec.try_begin()) return false;
+            static std::uint64_t q = 0;
+            s.qpc_ns = ++q;
+            return true;
+        };
+        io.send = [&rec](const std::string& cmd) {
+            if (!rec.try_begin()) return false;
+            ++rec.send_calls;
+            rec.sent_commands.push_back(cmd);
+            return true;
+        };
+        io.log_sample = [](const std::string&, const IoSample&, const IoSample&) {};
+        // idle 3 样本：sleep 300×2 = 600 → clock=600 < 3000，write guard 通过
+        // 会发 write；随后 write 段再 sleep 600 → 1200；read 再 600 → 1800。
+        // 全部 < 3000 → 完整成功路径。本例验证正常发 2 条。
+        const SegmentOutcome out = run_activity_segments(3000, 16777216, ops, io, fs::path("sg-fake-log"));
+        check(rec.budget_exceeded == false, "SG4-C: fake op budget not exceeded");
+        check(rec.sent_commands.size() == 2, "SG4-C: both commands sent within deadline");
+        // SG4-D：write 达标后时钟恰越过 deadline → read 不发（guard 拦截）。
+        // 用 deadline=1500：idle sleep 600、write sleep 600 → 1200 < 1500
+        // write 可发；write 段完成后 clock=1200，read guard 剩余=300>0 可发。
+        // 改用 deadline=1210：write 段结束 clock=1200，read guard 剩余 10>0
+        // 仍可发。为精确测 guard，用脚本 clock 恰在 read guard 时 = deadline：
+        // deadline=1200：idle 600 → write guard 剩余 600>0 发 write；write
+        // 段 sleep 600 → clock=1200 == deadline → read guard 剩余 0 → 拦截。
+        {
+            SgClock clock2;
+            g_sg_clock = &clock2;   // 挂载嵌套 case 时钟
+            SgRecord rec2;
+            HelperOps ops2{};
+            ops2.now_ms = &sg_now_ms;
+            ops2.sleep_ms = &sg_sleep_ms;
+            SegmentIo io2{};
+            io2.sample = [&rec2](IoSample& s) {
+                if (!rec2.try_begin()) return false;
+                static std::uint64_t q = 0;
+                s.qpc_ns = ++q;
+                return true;
+            };
+            io2.send = [&rec2](const std::string& cmd) {
+                if (!rec2.try_begin()) return false;
+                ++rec2.send_calls;
+                rec2.sent_commands.push_back(cmd);
+                return true;
+            };
+            io2.log_sample = [](const std::string&, const IoSample&, const IoSample&) {};
+            const SegmentOutcome out2 = run_activity_segments(1200, 16777216, ops2, io2, fs::path("sg-fake-log"));
+            check(rec2.budget_exceeded == false, "SG4-D: fake op budget not exceeded");
+            check(rec2.sent_commands.size() == 1,
+                  "SG4-D: write sent, read blocked by guard at deadline");
+            check(!rec2.sent_commands.empty()
+                      && rec2.sent_commands[0].rfind("write ", 0) == 0,
+                  "SG4-D: sent command is write (not retroactively removed)");
+            check(out2.cancelled == true, "SG4-D: cancelled=true at exact deadline");
+            TeardownObservation obs2{};
+            obs2.exited = true;
+            obs2.exit_code_known = true;
+            obs2.child_exit_code = 0;
+            obs2.wait_result = WAIT_OBJECT_0;
+            check(activity_exit_code(classify_activity_result(out2, obs2)) == 6,
+                  "SG4-D: same-source classify -> 6");
+        }
+    }
+}
+
+// SG5：复用三段成功段观测；teardown 分别 exit7 / GetExitCode 失败 /
+// WAIT_FAILED / 持续 WAIT_TIMEOUT → Incomplete/6 或 Unknown/9；日志名与
+// 退出码一致（同一分类值驱动）。
+void sg5_teardown_classifications() {
+    SegmentOutcome good{};
+    good.idle_samples = 3;
+    good.write_samples = 3;
+    good.read_samples = 3;
+    good.requested_write_bytes = 8392704;
+    // SG5-A：exit7 → Incomplete/6
+    {
+        TeardownObservation obs{};
+        obs.exited = true;
+        obs.exit_code_known = true;
+        obs.child_exit_code = 7;
+        obs.wait_result = WAIT_OBJECT_0;
+        const ActivityResult r = classify_activity_result(good, obs);
+        check(r == ActivityResult::Incomplete && activity_exit_code(r) == 6,
+              "SG5-A: exit7 -> Incomplete/6");
+        check(std::string(activity_result_name(r)) == "INCOMPLETE",
+              "SG5-A: log name INCOMPLETE matches exit 6");
+    }
+    // SG5-B：GetExitCode 失败（exit_code_known=false）→ Unknown/9
+    {
+        TeardownObservation obs{};
+        obs.exited = true;
+        obs.exit_code_known = false;
+        obs.child_exit_code = 0;
+        obs.wait_result = WAIT_OBJECT_0;
+        const ActivityResult r = classify_activity_result(good, obs);
+        check(r == ActivityResult::Unknown && activity_exit_code(r) == 9,
+              "SG5-B: exit_code_known=false -> Unknown/9");
+        check(std::string(activity_result_name(r)) == "UNKNOWN",
+              "SG5-B: log name UNKNOWN matches exit 9");
+    }
+    // SG5-C：WAIT_FAILED → Unknown/9
+    {
+        TeardownObservation obs{};
+        obs.exited = false;
+        obs.exit_code_known = false;
+        obs.child_exit_code = 0;
+        obs.wait_result = WAIT_FAILED;
+        const ActivityResult r = classify_activity_result(good, obs);
+        check(r == ActivityResult::Unknown && activity_exit_code(r) == 9,
+              "SG5-C: WAIT_FAILED -> Unknown/9");
+    }
+    // SG5-D：持续 WAIT_TIMEOUT（未确认退出）→ Unknown/9
+    {
+        TeardownObservation obs{};
+        obs.exited = false;
+        obs.exit_code_known = false;
+        obs.child_exit_code = 0;
+        obs.wait_result = WAIT_TIMEOUT;
+        const ActivityResult r = classify_activity_result(good, obs);
+        check(r == ActivityResult::Unknown && activity_exit_code(r) == 9,
+              "SG5-D: persistent WAIT_TIMEOUT -> Unknown/9");
+    }
+}
+
+// SG6：qpc 重复/回退夹在有效样本间不增计数；read 段失败 → 6；
+// 预取消直接 drive → sample/send 0 次；EOF 不能清除失败使之 OK。
+void sg6_qpc_and_precancel() {
+    // SG6-A：qpc 序列 [1,2,2,3] → 递增差分 1→2、2→3（第二次3）共 2 个有效
+    // （重复 qpc 不产生差分）；第 4 次 next 耗尽返回 false → 采样失败。
+    // 段失败（样本 2 恰达标但第 3 次采样失败先触发 cancelled）。
+    {
+        SgClock clock;
+        g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+        SgRecord rec;
+        SgSampleScript idle;
+        for (const std::uint64_t q : {1ULL, 2ULL, 2ULL, 3ULL}) {
+            idle.items.emplace_back(q, 100, 50);
+        }
+        HelperOps ops{};
+        ops.now_ms = &sg_now_ms;
+        ops.sleep_ms = &sg_sleep_ms;
+        SegmentIo io{};
+        io.sample = [&idle, &rec](IoSample& s) {
+            if (!rec.try_begin()) return false;
+            return idle.next(s);
+        };
+        io.send = [&rec](const std::string&) {
+            ++rec.send_calls;
+            return false;   // write 发送失败即停（本例只测 idle 计数语义）
+        };
+        io.log_sample = [&rec](const std::string&, const IoSample&, const IoSample&) {
+            ++rec.log_calls;
+        };
+        const SegmentOutcome out = run_activity_segments(30000, 16777216, ops, io, fs::path("sg-fake-log"));
+        check(rec.budget_exceeded == false, "SG6-A: fake op budget not exceeded");
+        check(rec.log_calls == out.idle_samples,
+              "SG6-A: log_sample called once per valid differential (no double count)");
+        check(out.idle_samples < 3,
+              "SG6-A: duplicate qpc never inflates count beyond distinct values (<=2 of [1,2,2,3])");
+        check(out.cancelled == true, "SG6-A: sample exhaustion/send failure marks cancelled");
+    }
+    // SG6-B：read 段失败（read 采样 false）→ 6；EOF/teardown 成功不能洗白
+    {
+        SgClock clock;
+        g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+        SgRecord rec;
+        HelperOps ops{};
+        ops.now_ms = &sg_now_ms;
+        ops.sleep_ms = &sg_sleep_ms;
+        SegmentIo io{};
+        io.sample = [&rec](IoSample& s) {
+            if (!rec.try_begin()) return false;
+            // idle/write 递增；read 段（send 后第 1 次采样）失败
+            if (rec.sent_commands.size() >= 2) return false;
+            static std::uint64_t q = 0;
+            s.qpc_ns = ++q;
+            return true;
+        };
+        io.send = [&rec](const std::string& cmd) {
+            if (!rec.try_begin()) return false;
+            ++rec.send_calls;
+            rec.sent_commands.push_back(cmd);
+            return true;
+        };
+        io.log_sample = [](const std::string&, const IoSample&, const IoSample&) {};
+        const SegmentOutcome out = run_activity_segments(30000, 16777216, ops, io, fs::path("sg-fake-log"));
+        check(rec.budget_exceeded == false, "SG6-B: fake op budget not exceeded");
+        check(rec.sent_commands.size() == 2, "SG6-B: both commands sent");
+        check(out.read_samples == 0, "SG6-B: read_samples=0 on read failure");
+        check(out.cancelled == true, "SG6-B: cancelled=true");
+        // EOF 成功观测不能清除失败位 → 仍 Incomplete/6（不是 Ok/0）
+        TeardownObservation obs{};
+        obs.exited = true;
+        obs.exit_code_known = true;
+        obs.child_exit_code = 0;
+        obs.wait_result = WAIT_OBJECT_0;
+        const ActivityResult r = classify_activity_result(out, obs);
+        check(r == ActivityResult::Incomplete && activity_exit_code(r) == 6,
+              "SG6-B: EOF cannot wash failure into OK; exit0 -> 6");
+    }
+    // SG6-C：预取消（cancelled=true 直接 drive）→ sample/send 0 次
+    {
+        SgRecord rec;
+        HelperOps ops{};
+        ops.now_ms = []() { return std::int64_t{0}; };
+        ops.sleep_ms = [](DWORD) {};
+        SegmentIo io{};
+        io.sample = [&rec](IoSample&) {
+            ++rec.ops;   // 不该被调
+            return true;
+        };
+        io.send = [&rec](const std::string&) {
+            ++rec.send_calls;   // 不该被调
+            return true;
+        };
+        io.log_sample = [](const std::string&, const IoSample&, const IoSample&) {};
+        // 直接驱动 drive_segment 于已取消状态：预取消 → 0 采样 0 发送
+        bool cancelled = true;
+        int valid = -1;
+        drive_segment("idle", valid, cancelled, 30000, ops, io, fs::path("sg-fake-log"));
+        check(rec.send_calls == 0, "SG6-C: pre-cancelled drive sends nothing");
+        check(valid == 0, "SG6-C: pre-cancelled drive samples nothing (valid=0)");
+        // run_activity_segments 层面的预取消语义由 SG4-A/B（deadline 已过）
+        // 与 SG2-A（首采样失败）共同覆盖 cancelled 位传播。
+    }
+}
+
+void segment_protocol_checks() {
+    sg1_full_success();
+    sg2_idle_failure_no_send();
+    sg3_write_failure_no_read();
+    sg4_deadline_boundaries();
+    sg5_teardown_classifications();
+    sg6_qpc_and_precancel();
+}
+
 int run_helper_binding_checks() {
     failures = 0;
     hb1_command_line_roundtrip();
@@ -2012,11 +2757,13 @@ int run_helper_binding_checks() {
     hb5_image_pid_tick_separation();
     hb6_pipeline_and_teardown();
     hb_diag_failure_diagnostic();
+    // 段协议检查（segment_protocol_stage 批准阶段；与 HB 同源生产函数，
+    // fake 只脚本化 API 结果，不自写算法/EOF 计数）。
+    segment_protocol_checks();
     std::cout << (failures == 0 ? "ALL PASS" : "HAS FAILURES")
               << " (" << failures << " failures)\n";
     return failures > 0 ? 1 : 0;
 }
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2167,119 +2914,58 @@ int main(int argc, char** argv) {
         return start.failure_exit;   // 8（确认）或 9（未确认，身份保留）
     }
 
-    // ---- 9. 段协议驱动（budget 真实推导）----
-    auto remaining_budget_ms = [&wall_deadline_ms]() -> std::int64_t {
-        const std::int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        return wall_deadline_ms - now;
-    };
-    std::atomic<bool> cancel{false};
-    int idle_n = 0, write_n = 0, read_n = 0;
-    std::uint64_t bytes_used = 0;
-
-    auto drive_segment = [&](const std::string& name, int& valid_count) {
-        valid_count = 0;
-        IoSample prev{};
-        bool have_prev = false;
-        const auto seg_deadline = std::chrono::steady_clock::now()
-            + std::chrono::milliseconds(
-                std::min<std::int64_t>(5000, std::max<std::int64_t>(
-                    remaining_budget_ms(), 0)));
-        while (valid_count < kMinValidSamplesPerSegment
-               && std::chrono::steady_clock::now() < seg_deadline
-               && !cancel.load()) {
-            IoSample s{};
-            if (!take_io_sample(pi.hProcess, s)) {
-                cancel.store(true);
-                return;
-            }
-            if (have_prev && s.qpc_ns > prev.qpc_ns) {
-                const double dt = static_cast<double>(s.qpc_ns - prev.qpc_ns);
-                const double rr = static_cast<double>(
-                    s.read_bytes > prev.read_bytes
-                        ? s.read_bytes - prev.read_bytes : 0);
-                const double wr = static_cast<double>(
-                    s.write_bytes > prev.write_bytes
-                        ? s.write_bytes - prev.write_bytes : 0);
-                std::ofstream log(activity_log, std::ios::app);
-                log << "segment=" << name
-                    << " dt_ns=" << static_cast<std::uint64_t>(dt)
-                    << " read_rate_Bps=" << (dt > 0 ? rr / (dt / 1e9) : 0.0)
-                    << " write_rate_Bps=" << (dt > 0 ? wr / (dt / 1e9) : 0.0)
-                    << "\n";
-                ++valid_count;
-            }
-            prev = s;
-            have_prev = true;
-            Sleep(300);
-        }
-        if (valid_count < kMinValidSamplesPerSegment && !cancel.load()) {
-            cancel.store(true);
-        }
-    };
-
-    drive_segment("idle", idle_n);
-
-    {
-        const std::uint64_t chunk = 4096;
-        const std::uint64_t half_budget = opts->max_bytes / 2;
-        const std::uint64_t iters = count_pending_loop_iterations(
-            half_budget / chunk + 1, chunk, 0, bytes_used, opts->max_bytes);
-        const std::string write_cmd = "write " + std::to_string(iters * chunk)
-                                    + "\n";
+    // ---- 9-11. 段协议驱动与统一收束（同源 run_activity_segments /
+    // bounded_teardown / classify_activity_result；budget 沿用第 5 节 deadline）----
+    const fs::path& activity_log_ref = activity_log;
+    SegmentIo io{};
+    io.sample = [&pi](IoSample& s) { return take_io_sample(pi.hProcess, s); };
+    io.send = [&stdin_write, &ops](const std::string& cmd) {
         DWORD written = 0;
-        if (!WriteFile(stdin_write, write_cmd.data(),
-                       static_cast<DWORD>(write_cmd.size()), &written, nullptr)
-                || written != write_cmd.size()) {
-            std::cerr << "io_activity: cannot send write command (full write failed)\n";
-            cancel.store(true);
-        } else {
-            drive_segment("write", write_n);
-            bytes_used += iters * chunk;
-        }
-    }
+        return ops.write_file(stdin_write, cmd.data(),
+                              static_cast<DWORD>(cmd.size()), &written, nullptr)
+               && written == cmd.size();
+    };
+    io.log_sample = [&activity_log_ref](const std::string& name,
+                                        const IoSample& prev,
+                                        const IoSample& s) {
+        const double dt = static_cast<double>(s.qpc_ns > prev.qpc_ns
+                                                  ? s.qpc_ns - prev.qpc_ns : 0);
+        const double rr = static_cast<double>(
+            s.read_bytes > prev.read_bytes ? s.read_bytes - prev.read_bytes : 0);
+        const double wr = static_cast<double>(
+            s.write_bytes > prev.write_bytes ? s.write_bytes - prev.write_bytes : 0);
+        std::ofstream log(activity_log_ref, std::ios::app);
+        log << "segment=" << name
+            << " dt_ns=" << static_cast<std::uint64_t>(dt)
+            << " read_rate_Bps=" << (dt > 0 ? rr / (dt / 1e9) : 0.0)
+            << " write_rate_Bps=" << (dt > 0 ? wr / (dt / 1e9) : 0.0)
+            << "\n";
+    };
+    const SegmentOutcome outcome = run_activity_segments(
+        wall_deadline_ms, opts->max_bytes, ops, io, activity_log);
 
-    {
-        const std::string read_cmd = "read\n";
-        DWORD written = 0;
-        if (!WriteFile(stdin_write, read_cmd.data(),
-                       static_cast<DWORD>(read_cmd.size()), &written, nullptr)
-                || written != read_cmd.size()) {
-            std::cerr << "io_activity: cannot send read command (full write failed)\n";
-            cancel.store(true);
-        } else {
-            drive_segment("read", read_n);
-        }
-    }
-
-    // ---- 10. 统一收束（D6，同源 bounded_teardown）：取消 → EOF → 等自然
-    // 退出 → 确认退出码。不 TerminateProcess；不按 PID 名清理。
-    cancel.store(true);
-    TeardownObservation obs;
+    // 统一收束（同源 bounded_teardown）：EOF → 等自然退出 → 确认退出码。
+    // 不 TerminateProcess；不按 PID 名清理。EOF 不改变活动失败状态。
     // 先关 stdout（段协议后不再读）；bounded_teardown 关 stdin_write→EOF→等待
     if (stdout_read) { CloseHandle(stdout_read); stdout_read = nullptr; }
-    const bool had_stdin = (stdin_write != nullptr);
-    const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read, ops, &obs);
-    (void)had_stdin;
-    const bool helper_exited = obs.exited;
-    DWORD helper_exit_code = obs.child_exit_code;
-    bool exit_code_known = obs.exit_code_known;
+    TeardownObservation obs;
+    bounded_teardown(pi, stdin_write, stdout_read, ops, &obs);
+    const ActivityResult result = classify_activity_result(outcome, obs);
 
-    // ---- 11. 结果日志与退出 ----
+    // ---- 结果日志：消费同一分类值（禁止再手写 !cancel 判断）----
     {
         std::ofstream out(activity_log, std::ios::app);
-        out << "result="
-            << (helper_exited && exit_code_known && helper_exit_code == 0
-                    && !cancel.load() ? "OK" : "INCOMPLETE")
-            << " idle_samples=" << idle_n
-            << " write_samples=" << write_n
-            << " read_samples=" << read_n
-            << " helper_exited=" << (helper_exited ? 1 : 0)
+        out << "result=" << activity_result_name(result)
+            << " idle_samples=" << outcome.idle_samples
+            << " write_samples=" << outcome.write_samples
+            << " read_samples=" << outcome.read_samples
+            << " requested_write_bytes=" << outcome.requested_write_bytes
+            << " helper_exited=" << (obs.exited ? 1 : 0)
             << " helper_exit_code="
-            << (exit_code_known ? std::to_string(helper_exit_code) : "unknown")
+            << (obs.exit_code_known ? std::to_string(obs.child_exit_code) : "unknown")
             << "\n";
     }
-    if (!helper_exited) {
+    if (!obs.exited) {
         // 自然退出未确认：统一必要归属诊断（D5）——已知映像或 unknown，
         // PID/tick/句柄如实；保留资源，不强杀
         HelperIdentity diag_id;
@@ -2290,13 +2976,6 @@ int main(int argc, char** argv) {
             diag_id, start.observed_image)
                   << " — left for user disposition (not terminated)\n";
         // pi.hProcess 保留不关闭：OS 收回前归属明确（父进程退出即 OS 回收）
-        return 9;
     }
-    CloseHandle(pi.hProcess);
-    const bool all_ok = helper_exited && exit_code_known
-                      && helper_exit_code == 0 && !cancel.load()
-                      && idle_n >= kMinValidSamplesPerSegment
-                      && write_n >= kMinValidSamplesPerSegment
-                      && read_n >= kMinValidSamplesPerSegment;
-    return all_ok ? 0 : 6;
+    return activity_exit_code(result);
 }

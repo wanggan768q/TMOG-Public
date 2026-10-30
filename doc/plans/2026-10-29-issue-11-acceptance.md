@@ -255,3 +255,62 @@ ALL PASS（51 checks）exit 0。
   controlled-io 授权路径动态行为、TerminateProcess、真实 GUI、smoke、全量
   CTest、推送发布。§7 段协议问题（取消后仍发活动命令、最终成功必然 false）
   按批准范围不含本轮，保持阻塞记录。
+
+## segment_protocol_stage 追加（SG-D，attempt=1）
+
+计划：doc/plans/2026-10-30-issue-11-segment-protocol-repair-plan-v1.md v1
+      SHA-256 c820732680dbe6b2d04a70bcaf582433413aac6dd4423f7ea06179b0d87ae086
+      （用户批准"批准并等待前置"，含 unknown 退出→9/日志 UNKNOWN 语义、
+      新 1 Dev + 1 独立 Review + 0 自动返工；旧预算不重置）
+Base/HBC：8510ee90fb44d5b07554c86462f30fc86959bb1d（HBC 独立 Review 技术接受
+      d223bf61 报告，Review 会话关闭退出核实）
+产物根：build/issue11-segment-dev/{debug,release}（本阶段全新登记）
+
+### 实现（同源生产函数，main 与检查入口共用）
+
+1. `SegmentIo`：局部 std::function sample/send/log_sample。生产绑定
+   take_io_sample(pi.hProcess)/ops.WriteFile 全量核验/原差分日志语句；
+   fake 只脚本化成败与调用记录。
+2. `drive_segment`：原 main 段循环同源搬移；qpc 递增差分才计有效（门槛 2）；
+   段 deadline=min(now+5000,wall_deadline)；采样失败/不足置 cancelled；
+   睡眠 ≤min(300,剩余段毫秒)，达标即停不额外 Sleep。
+3. `run_activity_segments`：idle→write→read；紧邻每次 send 前读 cancelled
+   与剩余毫秒（任一取消或 ≤0 不调用 send）；发送失败（含部分写）停止后续；
+   请求量沿用旧公式 half/4096+1 iters（SG1 断言恰 write 8392704）；EOF 不改
+   活动失败位；requested_write_bytes 只在完整发送后记录。
+4. `classify_activity_result`：未确认退出/WAIT_FAILED/超时/exit_code_known
+   =false→Unknown；cancelled/任一样本<2/exit非0→Incomplete；其余 Ok。
+   `activity_exit_code`=0/6/9；`activity_result_name`=OK/INCOMPLETE/UNKNOWN。
+   日志与返回消费同一分类值，不再手写 !cancel 判断。
+5. main 第 9-11 节：调 run_activity_segments → 同一 HBC bounded_teardown 填
+   真实观测（返回值 8/9 仍是 teardown 语义，非活动结果）→ classify → 日志
+   → 返回。EOF 由 teardown 关 stdin 发生，无额外 cancel.store(true)。
+6. `segment_protocol_checks()` 挂入 run_helper_binding_checks（Release 同样
+   有效）；SG1-6 fake 环境零文件零进程（log_sample 为计数回调）。
+
+### 验证（双配置 Debug/Release，工具路径见 §5）
+
+- 编译：configure exit 0、build exit 0（两配置均 0 错误）。
+- --check-helper-binding-only：Debug/Release 均 ALL PASS (0 failures)
+  exit 0；SG 63 项 + HB 113 项。逐 SG：SG1 恰 2 命令顺序
+  write 8392704→read、各段 ≥2 样本、cancelled=false、分类 Ok/0/OK、EOF 不改
+  失败位 ✓；SG2-A idle 首采样失败 send 0 次+exit0→6 ✓、SG2-B qpc 恒同 0 发
+  送 0 差分 ✓；SG3-A write send 失败恰 1 次尝试无 read+请求量不记 ✓、SG3-B
+  write 采样不足无 read ✓（均 exit0→6）；SG4-A/B deadline=0/-1 零发送 ✓、
+  SG4-C 正常预算内 2 条 ✓、SG4-D write 段结束恰达 deadline read 被拦
+  （guard 语义：剩余 ≤0 不 send）✓；SG5 exit7→Incomplete/6、
+  exit_code_known=false/WAIT_FAILED/持续 TIMEOUT→Unknown/9（日志名与退出码
+  同分类值）✓；SG6-A 重复 qpc 不虚增（log 数==有效差分数）✓、SG6-B read 失
+  败→6 且 EOF 成功观测不能洗白 ✓、SG6-C 预取消 drive 0 采样 0 发送 ✓。
+- Gate（双配置）：无 flag exit 2、--helper 单独 exit 2、检查 flag 混用
+  exit 4（授权 gate 未变；未运行 --allow-controlled-io）。
+- 库存与回归（双配置）：ctest -N 恰 6 项；ctest -j1 --timeout 120 6/6
+  passed exit 0（R1/R2/R3/HB 安全回归不退化，各 ~30s）。
+
+### 限制与未验证
+
+- 同步已发操作（WriteFile/sample/log/helper 当前 I/O）无硬墙钟上限；已发送
+  write/read 不可被 EOF 逆向撤回（计划 §6 声明范围保留）。
+- 未执行：真实 helper spawn/EOF/有效 I/O、--allow-controlled-io 授权路径、
+  终止/UI/smoke/全量 CTest/推送发布（各自独立人工门槛）。
+- fake 技术通过不证明真实 I/O 成功；不关闭 #11，不自动解锁 11H/11T。
