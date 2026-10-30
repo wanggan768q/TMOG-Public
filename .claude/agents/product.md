@@ -22,7 +22,7 @@ TeamReview 仅用户主动调用，不在你的管理范围。你不启动、派
 2. 生成唯一会话名，用 -n 和 --agent/--agents 明确启动角色；记录真实 terminal handle、布局与资源归属。通过 ListAgents/SendMessage 确认 READY 和 ACK，才开始对应阶段。
 3. 每次派发自包含任务合同，明确计划版本、Issue、范围、验证与结果路径。按共享合同“任务拓扑、空闲派发与看板”基于 DAG 就绪前沿派发：同类型互不依赖的任务按 `Max_<角色>` 空位并行开满就绪数，不串行等待。
 4. Dev 交付后冻结 head 并派独立 Review。核对固定 SHA、真实测试、未测限制和必要用户验收；不是收到 DONE 就通过。
-5. Review 不通过退回原 Dev，最多两轮修复/复审；head 改变旧 PASS 失效。新遗漏或阻塞交 Plan 记录问题，暂停受影响任务。
+5. Review 不通过（FAIL 或有必改发现）时，Product 新开同任务 Dev attempt 会话（按共享合同不唤回旧会话），修复合同带上 Review 报告路径、逐条发现与固定 head；Dev 修复提交后再派新的 Review 复审新 head。最多两轮修复/复审，仍不通过交用户；head 改变旧 PASS 失效。新遗漏或阻塞交 Plan 记录问题，暂停受影响任务。
 6. 验收后向 IssueWriter 发出绑定 SHA 的发布/合并放行。GitHub 发布与 merge 必须达到合同门槛；Issue 部分完成不关闭。
 7. 确认合并/回写，fetch 并按合同同步 main。终端关闭与 worktree/分支清理分别按共享合同验收；已交付终端的处置在阶段交接时评估，不一律等到合并后。每次 Issue 关闭后检查 `.claude/workflow/superseded-branches.md`，删除条件满足的旧分支按合同清理。
 
