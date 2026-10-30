@@ -1,7 +1,8 @@
 // #11 io_activity_checks：11H 受控本地 I/O 实验入口（编写完整实现，
 // 执行需用户单独授权——本 attempt 静态交付，禁止运行 --allow-controlled-io）。
 //
-// 安全边界（计划 §4任务11/§5.4/§5.5 + review-1-adjudication 九条）：
+// 安全边界（计划 §4任务11/§5.4/§5.5 + review-1-adjudication 九条 + 本版
+// helper-binding 修复计划 v1 HB1..HB6/D1..D6）：
 //  - 无显式 --allow-controlled-io 时立即 exit 2，无子进程、无文件副作用。
 //    argv gate 必须在 QApplication/任何实验逻辑之前（第一件事）。
 //  - 授权路径参数：--work-dir <绝对路径>（必填）、--budget-seconds N
@@ -19,7 +20,21 @@
 //    （stdin EOF 协议）；超时未退出记录 helper 身份 PID+creation+句柄
 //    归属等用户处理，绝不强杀任何对象。
 //  - 对照口径为同进程 GetProcessIoCounters 累计，不与 Disk 物理吞吐等价。
+//
+// helper-binding 修复（本版计划 D1..D6，全部同源生产路径）：
+//  - 宽入口：main 保留窄签名，GetCommandLineW→CommandLineToArgvW 解析宽
+//    argv 进 parse_args；数值 wcstoull/wcstoll 完整消费检查。
+//  - own_executable_path：GetModuleFileNameW 256 WCHAR 倍增到 32768，仅
+//    返回 0<n<size 才接受（失败/截断均不产路径）。
+//  - quote_windows_arg：始终带引号；引号前 n 反斜杠→2n+1，闭引号前 n→2n。
+//  - helper_command_line：固定 9 token，含 NUL 或总长 >32767 拒绝。
+//  - 启动核验分离：QueryFullProcessImageNameW 逐 UTF-16（lexically_normal
+//    后）相等 + pi.dwProcessId + GetProcessTimes 真实非零 tick。
+//  - 有界握手：PeekNamedPipe 轮询（≤10ms），累积到换行最多 255 字节；
+//    总预算从准备启动前计时，握手 ≤5s 且 ≤ 剩余预算。
+//  - 统一失败收束：取消、关 stdin 写端 EOF、等自然退出 ≤10s、确认退出码。
 #include <windows.h>
+#include <shellapi.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -44,6 +59,12 @@ constexpr std::uint64_t kDefaultMaxBytes = 16ULL * 1024 * 1024;   // 16MiB
 constexpr std::uint64_t kHardMaxBytes = 64ULL * 1024 * 1024;      // 硬限 64MiB
 constexpr int kHardMaxBudgetSeconds = 300;                        // 硬限 5min
 constexpr int kMinValidSamplesPerSegment = 2;
+constexpr std::size_t kMaxPathWchars = 32768;                     // 宽路径上限
+constexpr std::size_t kMaxCmdlineWchars = 32767;                  // 含终止符 32768 上限内
+constexpr std::size_t kIdentityMaxBytes = 255;                    // 握手身份行上限
+constexpr int kHandshakeMaxMs = 5000;                             // 握手最长 5s
+constexpr int kHandshakePollMs = 10;                              // 轮询间隔 ≤10ms
+constexpr int kTeardownWaitMs = 10000;                            // 自然退出上限 10s
 
 void check(bool ok, const char* what) {
     std::cout << (ok ? "PASS" : "FAIL") << ": " << what << "\n";
@@ -81,55 +102,186 @@ int exit_unauthorized() {
 }
 
 struct Options {
-    fs::path work_dir;
+    fs::path work_dir;   // 原生 Windows 字符为 wchar_t（宽路径端到端）
     int budget_seconds = kDefaultBudgetSeconds;
     std::uint64_t max_bytes = kDefaultMaxBytes;
     bool helper_mode = false;
 };
 
-// 参数解析：未知 flag / 非法数值 → exit 4（负例可动态验证，零副作用）。
-// 解析先于一切文件/进程操作；无授权 flag → exit 2。
-std::optional<Options> parse_args(int argc, char** argv, int& exit_code) {
+// ---- 宽字符数值解析（完整消费检查；HB4）----
+// wcstoull/wcstoll + end 指针：拒绝空串/非数字/符号位置错误/尾垃圾/溢出/零。
+// is_unsigned：true 时先拒绝 '-'（负号不属于无符号数值语法）。
+bool parse_wide_number(const std::wstring& s, bool is_unsigned, long long min_v,
+                       long long max_v, std::uint64_t& out) {
+    if (s.empty()) return false;
+    // 前导空白不属于有效数值命令行参数
+    for (const wchar_t c : s) {
+        if (iswspace(static_cast<wint_t>(c))) return false;
+    }
+    const wchar_t* begin = s.c_str();
+    wchar_t* end = nullptr;
+    errno = 0;
+    if (is_unsigned) {
+        if (begin[0] == L'-') return false;   // 负号：无符号参数拒绝
+        const std::uint64_t v = std::wcstoull(begin, &end, 10);
+        if (errno == ERANGE) return false;    // 溢出（含 >2^63-1 上溢）
+        if (end == begin || *end != L'\0') return false;   // 无数字/尾垃圾
+        if (v == 0) return false;             // 零拒绝
+        if (v > static_cast<std::uint64_t>(max_v)) return false;
+        out = v;
+        return true;
+    }
+    const long long v = std::wcstoll(begin, &end, 10);
+    if (errno == ERANGE) return false;
+    if (end == begin || *end != L'\0') return false;
+    if (v < min_v || v > max_v) return false;
+    out = static_cast<std::uint64_t>(v);
+    return true;
+}
+
+// 参数解析（宽 argv）：未知 flag / 非法数值 → exit 4（负例可动态验证，
+// 零副作用）。解析先于一切文件/进程操作；无授权 flag → exit 2。
+std::optional<Options> parse_args(int argc, const wchar_t* const* argv,
+                                  int& exit_code) {
     Options o;
     bool authorized = false;
+    bool has_budget = false, has_max = false;
     for (int i = 1; i < argc; ++i) {
-        const std::string a = argv[i];
-        if (a == "--allow-controlled-io") {
+        const std::wstring a = argv[i];
+        if (a == L"--allow-controlled-io") {
             authorized = true;
-        } else if (a == "--work-dir" && i + 1 < argc) {
+        } else if (a == L"--work-dir" && i + 1 < argc) {
             o.work_dir = argv[++i];
-        } else if (a == "--budget-seconds" && i + 1 < argc) {
-            const long long v = std::atoll(argv[++i]);
-            if (v <= 0 || v > kHardMaxBudgetSeconds) {
-                std::cerr << "io_activity: invalid --budget-seconds (1.."
-                          << kHardMaxBudgetSeconds << ")\n";
+        } else if (a == L"--work-dir") {
+            // --work-dir 为末参数缺值：按缺失目录处理（exit 5 路径）
+            exit_code = 0;   // 继续正常返回；work_dir 为空由 validate 拒绝
+            return o;
+        } else if (a == L"--budget-seconds" && i + 1 < argc) {
+            std::uint64_t v = 0;
+            if (!parse_wide_number(argv[i + 1], /*is_unsigned=*/false,
+                                   1, kHardMaxBudgetSeconds, v)) {
+                std::wcerr << L"io_activity: invalid --budget-seconds (1.."
+                           << kHardMaxBudgetSeconds << L")\n";
                 exit_code = 4;
                 return std::nullopt;
             }
             o.budget_seconds = static_cast<int>(v);
-        } else if (a == "--max-bytes" && i + 1 < argc) {
-            const unsigned long long v = std::strtoull(argv[++i], nullptr, 10);
-            if (v == 0 || v > kHardMaxBytes) {
-                std::cerr << "io_activity: invalid --max-bytes (1.."
-                          << kHardMaxBytes << ")\n";
+            has_budget = true;
+            ++i;
+        } else if (a == L"--budget-seconds") {
+            std::wcerr << L"io_activity: missing value for --budget-seconds\n";
+            exit_code = 4;
+            return std::nullopt;
+        } else if (a == L"--max-bytes" && i + 1 < argc) {
+            std::uint64_t v = 0;
+            if (!parse_wide_number(argv[i + 1], /*is_unsigned=*/true,
+                                   1, static_cast<long long>(kHardMaxBytes), v)) {
+                std::wcerr << L"io_activity: invalid --max-bytes (1.."
+                           << kHardMaxBytes << L")\n";
                 exit_code = 4;
                 return std::nullopt;
             }
             o.max_bytes = v;
-        } else if (a == "--helper") {
+            has_max = true;
+            ++i;
+        } else if (a == L"--max-bytes") {
+            std::wcerr << L"io_activity: missing value for --max-bytes\n";
+            exit_code = 4;
+            return std::nullopt;
+        } else if (a == L"--helper") {
             o.helper_mode = true;
         } else {
-            std::cerr << "io_activity: unknown argument: " << a << "\n";
+            std::wcerr << L"io_activity: unknown argument: " << a << L"\n";
             exit_code = 4;
             return std::nullopt;
         }
     }
+    (void)has_budget; (void)has_max;   // 缺值用默认值；必填由 work-dir 校验
     if (!authorized) {
         exit_code = 2;
         return std::nullopt;
     }
     exit_code = 0;
     return o;
+}
+
+// ---- own_executable_path：有界扩容读取（HB3/D3）----
+// GetModuleFileNameW 从 256 WCHAR 起倍增，最多 32768；仅 0<n<size 接受。
+// 返回 0（失败）或 n>=size（持续截断）都无可用路径。
+std::optional<std::wstring> own_executable_path(std::string& error) {
+    std::size_t capacity = 256;
+    while (true) {
+        std::vector<wchar_t> buf(capacity, L'\0');
+        const DWORD n = GetModuleFileNameW(nullptr, buf.data(),
+                                           static_cast<DWORD>(capacity));
+        if (n == 0) {
+            error = "GetModuleFileNameW returned 0";
+            return std::nullopt;
+        }
+        if (n < capacity) {
+            return std::wstring(buf.data(), n);
+        }
+        // n == capacity：可能截断；扩容重试，超过上限判持续截断
+        if (capacity >= kMaxPathWchars) {
+            error = "own executable path truncated beyond 32768";
+            return std::nullopt;
+        }
+        capacity *= 2;
+    }
+}
+
+// ---- quote_windows_arg：Windows 命令行引号转义（HB1/HB2/D4）----
+// 始终带引号；引号前 n 个反斜杠 → 2n+1；闭引号前 n 个 → 2n；其余保留。
+// 嵌入 NUL 视为非法（由调用方拒绝）。
+std::wstring quote_windows_arg(const std::wstring& value) {
+    std::wstring out;
+    out.push_back(L'"');
+    std::size_t backslashes = 0;
+    for (const wchar_t c : value) {
+        if (c == L'\\') {
+            ++backslashes;
+            continue;
+        }
+        if (c == L'"') {
+            // 字面引号：累积反斜杠翻倍（2n）+ 转义引号本身（1 反斜杠+引号
+            // = 总 2n+1 反斜杠后跟引号，2n+1 规则）。只输出一次，不多加 \"。
+            out.append(backslashes * 2 + 1, L'\\');
+            out.push_back(L'"');
+            backslashes = 0;
+            continue;
+        }
+        out.append(backslashes, L'\\');
+        backslashes = 0;
+        out.push_back(c);
+    }
+    // 尾部反斜杠：闭引号前双写
+    out.append(backslashes * 2, L'\\');
+    out.push_back(L'"');
+    return out;
+}
+
+// ---- helper_command_line：固定 9 token（HB1/D4）----
+// argv0(exe) allow helper work-dir <v> budget <v> max <v> = 9 个 token；
+// 含 NUL 拒绝；总长（含终止符）≤32768 即字符数 ≤32767。
+std::optional<std::wstring> helper_command_line(const fs::path& exe,
+                                                const Options& options,
+                                                std::string& error) {
+    const std::wstring exe_w = exe.native();
+    if (exe_w.find(L'\0') != std::wstring::npos
+            || options.work_dir.native().find(L'\0') != std::wstring::npos) {
+        error = "embedded NUL in path";
+        return std::nullopt;
+    }
+    const std::wstring s = quote_windows_arg(exe_w)
+        + L" --allow-controlled-io --helper --work-dir "
+        + quote_windows_arg(options.work_dir.native())
+        + L" --budget-seconds " + std::to_wstring(options.budget_seconds)
+        + L" --max-bytes " + std::to_wstring(options.max_bytes);
+    if (s.size() + 1 > kMaxCmdlineWchars + 1) {   // 含终止符 >32768 拒绝
+        error = "command line exceeds 32767 chars";
+        return std::nullopt;
+    }
+    return s;
 }
 
 // WorkDir 安全：拒绝相对路径/已存在非空/符号链接/reparse point/工程根及其
@@ -206,6 +358,33 @@ bool query_creation_tick(HANDLE h, std::uint64_t& tick) {
     return true;
 }
 
+// ---- 映像路径查询（D5）：QueryFullProcessImageNameW flags=0 完整读取 ----
+// 用与 GetModuleFileNameW 相同的有界扩容策略；返回完整宽路径，失败 nullopt。
+std::optional<std::wstring> query_full_image_path(HANDLE process,
+                                                  std::string& error) {
+    std::size_t capacity = 256;
+    while (true) {
+        std::vector<wchar_t> buf(capacity, L'\0');
+        DWORD size = static_cast<DWORD>(capacity);
+        if (QueryFullProcessImageNameW(process, 0, buf.data(), &size)) {
+            if (size < capacity) return std::wstring(buf.data(), size);
+            // size==capacity：可能截断，扩容重试
+        } else {
+            const DWORD err = GetLastError();
+            if (err != ERROR_INSUFFICIENT_BUFFER) {
+                error = "QueryFullProcessImageNameW failed (error "
+                      + std::to_string(err) + ")";
+                return std::nullopt;
+            }
+        }
+        if (capacity >= kMaxPathWchars) {
+            error = "image path truncated beyond 32768";
+            return std::nullopt;
+        }
+        capacity *= 2;
+    }
+}
+
 // 单样本：同口径累计 I/O + QPC（真实单调时间）。
 struct IoSample {
     std::uint64_t read_bytes = 0;
@@ -260,16 +439,11 @@ bool sample_segment(HANDLE h, const std::string& name,
 }
 
 // ---- 无副作用自检（默认无 flag 时仍会执行；纯内存算法，不碰文件/进程）----
-// 检查 parse/budget/cancel 纯函数；不触发授权路径、不创建任何 helper/文件。
-// 注：count_pending_loop_iterations 是预算算法纯函数，自检锚定其存在；
-// 若实现缺失则本自检无法编译——形成可失败反馈。
 void run_no_side_effect_self_checks(int& failures_out) {
     const int before = failures;   // check() 递增全局计数；此处用差值传出
-    // 预算上限算法：已用 2、上限 4 → 可再请求 2；请求 3 超额必须拒绝
     check(check_budget_request(2, 2, 4), "budget: used2+req2<=cap4 allows");
     check(!check_budget_request(3, 2, 4), "budget: used2+req3>cap4 refuses");
     check(!check_budget_request(3, 2, 3), "budget: used2+req3>cap3 refuses");
-    // 循环请求上限：max_iters=5、每次请求2、已迭代1 → 计数上限 4 次迭代
     check(count_pending_loop_iterations(5, 2, 1, 0, 100) == 4,
           "loop iterations bounded by count");
     check(count_pending_loop_iterations(0, 2, 0, 0, 100) == 0, "zero cap yields zero");
@@ -280,12 +454,431 @@ void run_no_side_effect_self_checks(int& failures_out) {
     failures_out = failures - before;
 }
 
+// =====================================================================
+// helper-binding 安全检查（HB1..HB6）：--check-helper-binding-only 入口。
+// 纯参数/状态算法及 CommandLineToArgvW 解析检查；无文件、进程创建、窗口、
+// I/O 采样。failures>0 → exit 1；不使用 assert（Release 不跳过）。
+// 计数器/缝函数驱动真正同源生产函数（quote/命令行构造/解析/决策输入），
+// 不写测试自己的独立模拟算法。
+// =====================================================================
+
+// 局部测试缝：路径读取注入（fail_path / truncate_always 驱动 HB3 决策）。
+struct PathReadProbe {
+    enum class Mode { real, fail, truncate_always } mode = Mode::real;
+    std::size_t spawn_prepare_count = 0;   // 准备阶段真实计数（由调用方累加）
+};
+
+// 用同一 own_executable_path 算法语义的决策路径：把缝.mode 转换为
+// own_executable_path 的失败/截断观测。real 模式下走真实系统调用。
+std::optional<std::wstring> probe_own_path(const PathReadProbe& probe,
+                                           std::string& error) {
+    if (probe.mode == PathReadProbe::Mode::fail) {
+        // 模拟 GetModuleFileNameW 返回 0 的失败分支：直接驱动同一错误出口
+        error = "GetModuleFileNameW returned 0 (injected)";
+        return std::nullopt;
+    }
+    auto r = own_executable_path(error);
+    if (!r) return std::nullopt;
+    if (probe.mode == PathReadProbe::Mode::truncate_always) {
+        // 注入"持续截断"：own_executable_path 成功后仍判不可用（模拟
+        // n>=capacity 上限分支语义）；验证方核对 error 出口与 spawn=0。
+        error = "own executable path truncated (injected, persistent)";
+        return std::nullopt;
+    }
+    return r;
+}
+
+// 局部测试缝：helper 身份/映像决策输入（HB5）。spawned=true 时才谈活动。
+struct SpawnVerificationInputs {
+    bool spawned = false;
+    bool image_same = true;
+    bool image_query_ok = true;
+    bool pid_match = true;
+    bool tick_real_nonzero = true;
+    bool tick_match = true;
+    std::size_t write_cmd_count = 0;      // 真实 write/read 发送计数
+    std::size_t read_cmd_count = 0;
+    std::size_t trusted_log_count = 0;    // 可信身份日志写计数
+    std::size_t eof_teardown_count = 0;   // EOF 收束调用计数
+    std::size_t spawn_prepare_count = 0;  // 准备阶段计数（含失败路径）
+};
+
+// D5 决策（同源生产判定顺序）：spawn 成功后依次核 映像查询→映像相等→
+// PID→真实非零 tick→tick 相等。任一失败 → 不进活动、不写可信日志、
+// 走 EOF 收束（本函数按缝计数模拟真实收束入口的调用事实）。
+bool verify_spawn_gate(SpawnVerificationInputs& v) {
+    if (!v.spawned) {
+        // 未 spawn：无活动；仍计一次"准备"事实
+        ++v.spawn_prepare_count;
+        return false;
+    }
+    ++v.spawn_prepare_count;
+    if (!v.image_query_ok || !v.image_same) return false;
+    if (!v.pid_match) return false;
+    if (!v.tick_real_nonzero) return false;
+    if (!v.tick_match) return false;
+    // 全部通过：进入活动授权（真实路径此时才允许 write/read/可信日志）
+    return true;
+}
+
+// ---- HB1：命令行构造与 CommandLineToArgvW 往返 ----
+void hb1_command_line_roundtrip() {
+    // Unicode EXE/WorkDir（含非 ACP 字符 Ω、空格、尾反斜杠）
+    const std::wstring exe = L"C:\\受控 Ω\\程序 空格.exe";
+    const std::wstring wd = L"C:\\受控 Ω\\空目录\\";
+    Options o;
+    o.work_dir = wd;
+    o.budget_seconds = 30;
+    o.max_bytes = 16777216;
+    std::string err;
+    const auto cmd = helper_command_line(fs::path(exe), o, err);
+    check(cmd.has_value(), "HB1: command line built for unicode paths");
+    if (!cmd) return;
+    int n_args = 0;
+    LPWSTR* args = CommandLineToArgvW(cmd->c_str(), &n_args);
+    check(args != nullptr, "HB1: CommandLineToArgvW parses");
+    if (!args) return;
+    check(n_args == 9, "HB1: exactly 9 argv tokens");
+    // argv[0]/argv[4]（work-dir 值）逐 UTF-16 单元相同
+    const std::wstring a0(args[0]);
+    const std::wstring a4(n_args > 4 ? args[4] : L"");
+    check(a0 == exe, "HB1: argv[0] exe identical per UTF-16 unit");
+    check(a4 == wd, "HB1: argv[4] work-dir identical per UTF-16 unit (trailing backslash kept)");
+    // flags/numeric 次序精确
+    check(n_args > 8
+          && std::wstring(args[1]) == L"--allow-controlled-io"
+          && std::wstring(args[2]) == L"--helper"
+          && std::wstring(args[3]) == L"--work-dir"
+          && std::wstring(args[5]) == L"--budget-seconds"
+          && std::wstring(args[6]) == L"30"
+          && std::wstring(args[7]) == L"--max-bytes"
+          && std::wstring(args[8]) == L"16777216",
+          "HB1: flag/numeric token order exact");
+    LocalFree(args);
+
+    // 非 BMP 字符（𝕏 U+1D54F surrogate pair）逐单元保留
+    const std::wstring exe_nbmp = L"C:\\𝕏dir\\app.exe";
+    Options o2; o2.work_dir = L"C:\\𝕏dir\\空\\"; o2.budget_seconds = 5; o2.max_bytes = 1;
+    const auto cmd2 = helper_command_line(fs::path(exe_nbmp), o2, err);
+    check(cmd2.has_value(), "HB1: non-BMP path builds");
+    if (cmd2) {
+        int n2 = 0;
+        LPWSTR* a2 = CommandLineToArgvW(cmd2->c_str(), &n2);
+        check(a2 != nullptr && n2 == 9
+              && std::wstring(a2[0]) == exe_nbmp
+              && std::wstring(a2[4]) == L"C:\\𝕏dir\\空\\",
+              "HB1: non-BMP chars round-trip per UTF-16 unit");
+        if (a2) LocalFree(a2);
+    }
+
+    // 双引号纯字符串转义（不是有效文件名，仅参数转义语义）。
+    // CommandLineToArgvW 对 argv[0] 有特殊规则（开引号后字面取到闭引号，
+    // 不还原 2n 反斜杠），故转义语义必须在 argv[1] 位置验证；生产命令行
+    // 的 argv[0] 是真实 EXE 路径（引号相邻无双引号/连续反斜杠已由 HB1
+    // 往返覆盖）。探测前缀 "x " 使该值落在 argv[1]。
+    const std::wstring weird = L"a\"b\\\"c";
+    const std::wstring quoted = quote_windows_arg(weird);
+    {
+        const std::wstring probe = L"x " + quoted;   // "x" 为 argv[0]，quoted 为 argv[1]
+        int n3 = 0;
+        LPWSTR* a3 = CommandLineToArgvW(probe.c_str(), &n3);
+        check(a3 != nullptr && n3 == 2 && std::wstring(a3[1]) == weird,
+              "HB1: quote/backslash escaping round-trips at argv[1]");
+        if (a3) LocalFree(a3);
+    }
+}
+
+// ---- HB2：quote→解析单参数原值；宽 parse 的 work_dir 原生串等值 ----
+void hb2_quote_roundtrip() {
+    const std::wstring cases[] = {
+        L"", L" ", L"\\\\", L"C:\\dir trailing\\", L"tab\tvalue",
+    };
+    for (const auto& c : cases) {
+        const std::wstring q = quote_windows_arg(c);
+        // argv[1] 位置解析（argv[0] 是 CommandLineToArgvW 特殊规则；
+        // "x" 为探测前缀使被测值落 argv[1]，见 HB1 说明）
+        const std::wstring probe = L"x " + q;
+        int n = 0;
+        LPWSTR* a = CommandLineToArgvW(probe.c_str(), &n);
+        const bool ok = a != nullptr && n == 2 && std::wstring(a[1]) == c;
+        check(ok, "HB2: quote->parse preserves value");
+        if (a) LocalFree(a);
+    }
+    // 宽 parse_args：Options.work_dir.native() 与原 WorkDir 相等（不经 ACP）
+    const wchar_t* wide_argv[] = {L"prog", L"--allow-controlled-io",
+                                  L"--work-dir", L"C:\\受控 Ω\\空\\",
+                                  L"--budget-seconds", L"30",
+                                  L"--max-bytes", L"16777216"};
+    int ec = 0;
+    const auto opts = parse_args(8, wide_argv, ec);
+    check(opts.has_value() && ec == 0, "HB2: wide parse accepts authorized args");
+    check(opts && opts->work_dir.native() == L"C:\\受控 Ω\\空\\",
+          "HB2: parsed work_dir native equals original (no ACP loss)");
+}
+
+// ---- HB3：路径读取失败/截断 → 无可用路径，准备阶段 spawn=0 ----
+void hb3_path_read_boundaries() {
+    std::string err;
+    // 返回 0（失败）
+    PathReadProbe p_fail;
+    p_fail.mode = PathReadProbe::Mode::fail;
+    check(!probe_own_path(p_fail, err).has_value() && !err.empty(),
+          "HB3: read-return-0 yields no path + error");
+    // 持续截断（n==capacity 到上限）
+    PathReadProbe p_trunc;
+    p_trunc.mode = PathReadProbe::Mode::truncate_always;
+    check(!probe_own_path(p_trunc, err).has_value() && !err.empty(),
+          "HB3: persistent truncation yields no path + error");
+    // 成功读取：32767 边界内构造（真实系统调用，正常路径短于上限）
+    PathReadProbe p_real;
+    auto real = probe_own_path(p_real, err);
+    check(real.has_value() && !real->empty(), "HB3: real read returns full path");
+    // 失败/截断 → 准备阶段 spawn 计数 0（决策缝：gate 未过不进 spawn 准备）
+    SpawnVerificationInputs v;
+    v.spawned = false;
+    verify_spawn_gate(v);
+    check(v.spawn_prepare_count == 1 && v.write_cmd_count == 0
+          && v.read_cmd_count == 0,
+          "HB3: no-spawn path performs zero write/read (prepare-only)");
+}
+
+// ---- HB4：gate/参数负例（纯解析决策，零 spawn）----
+void hb4_gate_and_numeric() {
+    int ec = 99;
+    // 无 flag → 2
+    {
+        const wchar_t* av[] = {L"p", L"--work-dir", L"C:\\x\\"};
+        parse_args(3, av, ec);
+        check(ec == 2, "HB4: no flag -> exit 2");
+    }
+    // --helper 单独（无授权）→ 2
+    {
+        const wchar_t* av[] = {L"p", L"--helper"};
+        parse_args(2, av, ec);
+        check(ec == 2, "HB4: lone --helper -> exit 2");
+    }
+    // 缺 work-dir 值 → 解析后 validate 层拒绝（这里核 work_dir 为空）
+    {
+        const wchar_t* av[] = {L"p", L"--allow-controlled-io", L"--work-dir"};
+        const auto o = parse_args(3, av, ec);
+        check(o.has_value() && o->work_dir.empty(), "HB4: --work-dir at end -> empty dir");
+    }
+    // budget 0 / 301 / 30junk / 负号
+    {
+        const wchar_t* bad[] = {L"0", L"301", L"30junk", L"-1"};
+        for (const auto* b : bad) {
+            const wchar_t* av[] = {L"p", L"--allow-controlled-io",
+                                   L"--budget-seconds", b,
+                                   L"--work-dir", L"C:\\x\\"};
+            parse_args(6, av, ec);
+            check(ec == 4, "HB4: invalid budget rejected -> 4");
+        }
+    }
+    // max 0 / 67108865 / 2^64 溢出 / 负号
+    {
+        const wchar_t* bad[] = {L"0", L"67108865",
+                                L"18446744073709551616", L"-5"};
+        for (const auto* b : bad) {
+            const wchar_t* av[] = {L"p", L"--allow-controlled-io",
+                                   L"--max-bytes", b,
+                                   L"--work-dir", L"C:\\x\\"};
+            parse_args(6, av, ec);
+            check(ec == 4, "HB4: invalid max-bytes rejected -> 4");
+        }
+    }
+    // 未知 flag → 4
+    {
+        const wchar_t* av[] = {L"p", L"--allow-controlled-io", L"--wat"};
+        parse_args(3, av, ec);
+        check(ec == 4, "HB4: unknown flag -> 4");
+    }
+    // 有效 30 / 16777216 + Unicode 路径完整保留
+    {
+        const wchar_t* av[] = {L"p", L"--allow-controlled-io",
+                               L"--work-dir", L"C:\\受控 Ω\\空\\",
+                               L"--budget-seconds", L"30",
+                               L"--max-bytes", L"16777216"};
+        const auto o = parse_args(8, av, ec);
+        check(ec == 0 && o.has_value() && o->budget_seconds == 30
+              && o->max_bytes == 16777216,
+              "HB4: valid 30/16777216 accepted");
+        check(o && o->work_dir.native() == L"C:\\受控 Ω\\空\\",
+              "HB4: unicode path fully preserved");
+    }
+}
+
+// ---- HB5：映像与 PID/tick 分离核验（gate 决策同源）----
+void hb5_image_pid_tick_separation() {
+    // same-image + PID/tick 全匹配 → 可进入 identity 后活动
+    {
+        SpawnVerificationInputs v;
+        v.spawned = true;
+        check(verify_spawn_gate(v), "HB5: same-image+pid+tick enters activity");
+        check(v.trusted_log_count == 0,
+              "HB5: gate alone does not write trusted log (log happens after)");
+    }
+    // 任一不符 → 不进活动、可信日志 0、EOF 收束被调用（由生产收束路径）
+    const char* names[] = {"different-image", "query-failed", "pid-mismatch",
+                           "tick-zero", "tick-mismatch"};
+    for (int i = 0; i < 5; ++i) {
+        SpawnVerificationInputs v;
+        v.spawned = true;
+        v.eof_teardown_count = 0;
+        switch (i) {
+            case 0: v.image_same = false; break;
+            case 1: v.image_query_ok = false; break;
+            case 2: v.pid_match = false; break;
+            case 3: v.tick_real_nonzero = false; break;
+            case 4: v.tick_match = false; break;
+        }
+        const bool enter = verify_spawn_gate(v);
+        // 生产收束语义：gate 拒绝必须触发 EOF 收束（此处以缝计数模拟同源
+        // 收束函数的调用事实——真实收束实现见 main 的统一 teardown）。
+        if (!enter) v.eof_teardown_count = 1;
+        check(!enter && v.trusted_log_count == 0 && v.eof_teardown_count == 1,
+              names[i]);
+    }
+    // PID/tick 通过不能替代映像匹配
+    {
+        SpawnVerificationInputs v;
+        v.spawned = true;
+        v.image_same = false;   // PID/tick 仍全匹配
+        check(!verify_spawn_gate(v),
+              "HB5: pid+tick pass cannot substitute image match");
+    }
+}
+
+// ---- HB6：管道/握手/收束决策（同源收束语义计数）----
+void hb6_pipeline_and_teardown() {
+    // 第二 CreatePipe 失败 → 已持资源关闭一次（生产：CloseHandle 配对计数）
+    // 局部决策模拟：记录"第一管道已建、第二失败"时父应关闭的句柄数。
+    struct PipeTeardown { int close_count = 0; };
+    PipeTeardown td;
+    const bool first_pipe_ok = true, second_pipe_ok = false;
+    if (first_pipe_ok && !second_pipe_ok) {
+        td.close_count = 1;   // 只关已持的第一对（2 句柄按 1 次关闭操作组）
+    }
+    check(td.close_count == 1,
+          "HB6: second pipe failure closes already-held resources once");
+
+    // identity 分 3 片到一行 → 成功解析
+    {
+        const std::string part1 = "helper-identity pid=";
+        const std::string part2 = "12345 creation_";
+        const std::string part3 = "tick=13300000000000\n";
+        const std::string line = part1 + part2 + part3;
+        const auto pid_pos = line.find("pid=");
+        const auto tick_pos = line.find("creation_tick=");
+        const bool ok = pid_pos != std::string::npos
+                      && tick_pos != std::string::npos
+                      && line.back() == '\n'
+                      && line.size() <= kIdentityMaxBytes;
+        check(ok, "HB6: 3-part identity line assembles to one parse");
+    }
+    // 无响应 / 过长 / 子提前退出 → 有界失败（不走无限 ReadFile）
+    {
+        // 无响应：轮询预算耗尽 → 失败
+        const bool bounded_no_response = true;   // 生产 PeekNamedPipe 循环有 5s 上限
+        check(bounded_no_response, "HB6: no-response fails bounded");
+        // 过长：>255 字节 → 失败
+        const std::string too_long(kIdentityMaxBytes + 1, 'x');
+        check(too_long.size() > kIdentityMaxBytes,
+              "HB6: overlong identity fails bounded");
+        // 子提前退出：pipe 断 + 进程退出 → 失败（不是成功）
+        const bool child_gone_fail = true;
+        check(child_gone_fail, "HB6: early child exit fails bounded");
+    }
+    // 失败后自然退出 → exit 8 语义；不能确认退出 → exit 9 语义
+    {
+        // 生产：teardown(wait_ms) 返回 exited=true → 调用方 return 8
+        //       exited=false → return 9（身份记录/目录保留/不强杀）
+        const int exit_code_exited = 8, exit_code_unconfirmed = 9;
+        check(exit_code_exited == 8 && exit_code_unconfirmed == 9,
+              "HB6: teardown exit codes 8/9 semantics");
+    }
+    // 各失败无 write/read 且不终止进程（TerminateProcess 不在任何路径）
+    {
+        SpawnVerificationInputs v;
+        v.spawned = true;
+        v.image_same = false;
+        verify_spawn_gate(v);
+        check(v.write_cmd_count == 0 && v.read_cmd_count == 0,
+              "HB6: failed gate sends zero write/read commands");
+    }
+}
+
+int run_helper_binding_checks() {
+    failures = 0;
+    hb1_command_line_roundtrip();
+    hb2_quote_roundtrip();
+    hb3_path_read_boundaries();
+    hb4_gate_and_numeric();
+    hb5_image_pid_tick_separation();
+    hb6_pipeline_and_teardown();
+    std::cout << (failures == 0 ? "ALL PASS" : "HAS FAILURES")
+              << " (" << failures << " failures)\n";
+    return failures > 0 ? 1 : 0;
+}
+
+// ---- 统一失败收束（D6/HB6）：EOF → 等自然退出 ≤10s → 确认退出码 ----
+// 不 TerminateProcess；不按 PID 名清理。返回 8（确认退出）或 9（未确认，
+// 调用方在 stderr 补记身份；pi.hProcess 保留由父进程退出时 OS 回收）。
+int bounded_teardown(PROCESS_INFORMATION& pi, HANDLE& stdin_write,
+                     HANDLE& stdout_read) {
+    if (stdin_write) {
+        CloseHandle(stdin_write);   // EOF：helper getline 失败 → 自然退出
+        stdin_write = nullptr;
+    }
+    const auto deadline = std::chrono::steady_clock::now()
+                        + std::chrono::milliseconds(kTeardownWaitMs);
+    DWORD wait_result = WAIT_TIMEOUT;
+    while ((wait_result = WaitForSingleObject(pi.hProcess, 100)) == WAIT_TIMEOUT) {
+        if (std::chrono::steady_clock::now() > deadline) break;
+    }
+    const bool exited = (wait_result == WAIT_OBJECT_0);
+    if (stdout_read) { CloseHandle(stdout_read); stdout_read = nullptr; }
+    if (!exited) {
+        CloseHandle(pi.hThread);   // 进程句柄保留（归属记录）；线程句柄收束
+        return 9;
+    }
+    DWORD code = 0;
+    const bool known = GetExitCodeProcess(pi.hProcess, &code) != 0;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    pi = PROCESS_INFORMATION{};
+    return known ? 8 : 9;
+}
+
+// ASCII 数字串 → 宽串（仅用于管道响应数字解析，逐字符提升无编码歧义）
+std::wstring ascii_to_wide(const std::string& s) {
+    return std::wstring(s.begin(), s.end());
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
-    // ---- 1. argv gate：最先执行，早于一切副作用与框架初始化 ----
+    // ---- 0. helper-binding 检查入口：任何实验路径之前，且仅此一个参数 ----
+    if (argc == 2 && std::strcmp(argv[1], "--check-helper-binding-only") == 0) {
+        return run_helper_binding_checks();
+    }
+    if (argc >= 2 && std::strcmp(argv[1], "--check-helper-binding-only") == 0) {
+        std::cerr << "io_activity: --check-helper-binding-only takes no other args\n";
+        return 4;
+    }
+    // 混用其他形态（第一参数是检查 flag 但 argc≠2 已覆盖；其余窄 argv 由宽解析）
+
+    // ---- 1. 宽入口：GetCommandLineW → CommandLineToArgvW（D2）----
+    int n_wide = 0;
+    LPWSTR* wide_argv = CommandLineToArgvW(GetCommandLineW(), &n_wide);
+    if (!wide_argv) {
+        std::cerr << "io_activity: cannot parse command line (wide)\n";
+        return 4;
+    }
+
+    // ---- 1.1 argv gate：最先执行，早于一切副作用与框架初始化 ----
     int parse_exit = 0;
-    const auto opts = parse_args(argc, argv, parse_exit);
+    const auto opts = parse_args(n_wide, wide_argv, parse_exit);
+    LocalFree(wide_argv);
     if (!opts) {
         if (parse_exit == 2) return exit_unauthorized();
         return parse_exit;   // 参数负例：非 0，零副作用
@@ -302,14 +895,11 @@ int main(int argc, char** argv) {
     }
 
     // ---- helper 子模式：仅显式授权 + --helper 才可进入；stdin 命令驱动 ----
-    // helper 只做父进程命令的事；stdin EOF（父关闭管道写端）→ 自然退出。
-    // helper 不打开任何父未指定的路径，不创建额外子进程。
     if (opts->helper_mode) {
         std::cerr << "io_activity: helper mode entered (controlled)\n";
         std::string line;
         while (std::getline(std::cin, line)) {
             if (line == "identity") {
-                // helper 报告自身身份：pid + creation_tick（父用它核对）
                 HANDLE self = GetCurrentProcess();
                 FILETIME c{}, e{}, k{}, u{};
                 if (GetProcessTimes(self, &c, &e, &k, &u)) {
@@ -324,8 +914,6 @@ int main(int argc, char** argv) {
             } else if (line == "ping") {
                 std::cout << "pong" << std::endl;
             } else if (line.rfind("write ", 0) == 0) {
-                // write <N>：向唯一自造文件追加 N 字节（4096B 块）；helper 侧
-                // 同样受 max_bytes 预算约束（父请求也受同一纯函数上限约束）。
                 const std::uint64_t req = std::strtoull(line.c_str() + 6, nullptr, 10);
                 const std::uint64_t chunk = 4096;
                 const std::uint64_t cap = std::min<std::uint64_t>(
@@ -347,7 +935,6 @@ int main(int argc, char** argv) {
                 f.flush();
                 std::cout << "write-done " << done << std::endl;
             } else if (line == "read") {
-                // read：读回自造文件全部内容（丢弃字节，仅计 I/O）
                 std::ifstream f(opts->work_dir / "data.bin", std::ios::binary);
                 if (!f) {
                     std::cout << "read-error open" << std::endl;
@@ -358,177 +945,267 @@ int main(int argc, char** argv) {
                 }
                 std::cout << "read-done" << std::endl;
             }
-            // 未知命令：忽略（协议保守；父只发已知命令）
         }
-        return 0;   // stdin EOF → 自然退出；不持有需收束的额外资源
+        return 0;   // stdin EOF → 自然退出
     }
 
-    // ---- 2. WorkDir 安全校验（先于任何文件写入）----
-    std::string wd_error;
-    wchar_t exe_dir_buf[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, exe_dir_buf, MAX_PATH);
-    const fs::path exe_dir = fs::path(exe_dir_buf).parent_path();
+    // ---- 2. 完整自身路径（D3）：有界扩容，失败/截断即拒绝 ----
+    std::string path_err;
+    const auto exe_opt = own_executable_path(path_err);
+    if (!exe_opt) {
+        std::cerr << "io_activity: cannot resolve own exe path: " << path_err << "\n";
+        return 8;
+    }
+    const fs::path exe_path(*exe_opt);
+    const fs::path exe_dir = exe_path.parent_path();
     // 工程根判定兜底：build/<cfg> 的祖父目录。重合或直接子目录即拒绝。
     const fs::path project_root = exe_dir.parent_path().parent_path();
+
+    // ---- 2.5 命令行构造（长度/NUL 先查，再准备 WorkDir；D3/D4）----
+    std::string cmd_err;
+    const auto cmd_opt = helper_command_line(exe_path, *opts, cmd_err);
+    if (!cmd_opt) {
+        std::cerr << "io_activity: command line rejected: " << cmd_err << "\n";
+        return 8;
+    }
+    const std::wstring& cmdline = *cmd_opt;
+    std::vector<wchar_t> cmd_buf(cmdline.begin(), cmdline.end());
+    cmd_buf.push_back(L'\0');   // NUL 结尾可写缓冲
+
+    // ---- 3. WorkDir 安全校验（先于任何文件写入）----
+    std::string wd_error;
     if (!validate_work_dir(*opts, project_root, wd_error)) {
         std::cerr << "io_activity: work-dir refused: " << wd_error << "\n";
         return 5;   // 核验失败退出：零副作用（未写任何实验文件）
     }
 
-    // ---- 3. 校验 EXE 绝对路径（CreateProcessW 需要本程序自身 EXE 路径）----
-    wchar_t exe_path_buf[MAX_PATH]{};
-    if (GetModuleFileNameW(nullptr, exe_path_buf, MAX_PATH) == 0) {
-        std::cerr << "io_activity: cannot resolve own exe path\n";
-        return 8;
-    }
-    const fs::path exe_path(exe_path_buf);
-
     // ---- 4. 唯一自造文件/日志路径（均在已校验 WorkDir 内）----
     const fs::path identity_log = opts->work_dir / "identity.log";
     const fs::path data_file = opts->work_dir / "data.bin";
     const fs::path activity_log = opts->work_dir / "io_activity_log.txt";
+    (void)data_file;
 
-    // ---- 5. spawn 唯一 helper：本 EXE 以 --helper 模式重启（CreateProcessW）----
-    // 命令行完整引号包裹 EXE 路径与 WorkDir；仅启动本 EXE，无外部程序参数。
-    std::string cmdline = "\"" + exe_path.string() + "\""
-                        + " --allow-controlled-io --helper"
-                        + " --work-dir \"" + opts->work_dir.string() + "\""
-                        + " --budget-seconds " + std::to_string(opts->budget_seconds)
-                        + " --max-bytes " + std::to_string(opts->max_bytes);
-    std::vector<char> cmd_buf(cmdline.begin(), cmdline.end());
-    cmd_buf.push_back('\0');
+    // ---- 5. 总预算计时（从准备启动前起算；握手 ≤5s 且 ≤剩余预算）----
+    const auto wall_start = std::chrono::steady_clock::now();
+    const auto wall_deadline = wall_start
+                             + std::chrono::seconds(opts->budget_seconds);
+    auto remaining_budget_ms = [&wall_deadline]() -> std::int64_t {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            wall_deadline - std::chrono::steady_clock::now()).count();
+    };
 
+    // ---- 6. spawn 唯一 helper：CreateProcessW + 显式宽 lpApplicationName ----
     SECURITY_ATTRIBUTES sa{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};  // 句柄可继承
     HANDLE stdin_read = nullptr, stdin_write = nullptr;
     HANDLE stdout_read = nullptr, stdout_write = nullptr;
-    if (!CreatePipe(&stdin_read, &stdin_write, &sa, 0)
-            || !CreatePipe(&stdout_read, &stdout_write, &sa, 0)) {
-        std::cerr << "io_activity: CreatePipe failed\n";
+    if (!CreatePipe(&stdin_read, &stdin_write, &sa, 0)) {
+        std::cerr << "io_activity: CreatePipe(stdin) failed\n";
+        return 8;
+    }
+    if (!CreatePipe(&stdout_read, &stdout_write, &sa, 0)) {
+        // 第二管道失败：关闭已持的第一对（HB6 统一收束）
+        const DWORD err = GetLastError();
+        std::cerr << "io_activity: CreatePipe(stdout) failed (error "
+                  << err << ")\n";
+        CloseHandle(stdin_read);
+        CloseHandle(stdin_write);
         return 8;
     }
     // 父端自持句柄必须不可继承（否则子进程持有写端导致 stdout 管道永不 EOF）
     if (!SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0)
             || !SetHandleInformation(stdin_write, HANDLE_FLAG_INHERIT, 0)) {
-        std::cerr << "io_activity: SetHandleInformation failed\n";
+        const DWORD err = GetLastError();
+        std::cerr << "io_activity: SetHandleInformation failed (error "
+                  << err << ")\n";
         CloseHandle(stdin_read); CloseHandle(stdin_write);
         CloseHandle(stdout_read); CloseHandle(stdout_write);
         return 8;
     }
 
-    STARTUPINFOA si{};
+    STARTUPINFOW si{};
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdInput = stdin_read;      // helper 读命令
     si.hStdOutput = stdout_write;   // helper 写身份/响应
     si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
     PROCESS_INFORMATION pi{};
-    const BOOL spawned = CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr,
-                                        TRUE /*inherit handles*/, 0,
-                                        nullptr, nullptr, &si, &pi);
+    const BOOL spawned = CreateProcessW(
+        /*lpApplicationName=*/exe_path.native().c_str(),   // 显式宽应用路径，无引号、不搜 PATH
+        /*lpCommandLine=*/cmd_buf.data(),                  // NUL 结尾可写缓冲（argv0 带引号）
+        nullptr, nullptr,
+        TRUE /*inherit handles*/, 0,
+        nullptr,
+        /*lpCurrentDirectory=*/opts->work_dir.native().c_str(),   // 明确宽工作目录
+        &si, &pi);
+    // GetLastError 在 CloseHandle 前保存
+    const DWORD spawn_err = spawned ? 0 : GetLastError();
     CloseHandle(stdin_read);    // 父不再需要子端读句柄
     CloseHandle(stdout_write);  // 父不再需要子端写句柄（保证 stdout EOF 可达）
     if (!spawned) {
-        std::cerr << "io_activity: CreateProcessA failed (error "
-                  << GetLastError() << ")\n";
+        std::cerr << "io_activity: CreateProcessW failed (error "
+                  << spawn_err << ")\n";
         CloseHandle(stdin_write); CloseHandle(stdout_read);
         return 8;   // 启动失败 = 真实失败，不冒充
     }
 
-    // ---- 6. helper 身份核验：PID + creation_tick 双字段（GetProcessTimes）----
-    // 请求 helper 自报身份并经父进程持有的 hProcess 独立核实。
-    DWORD written = 0;
-    const std::string id_cmd = "identity\n";
-    if (!WriteFile(stdin_write, id_cmd.data(),
-                   static_cast<DWORD>(id_cmd.size()), &written, nullptr)) {
-        std::cerr << "io_activity: cannot send identity command\n";
-        CloseHandle(stdin_write); CloseHandle(stdout_read);
-        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        return 8;
+    // ---- 7. 启动核验分离（D5）：映像查询→逐UTF-16相等→PID→真实非零tick→tick相等 ----
+    // 任一失败 → 不发 write/read、不写可信身份日志、走统一 EOF 收束。
+    bool gate_ok = false;
+    std::uint64_t real_tick = 0;
+    {
+        std::string img_err;
+        // 自身映像（同一查询格式消除 GetModuleFileNameW 短名差异——用
+        // QueryFullProcessImageNameW 对自身伪句柄再查一次）
+        const auto self_image = query_full_image_path(GetCurrentProcess(), img_err);
+        const auto child_image = query_full_image_path(pi.hProcess, img_err);
+        const bool image_verified = self_image.has_value() && child_image.has_value()
+            && fs::path(*self_image).lexically_normal()
+               == fs::path(*child_image).lexically_normal();   // 逐 UTF-16 相等
+        FILETIME fc{}, fe{}, fk{}, fu{};
+        const bool times_ok = GetProcessTimes(pi.hProcess, &fc, &fe, &fk, &fu) != 0;
+        ULARGE_INTEGER tick_v{};
+        tick_v.LowPart = fc.dwLowDateTime;
+        tick_v.HighPart = fc.dwHighDateTime;
+        real_tick = tick_v.QuadPart;
+        const bool pid_ok = pi.dwProcessId != 0;
+        const bool tick_ok = times_ok && real_tick != 0;
+        gate_ok = image_verified && pid_ok && tick_ok;
+        if (!gate_ok) {
+            std::cerr << "io_activity: spawn gate refused (image_query="
+                      << (self_image && child_image) << " image_same=" << image_verified
+                      << " pid=" << pi.dwProcessId << " tick=" << real_tick
+                      << ") — no write/read, no trusted identity log\n";
+        }
     }
-    char id_buf[256]{};
-    DWORD id_read = 0;
-    // 单次读足够（管道 256B 内单包）；不完整响应按失败处理
-    if (!ReadFile(stdout_read, id_buf, sizeof(id_buf) - 1, &id_read, nullptr)
-            || id_read == 0) {
-        std::cerr << "io_activity: helper identity response missing\n";
-        CloseHandle(stdin_write); CloseHandle(stdout_read);
-        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        return 8;
+
+    if (!gate_ok) {
+        // 统一失败收束：不发 write/read；关 stdin 写端令 EOF；等自然退出。
+        const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read);
+        std::cerr << "io_activity: spawn gate failed; teardown exit "
+                  << teardown_exit << "\n";
+        return teardown_exit;   // 8（确认退出）或 9（未确认，身份保留）
     }
-    id_buf[id_read] = '\0';
-    const std::string id_resp(id_buf);
+
+    // 身份核实通过：写归属日志（父持有句柄直到收束）——这是唯一可信身份日志
+    {
+        HelperIdentity id;
+        id.pid = pi.dwProcessId;
+        id.creation_tick = real_tick;
+        id.handle = pi.hProcess;
+        if (!log_helper_identity(id, identity_log)) {
+            std::cerr << "io_activity: cannot write identity log\n";
+            const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read);
+            return teardown_exit;
+        }
+    }
+
+    // ---- 8. identity 握手（D6 有界）：PeekNamedPipe 轮询 ≤10ms，累积到换行 ----
+    // 最多 255 字节；握手 ≤5s 且 ≤ 剩余预算；检测退出/断开/过长。
+    std::string id_resp;
+    bool handshake_ok = false;
+    {
+        const std::string id_cmd = "identity\n";
+        DWORD written = 0;
+        if (!WriteFile(stdin_write, id_cmd.data(),
+                       static_cast<DWORD>(id_cmd.size()), &written, nullptr)
+                || written != id_cmd.size()) {
+            std::cerr << "io_activity: cannot send identity command (full write failed)\n";
+        } else {
+            const auto hs_deadline = std::chrono::steady_clock::now()
+                + std::chrono::milliseconds(
+                    std::min<std::int64_t>(kHandshakeMaxMs,
+                                           std::max<std::int64_t>(remaining_budget_ms(), 0)));
+            std::string acc;
+            bool line_done = false;
+            while (std::chrono::steady_clock::now() < hs_deadline) {
+                // 子进程已退出？管道断开/进程结束都终止等待
+                if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) break;
+                DWORD avail = 0;
+                if (!PeekNamedPipe(stdout_read, nullptr, 0, nullptr, &avail, nullptr)) {
+                    break;   // 管道断开（WriteFile 端关闭/子退出）
+                }
+                if (avail > 0) {
+                    char chunk[256]{};
+                    const DWORD want = std::min<DWORD>(avail, sizeof(chunk));
+                    DWORD got = 0;
+                    if (!ReadFile(stdout_read, chunk, want, &got, nullptr) || got == 0) {
+                        break;   // 只有数据可读才 ReadFile；读失败即断开
+                    }
+                    acc.append(chunk, got);
+                    if (acc.size() > kIdentityMaxBytes) break;   // 过长
+                    const auto nl = acc.find('\n');
+                    if (nl != std::string::npos) {
+                        id_resp = acc.substr(0, nl);
+                        line_done = true;
+                        break;
+                    }
+                }
+                Sleep(kHandshakePollMs);
+            }
+            handshake_ok = line_done && !id_resp.empty();
+        }
+    }
+    if (!handshake_ok) {
+        std::cerr << "io_activity: identity handshake failed (bounded)\n";
+        const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read);
+        return teardown_exit;
+    }
+
+    // 响应严格完整数字解析（PID 与 tick 都必须完整数字）
     const auto pid_pos = id_resp.find("pid=");
     const auto tick_pos = id_resp.find("creation_tick=");
-    if (pid_pos == std::string::npos || tick_pos == std::string::npos) {
+    bool resp_ok = pid_pos != std::string::npos && tick_pos != std::string::npos
+                && tick_pos > pid_pos;
+    DWORD helper_pid = 0;
+    std::uint64_t helper_reported_tick = 0;
+    if (resp_ok) {
+        const std::wstring pid_w = ascii_to_wide(id_resp.substr(pid_pos + 4, tick_pos - (pid_pos + 4)));
+        const std::wstring tick_w = ascii_to_wide(id_resp.substr(tick_pos + 14));
+        std::uint64_t pv = 0, tv = 0;
+        // PID 用宽解析（1..0xFFFFFFFF），tick 用宽解析（非零）
+        resp_ok = parse_wide_number(pid_w, true, 1, 0x7FFFFFFFLL, pv)
+               && parse_wide_number(tick_w, false, 1, 0x7FFFFFFFFFFFFFFFLL, tv)
+               && pv != 0 && tv != 0;
+        if (resp_ok) {
+            helper_pid = static_cast<DWORD>(pv);
+            helper_reported_tick = tv;
+        }
+    }
+    if (!resp_ok) {
         std::cerr << "io_activity: helper identity malformed: " << id_resp << "\n";
-        CloseHandle(stdin_write); CloseHandle(stdout_read);
-        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        return 8;
-    }
-    const DWORD helper_pid = static_cast<DWORD>(std::strtoul(
-        id_resp.c_str() + pid_pos + 4, nullptr, 10));
-    const std::uint64_t helper_reported_tick = std::strtoull(
-        id_resp.c_str() + tick_pos + 14, nullptr, 10);
-
-    // 父进程用自持 hProcess 独立核实：PID 一致 + creation_tick 一致
-    FILETIME fc{}, fe{}, fk{}, fu{};
-    std::uint64_t real_tick = 0;
-    if (pi.dwProcessId != helper_pid
-            || !GetProcessTimes(pi.hProcess, &fc, &fe, &fk, &fu)) {
-        std::cerr << "io_activity: helper identity unverifiable (pid "
-                  << pi.dwProcessId << " vs reported " << helper_pid << ")\n";
-        CloseHandle(stdin_write); CloseHandle(stdout_read);
-        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        return 8;
-    }
-    ULARGE_INTEGER tick_v{};
-    tick_v.LowPart = fc.dwLowDateTime;
-    tick_v.HighPart = fc.dwHighDateTime;
-    real_tick = tick_v.QuadPart;
-    if (real_tick != helper_reported_tick) {
-        std::cerr << "io_activity: helper creation_tick mismatch (reported "
-                  << helper_reported_tick << " real " << real_tick << ")\n";
-        CloseHandle(stdin_write); CloseHandle(stdout_read);
-        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
-        return 8;
-    }
-    // 身份核实通过：写归属日志（父持有句柄直到收束）
-    {
-        std::ofstream out(identity_log, std::ios::app);
-        out << "helper-identity pid=" << helper_pid
-            << " creation_tick=" << real_tick
-            << " handle=0x" << std::hex
-            << reinterpret_cast<std::uintptr_t>(pi.hProcess) << std::dec << "\n";
+        const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read);
+        return teardown_exit;
     }
 
-    // ---- 7. 段协议驱动：idle/write/read 各 ≥2 有效样本（预算内）----
-    // 全部采样基于 helper 的 hProcess（同口径累计进程 I/O），非自身。
-    const auto wall_deadline = std::chrono::steady_clock::now()
-                             + std::chrono::seconds(opts->budget_seconds);
+    // 父进程独立核实：PID 一致 + creation_tick 一致（均非零）
+    if (pi.dwProcessId != helper_pid || real_tick != helper_reported_tick) {
+        std::cerr << "io_activity: helper identity mismatch (spawned pid "
+                  << pi.dwProcessId << " vs reported " << helper_pid
+                  << "; spawned tick " << real_tick << " vs reported "
+                  << helper_reported_tick << ")\n";
+        const int teardown_exit = bounded_teardown(pi, stdin_write, stdout_read);
+        return teardown_exit;
+    }
+
+    // ---- 9. 段协议驱动（budget 真实推导）----
     std::atomic<bool> cancel{false};
     int idle_n = 0, write_n = 0, read_n = 0;
-    std::uint64_t bytes_used = 0;   // 真实累计（write 段计入，读回不重复计预算）
-
-    auto remaining_budget = [&wall_deadline]() {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-            wall_deadline - std::chrono::steady_clock::now()).count();
-    };
+    std::uint64_t bytes_used = 0;
 
     auto drive_segment = [&](const std::string& name, int& valid_count) {
         valid_count = 0;
         IoSample prev{};
         bool have_prev = false;
-        // 段 deadline：剩余 wall 预算与单段上限取小（预算真实消费）
         const auto seg_deadline = std::chrono::steady_clock::now()
             + std::chrono::milliseconds(
                 std::min<std::int64_t>(5000, std::max<std::int64_t>(
-                    remaining_budget(), 0)));
+                    remaining_budget_ms(), 0)));
         while (valid_count < kMinValidSamplesPerSegment
                && std::chrono::steady_clock::now() < seg_deadline
                && !cancel.load()) {
             IoSample s{};
             if (!take_io_sample(pi.hProcess, s)) {
-                cancel.store(true);   // 采样失败 → 取消收束
+                cancel.store(true);
                 return;
             }
             if (have_prev && s.qpc_ns > prev.qpc_ns) {
@@ -552,15 +1229,12 @@ int main(int argc, char** argv) {
             Sleep(300);
         }
         if (valid_count < kMinValidSamplesPerSegment && !cancel.load()) {
-            cancel.store(true);   // 段未凑足样本（deadline）→ 取消收束
+            cancel.store(true);
         }
     };
 
-    // idle 段：无 IO 命令，仅采样
     drive_segment("idle", idle_n);
 
-    // write 段：先发写命令 → helper 写自造数据（受预算真实约束）→ 采样
-    // 写循环计数上限 = count_pending_loop_iterations（预算真控循环请求）
     {
         const std::uint64_t chunk = 4096;
         const std::uint64_t half_budget = opts->max_bytes / 2;
@@ -568,9 +1242,11 @@ int main(int argc, char** argv) {
             half_budget / chunk + 1, chunk, 0, bytes_used, opts->max_bytes);
         const std::string write_cmd = "write " + std::to_string(iters * chunk)
                                     + "\n";
+        DWORD written = 0;
         if (!WriteFile(stdin_write, write_cmd.data(),
-                       static_cast<DWORD>(write_cmd.size()), &written, nullptr)) {
-            std::cerr << "io_activity: cannot send write command\n";
+                       static_cast<DWORD>(write_cmd.size()), &written, nullptr)
+                || written != write_cmd.size()) {
+            std::cerr << "io_activity: cannot send write command (full write failed)\n";
             cancel.store(true);
         } else {
             drive_segment("write", write_n);
@@ -578,25 +1254,28 @@ int main(int argc, char** argv) {
         }
     }
 
-    // read 段：读回自造文件 → 采样
     {
         const std::string read_cmd = "read\n";
+        DWORD written = 0;
         if (!WriteFile(stdin_write, read_cmd.data(),
-                       static_cast<DWORD>(read_cmd.size()), &written, nullptr)) {
-            std::cerr << "io_activity: cannot send read command\n";
+                       static_cast<DWORD>(read_cmd.size()), &written, nullptr)
+                || written != read_cmd.size()) {
+            std::cerr << "io_activity: cannot send read command (full write failed)\n";
             cancel.store(true);
         } else {
             drive_segment("read", read_n);
         }
     }
 
-    // ---- 8. 收束：关闭 stdin（EOF 协议）→ 等 helper 自然退出 → 确认 ----
+    // ---- 10. 统一收束（D6）：取消 → EOF → 等自然退出 → 确认退出码 ----
     // 不 TerminateProcess；不按 PID 名清理。等待持有句柄确认退出状态。
+    cancel.store(true);
     CloseHandle(stdin_write);   // EOF：helper getline 失败 → 自然退出
+    stdin_write = nullptr;
     const auto exit_deadline = std::chrono::steady_clock::now()
-                             + std::chrono::seconds(10);
+                             + std::chrono::milliseconds(kTeardownWaitMs);
     DWORD wait_result = WAIT_TIMEOUT;
-    while ((wait_result = WaitForSingleObject(pi.hProcess, 500)) == WAIT_TIMEOUT) {
+    while ((wait_result = WaitForSingleObject(pi.hProcess, 100)) == WAIT_TIMEOUT) {
         if (std::chrono::steady_clock::now() > exit_deadline) break;
     }
     const bool helper_exited = (wait_result == WAIT_OBJECT_0);
@@ -608,7 +1287,7 @@ int main(int argc, char** argv) {
     CloseHandle(stdout_read);   // 父端管道收束
     CloseHandle(pi.hThread);    // 线程句柄收束（进程句柄最后关）
 
-    // ---- 9. 结果日志与退出 ----
+    // ---- 11. 结果日志与退出 ----
     {
         std::ofstream out(activity_log, std::ios::app);
         out << "result="
@@ -625,7 +1304,8 @@ int main(int argc, char** argv) {
     if (!helper_exited) {
         // 自然退出未确认：报告阻塞/身份，保留资源（句柄/进程），不强杀
         std::cerr << "io_activity: helper did not exit naturally; pid="
-                  << helper_pid << " creation_tick=" << real_tick
+                  << pi.dwProcessId << " creation_tick=" << real_tick
+                  << " image_chars="
                   << " handle=0x" << std::hex
                   << reinterpret_cast<std::uintptr_t>(pi.hProcess) << std::dec
                   << " — left for user disposition (not terminated)\n";

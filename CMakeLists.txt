@@ -50,8 +50,15 @@ if(WIN32)
     # #11 受控 I/O 实验入口（11H）：纯 Win32（windows.h），置于 WIN32 门内；
     # 只构建，不默认 add_test。无 --allow-controlled-io 时 exit 2；
     # 执行需用户单独批准（计划 §5.4）。
+    # shell32：CommandLineToArgvW（宽入口解析，helper-binding 修复计划 D2）。
     add_executable(io_activity_checks tests/io_activity_checks.cpp)
-    target_link_libraries(io_activity_checks PRIVATE tmog_core)
+    target_link_libraries(io_activity_checks PRIVATE tmog_core shell32)
+
+    # helper-binding 安全检查（本版计划 D7）：同源纯参数/状态检查入口，
+    # 无真实 helper/文件/进程副作用；故障即 exit 1（不使用 assert）。
+    add_test(NAME io_helper_binding_checks
+             COMMAND io_activity_checks --check-helper-binding-only)
+    set_tests_properties(io_helper_binding_checks PROPERTIES TIMEOUT 120)
 
     add_executable(process_ops_checks tests/process_ops_checks.cpp)
     target_link_libraries(process_ops_checks PRIVATE tmog_core)

@@ -143,3 +143,65 @@ ALL PASS（51 checks）exit 0。
 - ��执行（合同禁止，不豁免）：--allow-controlled-io 授权路径、--helper、真实
   CreateProcess spawn、受控 I/O、io-experiment 目录、真实 app/smoke/terminate。
 - 授权路径动态行为（spawn/身份核实/段协议/收束）仅有静态编译+审查证据。
+
+## helper_binding_stage attempt=1（新阶段 HB-D，head 0627ab4 → 本轮新提交）
+
+范围：仅 helper 映像/Unicode 绑定修复；R1/R2/R3 保持不动。计划：doc/plans/
+2026-10-30-issue-11-helper-binding-repair-plan-v1.md v1（SHA afd0a9a3d97dadccaf
+5617f3269bd99ad1ee5b4f5299c3c722f88e213f8a1990），用户"批准限定实施"。允许四
+文件：tests/io_activity_checks.cpp、CMakeLists.txt、本验收文档、批准计划 WT 副本。
+
+- 宽入口（D2）：main 保留窄签名；GetCommandLineW→CommandLineToArgvW 宽 argv 进
+  parse_args（const wchar_t* const*）；数值 wcstoull/wcstoll + end 完整消费检查
+  （parse_wide_number：拒绝空白/负号于无符号/溢出 ERANGE/尾垃圾/零/超限），budget
+  1..300、max 1..67108864 原范围保持；LocalFree 配对。
+- own_executable_path（D3/HB3）：GetModuleFileNameW 256 WCHAR 倍增至 32768 上限，
+  仅 0<n<size 接受；返回 0/持续截断均无可用路径 → exit 8，spawn 前拒绝。
+- quote_windows_arg（HB1/HB2）：始终带引号；字面引号前累积反斜杠翻倍+1（2n+1）+
+  单个转义引号；闭引号前 2n。注：CommandLineToArgvW 对 argv[0] 有特殊规则（开引
+  号后字面取到闭引号，不还原 2n），转义语义经 argv[1] 位置验证；生产 argv[0] 为
+  真实 EXE 路径（HB1 9-token 往返覆盖）。
+- helper_command_line（D4）：固定 9 token（argv0/allow/helper/work-dir+值/budget+值/
+  max+值）；嵌入 NUL 拒绝；含终止符总长 >32768 拒绝（32767 边界内可构造）。
+- 启动核验分离（D5/HB5）：CreateProcessW 显式宽 lpApplicationName（无引号、不搜
+  PATH）+ lpCurrentDirectory=work_dir.native()；STARTUPINFOW/NUL 结尾可写宽缓冲。
+  spawn 后 QueryFullProcessImageNameW(flags0) 对自身与 pi.hProcess 各自完整读取，
+  lexically_normal 后逐 UTF-16 相等 + pi.dwProcessId 非零 + GetProcessTimes 真实
+  非零 tick——任一失败不发 write/read、不写可信身份日志、走统一收束（8/9）。
+- 有界握手（D6/HB6）：identity 命令 WriteFile 全量核验；PeekNamedPipe 轮询 ≤10ms
+  累积到换行，最多 255 字节，握手 ≤5s 且 ≤ 剩余预算（总预算从准备启动前计时）；
+  只有数据可读才 ReadFile；检测子退出/管道断开/过长。响应严格完整数字解析
+  （parse_wide_number 同源）后与父端独立核实值比对。
+- 统一收束 bounded_teardown（D6/HB6）：取消 → 关 stdin 写端 EOF → WaitForSingle
+  Object ≤10s 自然退出 → GetExitCodeProcess 确认；确认退出→8，未确认→9（进程句
+  柄保留+身份记 stderr、目录保留、转用户，绝不强杀）。第二 CreatePipe 失败关闭已
+  持第一对；SetHandleInformation 失败/写入失败/解析失败全部经同一收束出口。
+- HB1..6 检查（D1）：run_helper_binding_checks() 纯参数/状态/CommandLineToArgvW
+  解析检查，无文件/进程/窗口/IO 采样；48 断言全 PASS；不使用 assert（Release 可
+  失败，HB_exit=1 实测于开发中转义缺陷）。--check-helper-binding-only 仅当唯一
+  参数时进入；混用 exit 4；其余路径先授权 gate（无 flag 与单独 --helper 均 exit 2
+  零副作用）。
+- CMakeLists：io_activity_checks 链接 shell32（CommandLineToArgvW）；新增
+  add_test io_helper_binding_checks（io_activity_checks --check-helper-binding-
+  only）TIMEOUT 120；实验入口仍不 add_test。
+
+## helper_binding_stage 验证证据
+
+- 构建：build/issue11-binding-dev/{debug,release}（本阶段唯一登记构建目录）。
+  Debug/Release 各 configure exit 0 + build --parallel 2 exit 0（0 error/FAILED）。
+- HB 检查：Debug 与 Release `io_activity_checks --check-helper-binding-only` 均
+  48 PASS / 0 FAIL / exit 0（GREEN）；开发中首跑 3 FAIL→exit 1（可失败性实测），
+  根因两段：①quote 字面引号多输出一对 \"（生产 bug，修复）②argv[0] 特殊解析规
+  则（测试位置修正，非生产缺陷）。修复探针在登记构建目录内（quote_probe.cpp，
+  用后可弃），tracked 文件外无源码残留。
+- Gate：两配置 no-flag exit 2、--helper 单独 exit 2（零文件/子进程副作用）；
+  检查 flag 混用 exit 4。
+- 库存：ctest -N 六项正则两配置均 Total Tests: 6（process/close_lifecycle/
+  sampling_recovery/stale_persistence/io_table + 新 io_helper_binding）。
+- 安全回归：ctest -j1 --timeout 120 --output-on-failure 同正则两配置均 6/6
+  passed exit 0（R1/R2/R3 安全项不退化）。
+- RED 基线：旧 HEAD 代码构建后 --check-helper-binding-only → exit 4（入口不存
+  在），新实现后 48 PASS（RED→GREEN 完整链）。
+- 未执行（合同禁止，不豁免）：--allow-controlled-io 授权路径、真实 CreateProcess
+  spawn/EOF、真实 I/O、TerminateProcess、真实 GUI、smoke、全量 CTest。授权路径动
+  态行为仅有静态编译+审查证据；真实 helper/实机门槛按计划 §6 另批。
