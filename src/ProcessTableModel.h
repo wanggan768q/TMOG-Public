@@ -25,10 +25,16 @@ public:
     // 整表替换为新快照
     void replace_snapshot(std::vector<SampledRow> rows);
 
+    // #11 R1：全表陈旧标志（采样失败置位，当前代际真实成功帧清除）。
+    // 置位期间各列 I/O tooltip 追加"数据已陈旧"提示，不隐藏各 I/O 具体状态。
+    // 只发受影响 tooltip 单元格 dataChanged，不做全表 reset。
+    void set_table_stale(bool stale);
+
     const SampledRow* row_at(int row) const;
 
 private:
     std::vector<SampledRow> rows_;
+    bool table_stale_ = false;
 };
 
 } // namespace tmog

@@ -1,18 +1,22 @@
 // #11 io_table_checks：I/O 列展示/数值排序/哨兵/选择保持——走生产呈现路径。
 // 生产 ProcessTableModel + 与 MainWindow 同源配置的 QSortFilterProxyModel
 // （UserRole 排序，复刻 MainWindow.cpp:25-27 既有配置，不复制 model 逻辑）。
-// T3/T4 另经生产 MainWindow（构造注入受控枚举器，G5 模式）驱动真实采样管线
+// T3/T4/T4b 另经生产 MainWindow（构造注入受控枚举器，G5 模式）驱动真实采样管线
 // 验证选择保持；离屏运行（ctest ENV offscreen）。
 // 禁止 real terminate / 真实枚举 / 受控 IO。
 //
 //  T1. 2/10/1000 B/s 正反数值排序（UserRole double 语义，非字典序）
 //  T2. 无效哨兵与有效值同类型（double）可比：-1.0 排序位置稳定
 //  T3. 排序 + 新帧后选中行映射身份保持（经生产 MainWindow 注入路径）
-//  T4. 身份复用（同 PID 不同 creation_tick）不误选
+//  T4. 身份恒定时选择保持；T4b. 身份复用（同 PID 不同 creation_tick+累计
+//      跳变）不错误继承旧选择——pid-only 实现下此断言 FAIL（可失败 oracle）
 //  T5. CPU 状态不被 I/O 失败覆盖（status 与 io_status 独立）
 //  T6. 无效哨兵 UserRole == double -1.0；有效值 double
 //  T7. tooltip 含"并非物理磁盘吞吐"与状态说明
 //  T8. diff_samples 产出行 io_status 与 CPU status 分离（FirstSample 帧）
+//  T9. R1：采样失败 → model 全表陈旧（I/O tooltip 追加陈旧提示，不隐藏
+//      各 I/O 具体状态）；当前代际恢复首帧 → 陈旧清除（经生产 MainWindow
+//      成功/失败回调接线）
 #include <QApplication>
 #include <QEventLoop>
 #include <QSortFilterProxyModel>
@@ -22,6 +26,7 @@
 #include <functional>
 #include <iostream>
 #include <optional>
+#include <set>
 #include <vector>
 #include "ProcessSampler.h"
 #include "ProcessTableModel.h"
@@ -79,8 +84,12 @@ QString io_display(const SortedView& v, int row, int col) {
     return v.proxy.index(row, col).data(Qt::DisplayRole).toString();
 }
 
-// 受控枚举器：每帧发同一组 3 进程（PID 1-3，身份不变），I/O 累计随帧
-// 递增——第二帧起差分出稳定速率；每帧全进程在场，选择保持可验证。
+// 受控枚举器：默认每帧发同一组 3 进程（PID 1-3，身份恒定不复用），I/O
+// 累计随帧递增——第二帧起差分出稳定速率；每帧全进程在场，选择保持可验证。
+// fail_at_frames：脚本化在指定帧序（1-based）注入 ok=false API 失败，
+// 驱动生产 MainWindow 失败回调（R1 陈旧接线验证用）。
+// reuse_frame：设置后该帧序对 PID101 返回同 PID 不同 creation_tick 且
+// 累计跳变（模拟 PID 复用后计数重置），驱动 T4b 可失败场景。
 class IoTableEnumerator : public IProcessEnumerator {
 public:
     std::optional<SampleResult> take_sample() override {
@@ -88,6 +97,11 @@ public:
         SampleResult r;
         r.ok = true;
         r.wall_clock_ns = static_cast<std::uint64_t>(calls_) * 1'000'000'000ULL;
+        if (fail_frames.count(calls_)) {
+            r.ok = false;
+            r.error = "injected io_table failure";
+            return r;
+        }
         for (std::uint32_t pid = 1; pid <= 3; ++pid) {
             ProcessSnapshot ps;
             ps.identity.pid = pid;
@@ -98,8 +112,30 @@ public:
             ps.io_write_bytes = pid * 2'000ULL * calls_;
             r.processes.push_back(ps);
         }
+        if (reuse_frame) {
+            ProcessSnapshot ps;
+            ps.identity.pid = 101;
+            if (calls_ < reuse_frame) {
+                // 旧身份：tick=1，累计稳定大值（差分正常）
+                ps.identity.creation_tick = 1;
+                ps.cpu_time_available = true;
+                ps.io_available = true;
+                ps.io_read_bytes = 42'000'000'000ULL + 1'000ULL * calls_;
+                ps.io_write_bytes = 3'000ULL * calls_;
+            } else {
+                // PID 复用：creation_tick 变化 + 累计跳变（新进程从零起步）
+                ps.identity.creation_tick = 777'000;
+                ps.cpu_time_available = true;
+                ps.io_available = true;
+                ps.io_read_bytes = 1'000'000'000ULL;
+                ps.io_write_bytes = 2'000ULL;
+            }
+            r.processes.push_back(ps);
+        }
         return r;
     }
+    std::set<int> fail_frames;
+    int reuse_frame = 0;   // 0 = 不注入复用
     int calls_ = 0;
 };
 
@@ -238,6 +274,71 @@ int main(int argc, char** argv) {
         pump_ms(300);
     }
 
+    // ---- T4b: 真实 PID 复用（同 PID 不同 creation_tick + 累计跳变）：
+    // 新身份不得错误继承旧选择。可失败 oracle：pid-only 匹配实现下
+    // restore_selection 会把选中错误恢复到 PID101 新身份行 → 断言 FAIL。
+    {
+        auto e = std::make_unique<IoTableEnumerator>();
+        IoTableEnumerator* raw = e.get();
+        raw->reuse_frame = 2;   // 第 2 帧起 PID101 复用（新 creation_tick+累计跳变）
+        MainWindow win(nullptr, std::move(e));
+        // 帧1：常规 3 进程（PID 1-3），无 PID101 → 用户无法选 PID101；
+        // 改为：帧1 注入旧身份 PID101（tick=1，累计大值），帧2 起复用。
+        pump_until([&] { return raw->calls_ >= 1; }, 5000);
+        pump_ms(200);
+        auto* table = win.findChild<QTableView*>();
+        auto* proxy = win.findChild<QSortFilterProxyModel*>();
+        check(table != nullptr && proxy != nullptr, "T4b table/proxy found");
+
+        // 帧内用户选择 PID101 旧身份行（旧 tick=1）
+        if (table && proxy) {
+            const auto* tm = static_cast<const ProcessTableModel*>(proxy->sourceModel());
+            bool selected = false;
+            for (int r = 0; r < tm->rowCount(); ++r) {
+                const auto* row = tm->row_at(r);
+                if (row && row->snapshot.identity.pid == 101
+                        && row->snapshot.identity.creation_tick == 1) {
+                    const auto pidx = proxy->mapFromSource(tm->index(r, 0));
+                    if (pidx.isValid()) {
+                        table->selectRow(pidx.row());
+                        selected = true;
+                    }
+                    break;
+                }
+            }
+            check(selected, "T4b old-identity pid101 row selected");
+            (void)selected;
+        }
+        pump_ms(100);
+
+        // 帧2+：PID101 复用（tick=777000，累计跳变）。restore_selection 按
+        // (pid, creation_tick) 身份匹配 → 不应恢复到新身份行。
+        pump_until([&] { return raw->calls_ >= 3; }, 5000);
+        pump_ms(300);
+        if (proxy && table) {
+            const auto idx = table->currentIndex();
+            if (idx.isValid()) {
+                const auto src = proxy->mapToSource(idx);
+                const auto* tm = static_cast<const ProcessTableModel*>(
+                    proxy->sourceModel());
+                const auto* row = tm->row_at(src.row());
+                check(row != nullptr, "T4b mapped source row exists");
+                if (row) {
+                    // 可失败 oracle：pid-only 实现将误选新身份行 → 这里 FAIL
+                    const bool wrong_reuse = row->snapshot.identity.pid == 101
+                                          && row->snapshot.identity.creation_tick == 777'000;
+                    check(!wrong_reuse,
+                          "T4b reused identity NOT wrongly re-selected (pid-only impl FAILS here)");
+                }
+            } else {
+                // 选中消失也是合法结果（新帧无旧身份行可恢复）
+                check(true, "T4b selection cleared (valid: identity gone)");
+            }
+        }
+        win.close();
+        pump_ms(300);
+    }
+
     // ---- T5: CPU 状态不被 I/O 失败覆盖 ----
     {
         SortedView v;
@@ -302,6 +403,43 @@ int main(int argc, char** argv) {
                   && rows[0].status == ProcessStatus::FirstSample
                   && rows[0].io_status == ProcessStatus::FirstSample,
               "T8 diff_samples first-frame io/cpu status both FirstSample");
+    }
+
+    // ---- T9: R1 全表陈旧 tooltip 经生产 MainWindow 成功/失败回调接线 ----
+    // 场景：帧1 成功（正常速率）→ 帧2 注入失败 → 陈旧置位：I/O tooltip
+    // 追加全表陈旧提示但保留各 I/O 具体状态 → 帧3 当前代际成功（恢复首帧
+    // "待采样"）→ 陈旧清除。禁止只测 setter 不接生产。
+    {
+        auto e = std::make_unique<IoTableEnumerator>();
+        IoTableEnumerator* raw = e.get();
+        raw->fail_frames = {2};   // 帧2 注入 ok=false
+        MainWindow win(nullptr, std::move(e));
+        // 帧1 成功落地
+        pump_until([&] { return raw->calls_ >= 1; }, 5000);
+        pump_ms(300);
+        auto* model = win.findChild<ProcessTableModel*>();
+        check(model != nullptr, "T9 production model found");
+        pump_until([&] { return raw->calls_ >= 2; }, 5000);
+        // 帧2 失败已发出：等待失败回调投递并置位
+        pump_ms(400);
+        if (model) {
+            const auto tip = model->index(0, ColIoRead).data(Qt::ToolTipRole).toString();
+            check(tip.contains(QStringLiteral("数据已陈旧")),
+                  "T9 tooltip has whole-table stale hint after production failure callback");
+            // 不隐藏各 I/O 具体状态：正常速率 tooltip 主体仍在
+            check(tip.contains(QStringLiteral("并非物理磁盘吞吐")),
+                  "T9 per-column I/O state not hidden by stale hint");
+        }
+        // 帧3：当前代际成功（恢复首帧，整表待采样）→ 陈旧清除
+        pump_until([&] { return raw->calls_ >= 3; }, 5000);
+        pump_ms(300);
+        if (model) {
+            const auto tip2 = model->index(0, ColIoRead).data(Qt::ToolTipRole).toString();
+            check(!tip2.contains(QStringLiteral("数据已陈旧")),
+                  "T9 stale hint cleared by current-generation success frame");
+        }
+        win.close();
+        pump_ms(300);
     }
 
     std::cout << (failures == 0 ? "io_table_checks: ALL PASS\n"

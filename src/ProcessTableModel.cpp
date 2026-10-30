@@ -79,6 +79,12 @@ QVariant ProcessTableModel::data(const QModelIndex& index, int role) const {
         default:        return {};
         }
     }
+    // #11 R1：陈旧提示辅助——全表陈旧时给 I/O tooltip 追加统一后缀，
+    // 不隐藏各列原有具体状态（待采样/不可用/身份变化/无效增量/速率）。
+    const auto with_stale = [this](QString tip) -> QVariant {
+        if (!table_stale_) return tip;
+        return tip + tr("\n数据已陈旧（最近一次采样失败，当前显示非实时）");
+    };
     if (role == Qt::ToolTipRole) {
         switch (index.column()) {
         case ColIoRead:
@@ -89,16 +95,16 @@ QVariant ProcessTableModel::data(const QModelIndex& index, int role) const {
             QString base = is_read ? tr("Windows 进程 I/O 读；并非物理磁盘吞吐")
                                    : tr("Windows 进程 I/O 写；并非物理磁盘吞吐");
             if (r.io_status == ProcessStatus::FirstSample)
-                return base + tr("\n待采样：下一帧将建立基线");
+                return with_stale(base + tr("\n待采样：下一帧将建立基线"));
             if (r.io_status == ProcessStatus::Unavailable)
-                return base + tr("\n不可用：平台未提供或本次读取失败");
+                return with_stale(base + tr("\n不可用：平台未提供或本次读取失败"));
             if (r.io_status == ProcessStatus::IdentityChanged)
-                return base + tr("\n身份变化：PID 复用，基线无效");
+                return with_stale(base + tr("\n身份变化：PID 复用，基线无效"));
             if (r.io_status == ProcessStatus::InvalidDelta)
-                return base + tr("\n无效增量：累计值倒退，速率不可信");
-            if (!rate) return base + tr("\n无有效速率");
-            return base + QStringLiteral("\n当前速率: ")
-                 + data(index, Qt::DisplayRole).toString() + tr("（非物理磁盘吞吐）");
+                return with_stale(base + tr("\n无效增量：累计值倒退，速率不可信"));
+            if (!rate) return with_stale(base + tr("\n无有效速率"));
+            return with_stale(base + QStringLiteral("\n当前速率: ")
+                 + data(index, Qt::DisplayRole).toString() + tr("（非物理磁盘吞吐）"));
         }
         default: return {};
         }
@@ -128,6 +134,17 @@ void ProcessTableModel::replace_snapshot(std::vector<SampledRow> rows) {
 
 const SampledRow* ProcessTableModel::row_at(int row) const {
     return row >= 0 && row < (int)rows_.size() ? &rows_[row] : nullptr;
+}
+
+void ProcessTableModel::set_table_stale(bool stale) {
+    if (table_stale_ == stale) return;
+    table_stale_ = stale;
+    // 陈旧提示只影响 I/O 列 tooltip：精确发出这些单元格的 dataChanged，
+    // 不做全表 reset（不打断选择/排序状态）。
+    if (rowCount() > 0) {
+        emit dataChanged(index(0, ColIoRead), index(rowCount() - 1, ColIoWrite),
+                         {Qt::ToolTipRole});
+    }
 }
 
 } // namespace tmog

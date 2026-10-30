@@ -79,3 +79,12 @@ ALL PASS（51 checks）exit 0。
 - process_ops_checks 真实终止回归（需单独受控授权）。
 - 实际桌面 UI 人工点验（I/O 列显示/排序/tooltip 的视觉验收）。
 - Issue #11 整票关闭：以上三项完成后由 Product 决定。
+
+
+## 返工 attempt=2（repair_round=1，head 9281643 → 本轮新提交）
+
+- R1（裁定方案B，用户扩准 MainWindow.cpp 接线）：ProcessTableModel 新增最小 `bool table_stale_` + `set_table_stale(bool)`（dataChanged 仅发 I/O 列 ToolTipRole，不全表 reset）；tooltip 经 with_stale 追加"数据已陈旧"后缀，不隐藏各 I/O 具体状态。MainWindow 失败回调置 true、当前代际成功回调清 false；跨暂停旧代际成功经既有代际守卫丢弃不清陈旧；stale_label 行为不变。
+- R2：T4b 真实 PID 复用可失败场景（帧1 旧身份 PID101 tick=1 累计稳定可选；帧2 起 tick=777000 累计跳变）——pid-only 匹配实现下断言 `!wrong_reuse` FAIL；正确实现下选中消失（合法分支）。枚举器非恒 tick1（777000 帧 + 失败帧注入）。
+- R3（仅编写，未执行授权路径）：io_activity_checks 完整实验入口——argv gate exit2（无 flag 零副作用）；参数解析（未知/相对/非法预算 exit4）；WorkDir 拒绝（非空/链接/reparse/工程根及直接子目录/缺 --work-dir）；helper 身份 PID+creation+自持句柄日志；idle/write/read 段协议（各 ≥2 有效样本、真实 QPC dt、差分速率、实际累计非文件尺寸假推）；取消/预算收束自然退出协议（stdin EOF），不强杀。静态与动态分列：动态仅验证 exit2 与副作用前参数负例（exit4），授权路径零执行。
+- 验证：Debug/Release configure/build exit0；两配置库存恰 5 项、j1 timeout120 全 5/5 PASS；process_checks 故意失败探针 exit1 后还原复绿（ninja 时间戳陈旧需 touch 重编译，源 md5 前后等于 HEAD）；无 flag exit2 双配置零文件/子进程副作用。
+- 未执行（保持原验收不豁免）：11H 受控 I/O 实验、process_ops 真实终止回归、实机 UI 人工点验。
