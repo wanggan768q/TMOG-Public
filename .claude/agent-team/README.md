@@ -177,7 +177,9 @@ IssueWriter 只在 Product 明确放行的固定 SHA 上操作；先读取远程
 2. 本任务 worktree 内已证实 CodeGraph/技能副本/构建产物可以清理；当前工程 `.codegraph`、`.claude/workflow`、原技能以及 worktree 外缓存都保留。初始化改了已有文件须审查/提交或另请用户处理，不能按产物删掉。
 3. 终端关闭不证明索引 daemon/构建进程已退出。以本次启动身份与记录核查归属和退出；不按名称/裸 PID 杀进程，不终止无法证明归属的 daemon。占用/权限失败保留目录并记录。
 4. cwd 和文件句柄退出待删目录后，定向清理核实产物，使用 `git worktree remove <path>` 正常移除，不 --force，不 git clean -fdx，不递归删除整个根目录。失败保留 cleanup_pending。
-5. 删除任务分支前确认对应 PR 已合并、没有合并后新增提交、分支未被其他 worktree 使用；正常 `git branch -d <branch>`。远程删除前重新核对 tip 等于已合并 head，用删除的 force-with-lease 精确 expected tip 保护竞争变化，具体 syntax 先查 help；这仅是授权删除的竞争保护，不授权强推改写。本地 -d 拒绝时不 -D；远程变化则保留。
+5. 删除任务分支前确认对应 PR 已合并、没有合并后新增提交、分支未被其他 worktree 使用；正常 `git branch -d <branch>`。远程删除前用 `git ls-remote origin refs/heads/<branch>` 核对 tip 等于已合并 head，一致才 `git push origin --delete <branch>`；不一致则保留。不用 `--force-with-lease` 删除（会命中 settings 的 `git push * --force*` 拒绝规则）。仓库开启 delete_branch_on_merge 时远程分支已由 GitHub 删除，只需核对已不存在。本地 -d 拒绝时不 -D；远程变化则保留。由 Product 执行本节清理，并在完成后重跑 `branches.ps1` 更新看板。
+
+**被取代的旧分支**：新任务分支取代旧分支（计划里写明旧 SHA 只作参考）时，Product 在 `.claude/workflow/superseded-branches.md` 登记旧分支、旧 tip、取代者、关联 Issue 和删除条件“Issue 关闭”（跨执行长期有效，不放单个 run 的 state），看板分支表标注“待 #N 关闭后删”。每次重写看板时检查该表：Issue 关闭后，Product 先核对旧分支 tip 未变、无 worktree 正在使用且无未提交改动，再用 `git worktree remove` 和 `git branch -D` 删除（旧分支未合并，-d 必然拒绝；登记与 Issue 关闭即为授权），有远程分支按上条核对 tip 后删除。tip 变化或有未知改动则保留，交用户决定。
 6. 每一步记录结果；交付成功和清理成功分别计量，清理失败不重合并。整个任务目录删除后仍保留主工程进度、报告和复核证据。
 
 ## 能力与验证边界

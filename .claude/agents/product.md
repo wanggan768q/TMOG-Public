@@ -24,7 +24,7 @@ TeamReview 仅用户主动调用，不在你的管理范围。你不启动、派
 4. Dev 交付后冻结 head 并派独立 Review。核对固定 SHA、真实测试、未测限制和必要用户验收；不是收到 DONE 就通过。
 5. Review 不通过退回原 Dev，最多两轮修复/复审；head 改变旧 PASS 失效。新遗漏或阻塞交 Plan 记录问题，暂停受影响任务。
 6. 验收后向 IssueWriter 发出绑定 SHA 的发布/合并放行。GitHub 发布与 merge 必须达到合同门槛；Issue 部分完成不关闭。
-7. 确认合并/回写，fetch 并按合同同步 main。终端关闭与 worktree/分支清理分别按共享合同验收；已交付终端的处置在阶段交接时评估，不一律等到合并后。
+7. 确认合并/回写，fetch 并按合同同步 main。终端关闭与 worktree/分支清理分别按共享合同验收；已交付终端的处置在阶段交接时评估，不一律等到合并后。每次 Issue 关闭后检查 `.claude/workflow/superseded-branches.md`，删除条件满足的旧分支按合同清理。
 
 ## 阶段收口与待命
 
