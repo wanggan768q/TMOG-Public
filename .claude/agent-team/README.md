@@ -31,7 +31,7 @@ Product 每次执行解析并保存配置快照及 SHA-256；恢复时核对差�
 
 ## 任务拓扑、空闲派发与看板
 
-**拓扑（DAG）**：任何多任务目标先由 Plan 在计划中给出任务拓扑表，每行：task_id、Issue、角色类型（plan/dev/review…）、depends_on（task_id 列表）、允许修改路径、验收摘要。Product 把它原样落到 state.json 的 `tasks[].depends_on / allowed_paths`，作为派发唯一依据；拓扑变化须经 Plan 修订计划。两任务允许修改路径重叠时必须在拓扑里有依赖边，不能靠 Product 临时判断。
+**拓扑（DAG）**：全局路线以 `doc/plans/` 下最新批准的 `*-windows-master-topology-v*.md` 为全局 DAG（覆盖全部 OPEN Issue）；用户目标是“完成全部计划/Issue”时，Product 从全局 DAG 的就绪前沿取任务，为每票派 Plan 出单票计划，批准后进入 Dev。任何多任务目标先由 Plan 在计划中给出任务拓扑表，每行：task_id、Issue、角色类型（plan/dev/review…）、depends_on（task_id 列表）、允许修改路径、验收摘要。Product 把它原样落到 state.json 的 `tasks[].depends_on / allowed_paths`，作为派发唯一依据；拓扑变化须经 Plan 修订计划。两任务允许修改路径重叠时必须在拓扑里有依赖边，不能靠 Product 临时判断。
 
 **就绪前沿**：task 就绪 = 计划已批准 + depends_on 全部 merged/completed（纯计划/审查任务为交付验收）+ 与运行中任务路径无重叠 + 无未决用户门槛。
 
@@ -42,7 +42,7 @@ Product 每次执行解析并保存配置快照及 SHA-256；恢复时核对差�
 
 **用户决策**：在合同授权内能决定的（范围内澄清、派发顺序、重试、会话处置等）Product 自己定并记录理由。只有计划批准、范围扩大、人工验收、权限/外部发布、无法证明归属的清理等门槛才问用户，并使用 AskUserQuestion：一次合并同批问题（≤4 个），每题 2–4 个选项，推荐项放第一并标“（推荐）”，题干自带背景。等待答案期间不阻塞无关的就绪任务。
 
-**看板 `.claude/workflow/BOARD.md`**：Product 唯一写者，供用户直观查看；每次状态变化、派发或清理后整文件原子重写，开头两行固定为更新时间，以及“活动执行：<run-id 列表>；恢复：对 Product 说‘继续’或‘继续 <run-id>’”，供重启后直接查看。其后固定六节：
+**看板 `.claude/workflow/BOARD.md`**：Product 唯一写者，供用户直观查看；每次状态变化、派发或清理后整文件原子重写，开头两行固定为更新时间，以及“活动执行：<run-id 列表>；恢复：对 Product 说‘继续’或‘继续 <run-id>’”，供重启后直接查看。其后固定七节（0. 总体目标与全局路线：目标、全局 DAG 文件及批准状态、已关闭/进行中/未开始计数、全局 Mermaid 图、关键路径）：
 1. **任务表**：task_id | Issue | 阶段 | 依赖 | 角色会话 | 分支 | PR | 阻塞/待办 | 更新时间。
 2. **拓扑图**：Mermaid `graph LR`，节点 `T1["T1 #8 dev_running"]`，边为依赖；按阶段着色（完成/进行中/阻塞/未开始）。
 3. **会话占用**：每角色 `占用/上限`、当前会话名与任务。
@@ -114,7 +114,7 @@ Product 每次派发包含：执行ID、任务ID、attempt、role、project_root
 
 **落盘纪律：** 副作用前追加 intent 事件并原子写 state；副作用后保存 receipt/结果，追加 result 并更新 state。临时状态文件与 state 同目录，关闭文件句柄后用原子替换；首次创建用同卷重命名。出错保留旧 state，不截断它；events 末行不完整时保留原文件，核查后再修复。报告写入失败时不宣告阶段完成。主工程私有运行记录不会随 worktree 删除；需跨机器保存或备份须用户另行授权。
 
-**恢复：** 用户对 Product 说“继续”即为明确授权。未给 run-id 时 Product 自行定位：先读 `BOARD.md` 的活动执行，否则扫描 `.claude/workflow/*/state.json` 中仍有任务未到 completed（或未登记关闭的 blocked/cleanup_pending）的执行；恰好一个就直接恢复，多个则用 AskUserQuestion 让用户选（列出各 run 的任务与阶段），没有则回报无可恢复任务并待命。恢复后先重建看板，再按“空闲派发”继续。用户明确要求继续后，先核对配置/计划批准、Git worktree 与分支、角色名/ref/handle、报告 SHA、远程 PR/评论/merge/Issue 状态和资源存在性。意图没有结果表示未知，不直接重发。已验收版本不重开发、已有 PR/评论不重发布、已合并不重合并。会话确定退出后才能新建同任务角色并交付磁盘交接；可能存活但失联时先核查，不产生重复编辑者。环境变化或未经批准的计划版本阻塞受影响任务。
+**恢复：** 用户对 Product 说“继续”即为明确授权。未给 run-id 时 Product 自行定位：先读 `BOARD.md` 的活动执行，否则扫描 `.claude/workflow/*/state.json` 中仍有任务未到 completed（或未登记关闭的 blocked/cleanup_pending）的执行；恰好一个就直接恢复，多个则用 AskUserQuestion 让用户选（列出各 run 的任务与阶段），没有则回报无可恢复任务并待命。恢复后先重建看板（第 0 节为全局路线进度与全局拓扑图），处理看板“Product 待办”，再按“空闲派发”继续。用户明确要求继续后，先核对配置/计划批准、Git worktree 与分支、角色名/ref/handle、报告 SHA、远程 PR/评论/merge/Issue 状态和资源存在性。意图没有结果表示未知，不直接重发。已验收版本不重开发、已有 PR/评论不重发布、已合并不重合并。会话确定退出后才能新建同任务角色并交付磁盘交接；可能存活但失联时先核查，不产生重复编辑者。环境变化或未经批准的计划版本阻塞受影响任务。
 
 ## 技能使用证据
 
