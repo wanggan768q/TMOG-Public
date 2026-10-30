@@ -64,7 +64,7 @@ try {
         }
         Assert-Condition (-not $text.Contains([char]0xfffd)) "角色包含乱码替换字符：$name"
     }
-    foreach ($relative in @('.claude/agent-team/README.md', '.claude/agent-team/team-review.md', '.claude/workflow/README.md', 'AGENTS.md')) {
+    foreach ($relative in @('.claude/agent-team/README.md', '.claude/agent-team/team-review.md', '.workflow/README.md', 'AGENTS.md')) {
         Assert-Condition (Test-Path -LiteralPath (Join-Path $projectRoot $relative) -PathType Leaf) "缺少文档：$relative"
     }
     Write-Output 'PASS：六个角色、共享合同和配置结构检查通过。'

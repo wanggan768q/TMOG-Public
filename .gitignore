@@ -10,9 +10,10 @@
 !.claude/agent-team/config.example.json
 !.claude/agent-team/check.ps1
 !.claude/agent-team/branches.ps1
-!.claude/workflow/
-.claude/workflow/*
-!.claude/workflow/README.md
+# 运行进度在 .workflow/（不在 .claude 下，避开 Claude Code 受保护路径审批）；只入库 README。
+!.workflow/
+.workflow/*
+!.workflow/README.md
 build/
 build-debug/
 review-build*/

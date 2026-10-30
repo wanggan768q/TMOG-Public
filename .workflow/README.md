@@ -6,7 +6,7 @@
 
 恢复时把执行编号或目录交给 Product，例如：
 
-> 读取 .claude/workflow/run-001 的状态，按共享合同核对后继续；不要自动执行其他计划。
+> 读取 .workflow/run-001 的状态，按共享合同核对后继续；不要自动执行其他计划。
 
 独立 TeamReview 只由用户调用，其授权、会话记录和长期改进台账在 `team-review/`；单次审计报告按 `.claude/agent-team/team-review.md` 保存并关联源执行。它不改 Product 状态/事件，不受 Product 管理。任务报告的技能使用清单按共享合同记录，自报与工具证据分开；缺失写未知。
 

@@ -44,7 +44,7 @@ Product 每次执行解析并保存配置快照及 SHA-256；恢复时核对差�
 
 **用户决策**：在合同授权内能决定的（范围内澄清、派发顺序、重试、会话处置等）Product 自己定并记录理由。只有计划批准、范围扩大、人工验收、权限/外部发布、无法证明归属的清理等门槛才问用户，并使用 AskUserQuestion：一次合并同批问题（≤4 个），每题 2–4 个选项，推荐项放第一并标“（推荐）”，题干自带背景。等待答案期间不阻塞无关的就绪任务。
 
-**看板 `.claude/workflow/BOARD.md`**：Product 唯一写者，供用户直观查看；每次状态变化、派发或清理后整文件原子重写，开头两行固定为更新时间，以及“活动执行：<run-id 列表>；恢复：对 Product 说‘继续’或‘继续 <run-id>’”，供重启后直接查看。其后固定七节（0. 总体目标与全局路线：目标、全局 DAG 文件及批准状态、已关闭/进行中/未开始计数、全局 Mermaid 图、关键路径）：
+**看板 `.workflow/BOARD.md`**：Product 唯一写者，供用户直观查看；每次状态变化、派发或清理后整文件原子重写，开头两行固定为更新时间，以及“活动执行：<run-id 列表>；恢复：对 Product 说‘继续’或‘继续 <run-id>’”，供重启后直接查看。其后固定七节（0. 总体目标与全局路线：目标、全局 DAG 文件及批准状态、已关闭/进行中/未开始计数、全局 Mermaid 图、关键路径）：
 1. **任务表**：task_id | Issue | 阶段 | 依赖 | 角色会话 | 分支 | PR | 阻塞/待办 | 更新时间。
 2. **拓扑图**：Mermaid `graph LR`，节点 `T1["T1 #8 dev_running"]`，边为依赖；按阶段着色（完成/进行中/阻塞/未开始）。
 3. **会话占用**：每角色 `占用/上限`、当前会话名与任务。
@@ -61,7 +61,7 @@ Product 每次执行解析并保存配置快照及 SHA-256；恢复时核对差�
 3. 校验路径确实是 Worktree_Root 的后代；检查已有父目录的 junction/symlink/reparse point 和解析后的实际路径，不能仅做字符串 startsWith。确认目标不存在；目录冲突不覆盖。
 4. 正常 `git worktree add -b <task-branch> <absolute-path> <base-sha>`；登记实际 Git worktree、分支、路径及创建结果。失败结果不明先 `git worktree list --porcelain` 核查。
 5. 会话启动前同步 `project_root/.claude/skills/` 到 `worktree_path/.claude/skills/`：逐文件检查来源／目标路径及链接，已有相同内容跳过，已有不同内容报告冲突；复制普通文件、保留结构，不覆盖链接或跟踪文件。登记新复制文件 SHA-256 和原本存在的目录。不整树复制 `.claude`，不复制旧 `.codegraph`。
-6. 角色定义仍以主工程为源；使用下节显式 JSON 注入，避免依赖旧 main 是否已有角色文件。Plan 编写的新计划保存在主工程，Dev 把本任务批准版本的计划／变更记录同步到任务树的 `doc/plans/` 并纳入任务提交；主工程草稿及进度保留。没有 Dev 任务承载的计划（纯计划、澄清、路线图）在交付验收后由 Product 开 `docs/plans-<日期>` 分支，经 IssueWriter 以 PR 合入；`.claude/workflow/` 运行记录始终不入库。任务 PR 合并后，主工程中同名且内容相同的未跟踪计划文件会被 fast-forward 覆盖为已跟踪版本，Product 在同步 main 前先确认内容一致再移除未跟踪副本。
+6. 角色定义仍以主工程为源；使用下节显式 JSON 注入，避免依赖旧 main 是否已有角色文件。Plan 编写的新计划保存在主工程，Dev 把本任务批准版本的计划／变更记录同步到任务树的 `doc/plans/` 并纳入任务提交；主工程草稿及进度保留。没有 Dev 任务承载的计划（纯计划、澄清、路线图）在交付验收后由 Product 开 `docs/plans-<日期>` 分支，经 IssueWriter 以 PR 合入；`.workflow/` 运行记录始终不入库。任务 PR 合并后，主工程中同名且内容相同的未跟踪计划文件会被 fast-forward 覆盖为已跟踪版本，Product 在同步 main 前先确认内容一致再移除未跟踪副本。
 7. 构建产物只在任务 worktree 内的专用构建目录产生，首次生成前登记目录边界；对技能／索引／构建目录的新出现文件同样需要归属与变更核查。
 
 ## 普通 Orca 终端与 Claude 消息
@@ -104,7 +104,7 @@ orca terminal switch --terminal <新handle> --json   # orphaned 或 tabId 为 pt
 
 Product 每次派发包含：执行ID、任务ID、attempt、role、project_root、worktree_path、指定 Issue、计划绝对路径/版本/SHA-256、批准记录、允许修改范围、明确验收项、验证命令、base/head SHA、结果报告绝对路径、协调者地址和下一步权限边界。缺失会影响方案的条件先问用户。
 
-执行目录 `project_root/.claude/workflow/<run-id>/`：
+执行目录 `project_root/.workflow/<run-id>/`（2026-10-30 起；此前在 `.claude/workflow/`，已原样迁移。历史 state/events/报告中出现的 `.claude/workflow/...` 路径一律按 `.workflow/...` 解析，不改写历史记录）：
 
 - `state.json`：Product 是唯一写者，保存 schema_version=1、run_id、project_root、配置摘要、计划版本及批准记录、任务合同、current_phase、attempt、repair_rounds、base/head/reviewed SHA、角色会话/handle、资源归属、PR/评论/merge SHA、阻塞及同步/清理状态。
 - `events.jsonl`：Product 追加事件，至少包含 event_id、UTC 时间、task_id、attempt、操作、阶段、outcome、证据路径；不包含凭证。
@@ -116,7 +116,7 @@ Product 每次派发包含：执行ID、任务ID、attempt、role、project_root
 
 **落盘纪律：** 副作用前追加 intent 事件并原子写 state；副作用后保存 receipt/结果，追加 result 并更新 state。临时状态文件与 state 同目录，关闭文件句柄后用原子替换；首次创建用同卷重命名。出错保留旧 state，不截断它；events 末行不完整时保留原文件，核查后再修复。报告写入失败时不宣告阶段完成。主工程私有运行记录不会随 worktree 删除；需跨机器保存或备份须用户另行授权。
 
-**恢复：** 用户对 Product 说“继续”即为明确授权。未给 run-id 时 Product 自行定位：先读 `BOARD.md` 的活动执行，否则扫描 `.claude/workflow/*/state.json` 中仍有任务未到 completed（或未登记关闭的 blocked/cleanup_pending）的执行；恰好一个就直接恢复，多个则用 AskUserQuestion 让用户选（列出各 run 的任务与阶段），没有则回报无可恢复任务并待命。恢复后先重建看板（第 0 节为全局路线进度与全局拓扑图），处理看板“Product 待办”，再按“空闲派发”继续。用户明确要求继续后，先核对配置/计划批准、Git worktree 与分支、角色名/ref/handle、报告 SHA、远程 PR/评论/merge/Issue 状态和资源存在性。意图没有结果表示未知，不直接重发。已验收版本不重开发、已有 PR/评论不重发布、已合并不重合并。会话确定退出后才能新建同任务角色并交付磁盘交接；可能存活但失联时先核查，不产生重复编辑者。环境变化或未经批准的计划版本阻塞受影响任务。
+**恢复：** 用户对 Product 说“继续”即为明确授权。未给 run-id 时 Product 自行定位：先读 `BOARD.md` 的活动执行，否则扫描 `.workflow/*/state.json` 中仍有任务未到 completed（或未登记关闭的 blocked/cleanup_pending）的执行；恰好一个就直接恢复，多个则用 AskUserQuestion 让用户选（列出各 run 的任务与阶段），没有则回报无可恢复任务并待命。恢复后先重建看板（第 0 节为全局路线进度与全局拓扑图），处理看板“Product 待办”，再按“空闲派发”继续。用户明确要求继续后，先核对配置/计划批准、Git worktree 与分支、角色名/ref/handle、报告 SHA、远程 PR/评论/merge/Issue 状态和资源存在性。意图没有结果表示未知，不直接重发。已验收版本不重开发、已有 PR/评论不重发布、已合并不重合并。会话确定退出后才能新建同任务角色并交付磁盘交接；可能存活但失联时先核查，不产生重复编辑者。环境变化或未经批准的计划版本阻塞受影响任务。
 
 ## 技能使用证据
 
@@ -177,12 +177,12 @@ IssueWriter 只在 Product 明确放行的固定 SHA 上操作；先读取远程
 清理条件：PR 确认 merged；任务全部报告/链接/批准与资源清单已保存在主工程；资源由本次流程创建并登记；当前真实路径仍在 Worktree_Root 内且 Git 注册匹配。纯 review/无 PR 任务不因此自动清理既有目录。
 
 1. 核查工作树未提交、未跟踪与 ignored 文件，逐项区分已交付代码、登记产物与未知对象。技能副本只有创建记录及当前摘要符合才可定向删除；已跟踪技能不作为缓存删除。索引/build 需核查首次生成和实际输出位置；发生额外代码/未知文件/未交付修改则保留。
-2. 本任务 worktree 内已证实 CodeGraph/技能副本/构建产物可以清理；当前工程 `.codegraph`、`.claude/workflow`、原技能以及 worktree 外缓存都保留。初始化改了已有文件须审查/提交或另请用户处理，不能按产物删掉。
+2. 本任务 worktree 内已证实 CodeGraph/技能副本/构建产物可以清理；当前工程 `.codegraph`、`.workflow`、原技能以及 worktree 外缓存都保留。初始化改了已有文件须审查/提交或另请用户处理，不能按产物删掉。
 3. 终端关闭不证明索引 daemon/构建进程已退出。以本次启动身份与记录核查归属和退出；不按名称/裸 PID 杀进程，不终止无法证明归属的 daemon。占用/权限失败保留目录并记录。
 4. cwd 和文件句柄退出待删目录后，定向清理核实产物，使用 `git worktree remove <path>` 正常移除，不 --force，不 git clean -fdx，不递归删除整个根目录。失败保留 cleanup_pending。
 5. 删除任务分支前确认对应 PR 已合并、没有合并后新增提交、分支未被其他 worktree 使用；正常 `git branch -d <branch>`。远程删除前用 `git ls-remote origin refs/heads/<branch>` 核对 tip 等于已合并 head，一致才 `git push origin --delete <branch>`；不一致则保留。不用 `--force-with-lease` 删除（会命中 settings 的 `git push * --force*` 拒绝规则）。仓库开启 delete_branch_on_merge 时远程分支已由 GitHub 删除，只需核对已不存在。本地 -d 拒绝时不 -D；远程变化则保留。由 Product 执行本节清理，并在完成后重跑 `branches.ps1` 更新看板。
 
-**被取代的旧分支**：新任务分支取代旧分支（计划里写明旧 SHA 只作参考）时，Product 在 `.claude/workflow/superseded-branches.md` 登记旧分支、旧 tip、取代者、关联 Issue 和删除条件“Issue 关闭”（跨执行长期有效，不放单个 run 的 state），看板分支表标注“待 #N 关闭后删”。每次重写看板时检查该表：Issue 关闭后，Product 先核对旧分支 tip 未变、无 worktree 正在使用且无未提交改动，再用 `git worktree remove` 和 `git branch -D` 删除（旧分支未合并，-d 必然拒绝；登记与 Issue 关闭即为授权），有远程分支按上条核对 tip 后删除。tip 变化或有未知改动则保留，交用户决定。
+**被取代的旧分支**：新任务分支取代旧分支（计划里写明旧 SHA 只作参考）时，Product 在 `.workflow/superseded-branches.md` 登记旧分支、旧 tip、取代者、关联 Issue 和删除条件“Issue 关闭”（跨执行长期有效，不放单个 run 的 state），看板分支表标注“待 #N 关闭后删”。每次重写看板时检查该表：Issue 关闭后，Product 先核对旧分支 tip 未变、无 worktree 正在使用且无未提交改动，再用 `git worktree remove` 和 `git branch -D` 删除（旧分支未合并，-d 必然拒绝；登记与 Issue 关闭即为授权），有远程分支按上条核对 tip 后删除。tip 变化或有未知改动则保留，交用户决定。
 6. 每一步记录结果；交付成功和清理成功分别计量，清理失败不重合并。整个任务目录删除后仍保留主工程进度、报告和复核证据。
 
 ## 能力与验证边界

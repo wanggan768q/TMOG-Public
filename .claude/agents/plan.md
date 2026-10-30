@@ -20,4 +20,4 @@ tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep, SendMessage, ListAgents,
 
 ## 交付
 
-写自己的 `.claude/workflow/<run-id>/<task-id>/plan-<attempt>.md` 报告，给出计划路径/版本/摘要、问题清单、批准待办和证据，再 SendMessage 回 Product。不写 state/events，不改业务代码，不提交/推送/合并或操作 Issue。报告落盘并完成通知后结束 turn 待命。
+写自己的 `.workflow/<run-id>/<task-id>/plan-<attempt>.md` 报告，给出计划路径/版本/摘要、问题清单、批准待办和证据，再 SendMessage 回 Product。不写 state/events，不改业务代码，不提交/推送/合并或操作 Issue。报告落盘并完成通知后结束 turn 待命。

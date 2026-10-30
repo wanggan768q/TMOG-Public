@@ -20,10 +20,10 @@ TeamReview 的目标是持续优化整个团队流程，包含技能使用、协
 
 审计可写自己的文件，不经 Product 意图确认，也不改 Product 的 state.json/events.jsonl：
 
-- 单执行报告：`.claude/workflow/<run-id>/team-review/<audit-id>.md`。
-- 多执行报告：`.claude/workflow/team-review/<audit-id>/report.md`，列明源执行编号及文件引用。
-- 独立会话/授权/恢复记录：`.claude/workflow/team-review/<audit-id>/audit-state.json`，包含 scope、用户授权、会话/handle、phase、证据引用和通知结果。
-- 长期改进台账：`.claude/workflow/team-review/ledger.json`，只有 TeamReview 写；包含 suggestion_id、来源报告、状态、用户决定证据、实施证据和复核结果。
+- 单执行报告：`.workflow/<run-id>/team-review/<audit-id>.md`。
+- 多执行报告：`.workflow/team-review/<audit-id>/report.md`，列明源执行编号及文件引用。
+- 独立会话/授权/恢复记录：`.workflow/team-review/<audit-id>/audit-state.json`，包含 scope、用户授权、会话/handle、phase、证据引用和通知结果。
+- 长期改进台账：`.workflow/team-review/ledger.json`，只有 TeamReview 写；包含 suggestion_id、来源报告、状态、用户决定证据、实施证据和复核结果。
 
 审计编号不与已有目录冲突，报告定稿后不覆写，修订生成新版本。state/ledger 同目录临时写入后原子替换，首次同卷重命名；写失败保留旧资料，不宣告完成。只备份/保留已有台账，不迁移或删除原始团队记录。所有审计运行资料保持本地 Git 忽略，主工程清理边界仍保留它们。
 
