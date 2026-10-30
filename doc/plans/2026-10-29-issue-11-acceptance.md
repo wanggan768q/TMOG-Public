@@ -88,3 +88,58 @@ ALL PASS（51 checks）exit 0。
 - R3（仅编写，未执行授权路径）：io_activity_checks 完整实验入口——argv gate exit2（无 flag 零副作用）；参数解析（未知/相对/非法预算 exit4）；WorkDir 拒绝（非空/链接/reparse/工程根及直接子目录/缺 --work-dir）；helper 身份 PID+creation+自持句柄日志；idle/write/read 段协议（各 ≥2 有效样本、真实 QPC dt、差分速率、实际累计非文件尺寸假推）；取消/预算收束自然退出协议（stdin EOF），不强杀。静态与动态分列：动态仅验证 exit2 与副作用前参数负例（exit4），授权路径零执行。
 - 验证：Debug/Release configure/build exit0；两配置库存恰 5 项、j1 timeout120 全 5/5 PASS；process_checks 故意失败探针 exit1 后还原复绿（ninja 时间戳陈旧需 touch 重编译，源 md5 前后等于 HEAD）；无 flag exit2 双配置零文件/子进程副作用。
 - 未执行（保持原验收不豁免）：11H 受控 I/O 实验、process_ops 真实终止回归、实机 UI 人工点验。
+
+
+## 返工 attempt=3（repair_round=2 最后轮，head 68a301a → 本轮新提交）
+
+范围：仅 R3 缺口；R1/R2 保持不动。允许修改文件：tests/io_activity_checks.cpp、
+本验收文档、CMakeLists.txt（仅实验 target WIN32 门）。
+
+- 预算真实消费：新增纯函数 `check_budget_request(request,used,cap)`（io_activity_checks.cpp:55）
+  与 `count_pending_loop_iterations(max_iters,per_iter,done,used,cap)`（:63，减法防 uint64
+  溢出，双约束计数+字节预算真控循环）；父进程 write 段请求字节数由该函数计算
+  （:562-566），wall deadline 由 `--budget-seconds` 真实推导（:506），段 deadline 取
+  剩余预算与 5s 小者（:511-524），预算算法经无副作用自检锚定（:268-278）。
+- 取消标志真实置位：`cancel.store(true)` 四处（采样失败 :530、段未凑足样本 :554、
+  命令发送失败 :573/:586），取消后跳过后续段并进入收束（非死标志/注释）。
+- CreateProcess 单 helper spawn：父进程 GetModuleFileNameW 取自身 EXE 绝对路径
+  （:379-383），CreateProcessA 以 `--allow-controlled-io --helper --work-dir …`
+  完整引号 argv 重启本 EXE 唯一 helper（:424-430，不 shell/外部程序）；保留
+  pi.hProcess 并用 GetProcessTimes 独立核实 helper 自报 PID+creation_tick 双字段
+  （:436-492），身份不符/不可核实即真实失败退出 8；身份核实通过后写归属日志
+  （:495-501）。
+- 段协议经 helper：idle/write/read 三段采样全部基于 helper 的 hProcess
+  GetProcessIoCounters 同口径累计（:217/:529），真实 QPC dt/差分速率写日志，
+  不与物理 Disk 等价；write 段 helper 侧写唯一自造 data.bin（4096B 块，受
+  max_bytes 约束），read 段读回同文件；父/助手 stdin/stdout 管道协议
+  （identity/ping/write/read），helper 未知命令忽略。
+- 收束协议：CloseHandle(stdin_write) 触发 stdin EOF → helper getline 失败自然退出
+  （:328/:594）；父 WaitForSingleObject 持有句柄等退出（:598），GetExitCodeProcess
+  确认退出码；自然退出未确认时报告身份（PID+creation_tick+句柄）保留资源不强杀
+  （:624-632，TerminateProcess 全文仅出现于该注释）；不按 PID/名字清理。
+- 句柄生命周期：父端 stdout_read/stdin_write 在 spawn 前经 SetHandleInformation
+  去继承（:409-411）防"子进程持写端致 stdout 永不 EOF"；子端 stdin_read/
+  stdout_write 在 CreateProcess 返回后立即由父关闭（:427-428）；成功路径 pi.hThread
+  先于 pi.hProcess 关闭（:607-608），所有失败分支逐一关闭已开句柄后退出。
+- gate 保留：argv gate 最先（:285-291）；无 flag exit2 零副作用（默认路径不跑自检，
+  自检在授权路径参数解析后、任何文件/进程副作用前 :293-301）；--helper 子模式须
+  显式授权 flag 齐（parse_args :95-98）；WorkDir 拒绝相对/已存在非空/链接/reparse/
+  工程根（:105-148）；helper 不打开父未指定路径、不创建额外子进程。
+- CMakeLists.txt：io_activity_checks 从 Qt6::Widgets 块移入 WIN32 门内（纯 Win32
+  源文件不依赖 Qt；review-2 Standards 硬违规修复），其余 target 属性未改，仍不
+  add_test。
+- 无副作用自检（exit 前纯内存）：check_budget_request/count_pending_loop_iterations
+  7 断言；自检失败 return 7。开发中自检曾抓到测试装置缺陷（断言期望写反 + check()
+  计数器参数遮蔽），修复后全 PASS——自检可失败性已动态验证。
+
+## attempt=3 验证证据
+
+- 双配置 configure exit 0（CMake 改动后完整 re-configure）+ build --parallel 2 exit 0。
+- 库存 ctest -N 精确 5 项（两配置）；ctest j1 timeout120 同正则 **5/5 PASS exit 0**
+  （Debug/Release，R1/R2 安全回归不退化）。
+- io_activity 无 flag：Debug exit 2 / Release exit 2，stdout 仅授权提示，零文件/子进程。
+- 参数负例单列：budget=0 / max-bytes 超限 / 未知 flag → exit 4（双配置 6 例）；
+  相对 work-dir → exit 5（授权路径自检先跑全 PASS 再拒绝，拒绝在任何文件/进程副作用前）。
+- ��执行（合同禁止，不豁免）：--allow-controlled-io 授权路径、--helper、真实
+  CreateProcess spawn、受控 I/O、io-experiment 目录、真实 app/smoke/terminate。
+- 授权路径动态行为（spawn/身份核实/段协议/收束）仅有静态编译+审查证据。

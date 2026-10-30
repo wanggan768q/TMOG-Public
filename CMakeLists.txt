@@ -47,6 +47,12 @@ if(WIN32)
     target_link_libraries(smoke_enumerate PRIVATE tmog_core)
     add_test(NAME smoke_enumerate COMMAND smoke_enumerate)
 
+    # #11 受控 I/O 实验入口（11H）：纯 Win32（windows.h），置于 WIN32 门内；
+    # 只构建，不默认 add_test。无 --allow-controlled-io 时 exit 2；
+    # 执行需用户单独批准（计划 §5.4）。
+    add_executable(io_activity_checks tests/io_activity_checks.cpp)
+    target_link_libraries(io_activity_checks PRIVATE tmog_core)
+
     add_executable(process_ops_checks tests/process_ops_checks.cpp)
     target_link_libraries(process_ops_checks PRIVATE tmog_core)
     add_test(NAME process_ops_checks COMMAND process_ops_checks)
@@ -103,11 +109,6 @@ if(TARGET Qt6::Widgets)
     set_tests_properties(io_table_checks PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins/platforms"
         TIMEOUT 120)
-
-    # #11 受控 I/O 实验入口（11H）：只构建，不默认 add_test。
-    # 无 --allow-controlled-io 时 exit 2；执行需用户单独批准（§5.4）。
-    add_executable(io_activity_checks tests/io_activity_checks.cpp)
-    target_link_libraries(io_activity_checks PRIVATE tmog_core)
 
     # M4：Windows 便携目录（windeployqt 收集 Qt 运行库与插件）
     if(WIN32)
