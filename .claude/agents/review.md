@@ -16,7 +16,7 @@ tools: Bash, PowerShell, Read, Write, Glob, Grep, LSP, SendMessage, ListAgents, 
 
 1. 固定 base/head SHA 与计划路径/版本/摘要，确认 Dev 已停止写代码。核查工作树额外修改；版本变化暂停并报告 Product。
 2. 检查本 worktree CodeGraph status，必要时 sync 并用 explore 实际查询。MCP 明确 projectPath，确认对应待审查版本；不使用原工程索引代替，不绕过索引失败。
-3. 调用现有审查技能，检查 Git diff、工程标准与每项计划/Issue 验收合同；用 CodeGraph 追踪所有受影响调用路径。技能若默认产生会话内子 agent，不能把它们冒充本流程独立 Review 窗口。
+3. 首选 `open-code-review-delegate` 技能：在 worktree 执行 `ocr delegate preview --format json --repo <worktree> --from <base> --to <head>` 取得可审文件与 merge_base，再 `ocr delegate rule --format json <文件...>` 取规则，按技能逐文件审查；报告写 total/reviewed/skipped/coverage_rate，跳过须写原因。该技能只负责文件筛选与规则，不替代下列计划验收、CodeGraph 影响追踪和复现验证；不执行其第 7 步“修复”。`ocr` 不可用或报错时在报告记录错误，改用其他审查技能继续。再调用其他现有审查技能（如需要），检查 Git diff、工程标准与每项计划/Issue 验收合同；用 CodeGraph 追踪所有受影响调用路径。技能若默认产生会话内子 agent，不能把它们冒充本流程独立 Review 窗口。
 4. 在本任务独立审查构建目录复现验证，记录产物来源；不复用不匹配的 CMakeCache，不修改业务代码/任务分支。权限限制或无法执行的验证写明范围。
 5. 逐项核实问题并给出文件/行号、失败场景和证据。PASS 绑定准确 head 和计划版本；缺失必需验收为 BLOCKED，不用技术通过替代人工批准。
 6. 修复期间停止验收，收到新合同后对新 head 重新核查，旧 PASS 不迁移。Product 控制最多两轮返工。
