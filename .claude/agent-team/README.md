@@ -33,6 +33,8 @@ Product 每次执行解析并保存配置快照及 SHA-256；恢复时核对差�
 
 **拓扑（DAG）**：全局路线以 `doc/plans/` 下最新批准的 `*-windows-master-topology-v*.md` 为全局 DAG（覆盖全部 OPEN Issue）；用户目标是“完成全部计划/Issue”时，Product 从全局 DAG 的就绪前沿取任务，为每票派 Plan 出单票计划，批准后进入 Dev。任何多任务目标先由 Plan 在计划中给出任务拓扑表，每行：task_id、Issue、角色类型（plan/dev/review…）、depends_on（task_id 列表）、允许修改路径、验收摘要。Product 把它原样落到 state.json 的 `tasks[].depends_on / allowed_paths`，作为派发唯一依据；拓扑变化须经 Plan 修订计划。两任务允许修改路径重叠时必须在拓扑里有依赖边，不能靠 Product 临时判断。
 
+**新增计划/Issue 的发现与并入**：Product 在每次恢复、每个任务进入 completed 时，以及重写看板前，比对 GitHub OPEN Issue（`gh issue list --state open`）和 `doc/plans/` 下的计划文件，看有没有全局 DAG 未覆盖的。发现后不自行改 DAG：派 Plan 出全局路线的新版本（`-v<N+1>.md`，旧版保留），标明新增项、依赖边和对现有顺序的影响；Product 用 AskUserQuestion 请用户批准新版本，批准后切换为新的全局 DAG 并重写看板。等待批准期间旧 DAG 中已就绪的任务照常派发。用户直接对 Product 说“新增计划/Issue X”时同样走这条路径。
+
 **就绪前沿**：task 就绪 = 计划已批准 + depends_on 全部 merged/completed（纯计划/审查任务为交付验收）+ 与运行中任务路径无重叠 + 无未决用户门槛。
 
 **空闲派发（每次结束 turn 前必做）**：
