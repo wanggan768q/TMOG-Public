@@ -10,7 +10,52 @@
 #   （白名单独立于清单存在）。
 param([Parameter(Mandatory)][string]$PackageDir)
 $ErrorActionPreference = 'Stop'
+
+# ===== 读取前统一拒绝链接/重解析/非普通对象（计划 §4M2；材料恢复修复轮1 R-B）=====
+# 必须先于任何 Test-Path/Get-Item/Get-Content/Get-FileHash/复制执行：
+#  1) 输入路径（解析前）与解析后路径：逐层祖先不得是链接/重解析点；
+#  2) 包内每一项（含隐藏项）：LinkType 非空 => 拒绝（pwsh7 对多链接文件报告
+#     HardLink；Windows PowerShell 5.1 的 LinkType 不报告硬链接，为平台限制）。
+function Find-LinkViolation([string]$p) {
+    # 返回第一个链接/重解析层的描述；无违规返回 $null
+    if ([string]::IsNullOrWhiteSpace($p)) { return $null }
+    if (-not (Test-Path -LiteralPath $p)) { return $null }
+    $full = [System.IO.Path]::GetFullPath($p)
+    $root = [System.IO.Path]::GetPathRoot($full)
+    $cur = $root.TrimEnd('\', '/')
+    if ($cur) {
+        $it = Get-Item -LiteralPath $cur -Force -ErrorAction SilentlyContinue
+        if ($it -and $it.LinkType) { return "$cur ($($it.LinkType))" }
+    }
+    $rest = $full.Substring($root.Length) -split '[\\/]' | Where-Object { $_ }
+    foreach ($seg in $rest) {
+        $cur = Join-Path $cur $seg
+        $it = Get-Item -LiteralPath $cur -Force -ErrorAction SilentlyContinue
+        if ($it -and $it.LinkType) { return "$cur ($($it.LinkType))" }
+    }
+    return $null
+}
+
+$v = Find-LinkViolation $PackageDir
+if ($v) { Write-Host "FAIL: 包路径含链接/重解析点（读取前拒绝）: $v"; exit 1 }
 $PackageDir = (Resolve-Path $PackageDir).Path
+$v = Find-LinkViolation $PackageDir
+if ($v) { Write-Host "FAIL: 解析后包路径含链接/重解析点（读取前拒绝）: $v"; exit 1 }
+$enumErrors = @()
+$preItems = @(Get-ChildItem $PackageDir -Recurse -Force -ErrorAction SilentlyContinue -ErrorVariable enumErrors)
+if ($enumErrors.Count -gt 0) {
+    Write-Host "FAIL: 包内枚举不完整（权限/IO），拒绝继续: $($enumErrors[0])"
+    exit 1
+}
+$linkHits = @($preItems | Where-Object { $_.LinkType })
+if ($linkHits.Count -gt 0) {
+    foreach ($h in $linkHits) {
+        Write-Host ("FAIL: 包内链接/重解析对象（读取前拒绝）: {0} ({1})" -f $h.FullName.Substring($PackageDir.Length + 1), $h.LinkType)
+    }
+    exit 1
+}
+Write-Host 'PASS: 包内无链接/重解析对象（读取前核验）'
+
 $script:fail = 0
 function Fail([string]$m) { Write-Host "FAIL: $m"; $script:fail++ }
 function Pass([string]$m) { Write-Host "PASS: $m" }

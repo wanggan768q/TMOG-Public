@@ -76,7 +76,43 @@ function New-Placeholder([string]$path, [string]$content) {
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
     Set-Content -Path $path -Value $content -Encoding ascii
 }
+# 来源清单构造：与包内 licenses/ 一致的文件清单 + 每文件 SHA-256（正例对照用真实
+# hash；负例可传假 hash）。P-C 后 New-BasePackage 依赖本函数，必须先于其定义。
+# 清单覆盖包内 licenses/ 全部文件：内嵌第三方 22 项 + Qt/GCC 工具链 6 项。
+function Write-LicenseSources([string]$dir, [switch]$RealHashes) {
+    $entries = @(
+        'licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
+        'licenses/gcc-COPYING3.txt','licenses/gcc-COPYING.RUNTIME.txt',
+        'licenses/winpthreads-COPYING.txt','licenses/mingw-w64-runtime-COPYING.txt',
+        'licenses/zlib-LICENSE.txt','licenses/libpng-LICENSE.txt','licenses/libpng-libpng-2.0-LICENSE.txt',
+        'licenses/libjpeg-turbo-LICENSE.txt','licenses/libjpeg-turbo-ijg-license.txt','licenses/libjpeg-turbo-COPYRIGHT.txt',
+        'licenses/pcre2-LICENCE.md','licenses/pcre2-LICENSE-SLJIT.txt','licenses/pcre2-BSD-3-Clause-PCRE2-exception.txt',
+        'licenses/freetype-LICENSE.txt','licenses/freetype-FTL.txt','licenses/freetype-GPL-2.0-only.txt',
+        'licenses/freetype-ZLIB-LICENSE.txt','licenses/freetype-BDF-LICENSE.txt','licenses/freetype-PCF-LICENSE.txt',
+        'licenses/harfbuzz-COPYING.txt','licenses/unicode-Unicode-3.0.txt','licenses/double-conversion-LICENSE.txt',
+        'licenses/tinycbor-LICENSE.txt','licenses/wintab-Lcs-Telegraphics-LICENSE.txt',
+        'licenses/wintab-wintab.h','licenses/wintab-pktdef.h'
+    )
+    $objs = foreach ($e in $entries) {
+        $p = Join-Path $dir $e
+        $hash = if ($RealHashes -and (Test-Path $p)) { (Get-FileHash $p -Algorithm SHA256).Hash.ToLower() } else { '0' * 64 }
+        [ordered]@{ file = $e; sha256 = $hash }
+    }
+    $filesHash = @{}
+    foreach ($o in $objs) { $filesHash[$o.file] = $o.sha256 }
+    $comps = foreach ($e in $entries) {
+        [ordered]@{
+            component     = 'placeholder-' + ($e -replace '^licenses/', '' -replace '[^a-zA-Z0-9._-]', '-')
+            license_files = @([ordered]@{ file = $e; sha256 = $filesHash[$e] })
+        }
+    }
+    @{ schema = 'issue6-license-sources v1'; components = $comps; files = $objs } |
+        ConvertTo-Json -Depth 4 | Set-Content (Join-Path $dir 'license-sources.json') -Encoding utf8
+}
 # 生成一个"最小合法包"骨架：占位 exe/dll/许可/清单，随后各负例在其上变异
+# 材料恢复修复轮1（P-C）：基包统一含 22 内嵌第三方许可 + 真实 hash 的
+# license-sources.json（计划 §4M3：N1–N15 必须从完整已 PASS 基包仅变异目标）。
+# 旧 Add-BundledLicenses（正文 §277）保留编号不删除，但不再被各负例重复调用。
 function New-BasePackage([string]$dir) {
     New-Placeholder (Join-Path $dir 'TmogReplica.exe') 'placeholder executable (not a real binary; negative-test fixture only)'
     foreach ($d in 'Qt6Core.dll','Qt6Gui.dll','Qt6Widgets.dll') { New-Placeholder (Join-Path $dir $d) "placeholder $d" }
@@ -92,6 +128,33 @@ function New-BasePackage([string]$dir) {
     New-Placeholder (Join-Path $dir 'licenses\mingw-w64-runtime-COPYING.txt') 'placeholder mingw runtime'
     New-Placeholder (Join-Path $dir 'THIRD-PARTY-NOTICES.md') '# placeholder notices'
     New-Placeholder (Join-Path $dir 'README-PACKAGE.md') '# placeholder readme'
+    # P-C：22 内嵌第三方许可占位 + 真实 hash 来源清单（此前只由 Add-BundledLicenses 提供）
+    $texts = [ordered]@{
+        'licenses\zlib-LICENSE.txt' = 'placeholder zlib license'
+        'licenses\libpng-LICENSE.txt' = 'placeholder libpng license'
+        'licenses\libpng-libpng-2.0-LICENSE.txt' = 'placeholder libpng-2.0 license'
+        'licenses\libjpeg-turbo-LICENSE.txt' = 'placeholder libjpeg-turbo license'
+        'licenses\libjpeg-turbo-ijg-license.txt' = 'placeholder ijg license'
+        'licenses\libjpeg-turbo-COPYRIGHT.txt' = 'placeholder ijg copyright'
+        'licenses\pcre2-LICENCE.md' = 'placeholder pcre2 licence'
+        'licenses\pcre2-LICENSE-SLJIT.txt' = 'placeholder sljit license'
+        'licenses\pcre2-BSD-3-Clause-PCRE2-exception.txt' = 'placeholder pcre2 exception'
+        'licenses\freetype-LICENSE.txt' = 'placeholder freetype license'
+        'licenses\freetype-FTL.txt' = 'placeholder ftl'
+        'licenses\freetype-GPL-2.0-only.txt' = 'placeholder gpl2'
+        'licenses\freetype-ZLIB-LICENSE.txt' = 'placeholder ftl zlib'
+        'licenses\freetype-BDF-LICENSE.txt' = 'placeholder bdf'
+        'licenses\freetype-PCF-LICENSE.txt' = 'placeholder pcf'
+        'licenses\harfbuzz-COPYING.txt' = 'placeholder harfbuzz copying'
+        'licenses\unicode-Unicode-3.0.txt' = 'placeholder unicode 3.0'
+        'licenses\double-conversion-LICENSE.txt' = 'placeholder double-conversion'
+        'licenses\tinycbor-LICENSE.txt' = 'placeholder tinycbor'
+        'licenses\wintab-Lcs-Telegraphics-LICENSE.txt' = 'placeholder wintab license'
+        'licenses\wintab-wintab.h' = 'placeholder wintab header'
+        'licenses\wintab-pktdef.h' = 'placeholder wintab pktdef'
+    }
+    foreach ($k in $texts.Keys) { New-Placeholder (Join-Path $dir $k) $texts[$k] }
+    Write-LicenseSources $dir -RealHashes
 }
 function Write-Manifest([string]$dir) {
     # 用与 check-package 相同的算法生成真实 MANIFEST（占位文件内容也会被 hash+size 记录）
@@ -126,13 +189,17 @@ Run-Negative 'N3-hash-tamper' {
     Set-Content (Join-Path $d 'Qt6Widgets.dll') -Value 'tampered content' -Encoding ascii
 }
 
-# N4 size 篡改（文件大小与清单不符）
+# N4 size 篡改（仅清单 size 数字与实际不符；文件内容/hash 保持正确——P-D 修复：
+# 旧构造追加字节使 hash+size 双变，未命中 size 专项分支）
 Run-Negative 'N4-size-tamper' {
     param($d)
     New-BasePackage $d
-    # 先写 manifest，再向一个已记录文件追加字节（hash 与 size 均变，size 断言暴露）
     Write-Manifest $d
-    Add-Content (Join-Path $d 'README-PACKAGE.md') -Value 'extra bytes'
+    # 只篡改清单中一个文件的 size 字段；文件字节与真实 hash 均未动
+    $m = Join-Path $d 'MANIFEST.txt'
+    $lines = Get-Content $m
+    $lines = $lines | ForEach-Object { if ($_ -match 'README-PACKAGE\.md$') { $p = $_ -split "`t"; $p[0] + "`t" + ([int64]$p[1] + 1) + "`t" + $p[2] } else { $_ } }
+    Set-Content $m -Value $lines -Encoding utf8
 }
 
 # N5 清单重复路径
@@ -236,44 +303,10 @@ Run-Negative 'N15-manifest-size-malformed' {
 }
 
 # ===== 内嵌第三方许可材料检查（attempt=3 材料轴补齐）=====
-
-# 来源清单构造：与包内 licenses/ 一致的文件清单 + 每文件 SHA-256。
-# -RealHashes 重算真实 hash（正例对照用）；默认写全 0 假 hash（负例用）。
-function Write-LicenseSources([string]$dir, [switch]$RealHashes) {
-    # 清单覆盖包内 licenses/ 全部文件：内嵌第三方 22 项 + Qt/GCC 工具链 6 项
-    # （来源清单与包内许可文件双向一致是检查闭环的前提）
-    $entries = @(
-        'licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
-        'licenses/gcc-COPYING3.txt','licenses/gcc-COPYING.RUNTIME.txt',
-        'licenses/winpthreads-COPYING.txt','licenses/mingw-w64-runtime-COPYING.txt',
-        'licenses/zlib-LICENSE.txt','licenses/libpng-LICENSE.txt','licenses/libpng-libpng-2.0-LICENSE.txt',
-        'licenses/libjpeg-turbo-LICENSE.txt','licenses/libjpeg-turbo-ijg-license.txt','licenses/libjpeg-turbo-COPYRIGHT.txt',
-        'licenses/pcre2-LICENCE.md','licenses/pcre2-LICENSE-SLJIT.txt','licenses/pcre2-BSD-3-Clause-PCRE2-exception.txt',
-        'licenses/freetype-LICENSE.txt','licenses/freetype-FTL.txt','licenses/freetype-GPL-2.0-only.txt',
-        'licenses/freetype-ZLIB-LICENSE.txt','licenses/freetype-BDF-LICENSE.txt','licenses/freetype-PCF-LICENSE.txt',
-        'licenses/harfbuzz-COPYING.txt','licenses/unicode-Unicode-3.0.txt','licenses/double-conversion-LICENSE.txt',
-        'licenses/tinycbor-LICENSE.txt','licenses/wintab-Lcs-Telegraphics-LICENSE.txt',
-        'licenses/wintab-wintab.h','licenses/wintab-pktdef.h'
-    )
-    $objs = foreach ($e in $entries) {
-        $p = Join-Path $dir $e
-        $hash = if ($RealHashes -and (Test-Path $p)) { (Get-FileHash $p -Algorithm SHA256).Hash.ToLower() } else { '0' * 64 }
-        [ordered]@{ file = $e; sha256 = $hash }
-    }
-    # 组件占位条目：hash 必须与 files 中同路径条目一致（双向一致核验会比对）。
-    $filesHash = @{}
-    foreach ($o in $objs) { $filesHash[$o.file] = $o.sha256 }
-    $comps = foreach ($e in $entries) {
-        [ordered]@{
-            component     = 'placeholder-' + ($e -replace '^licenses/', '' -replace '[^a-zA-Z0-9._-]', '-')
-            license_files = @([ordered]@{ file = $e; sha256 = $filesHash[$e] })
-        }
-    }
-    @{ schema = 'issue6-license-sources v1'; components = $comps; files = $objs } |
-        ConvertTo-Json -Depth 4 | Set-Content (Join-Path $dir 'license-sources.json') -Encoding utf8
-}
+# Write-LicenseSources 定义已上移至 New-BasePackage 之前（修复轮1 P-C），此处不再重复。
 
 # 在占位包上添加 22 个内嵌第三方许可文本占位文件 + 真实 hash 的 license-sources.json
+# （修复轮1 P-C 后 New-BasePackage 已内联此材料；函数保留以维持编号与可复用性）
 function Add-BundledLicenses([string]$dir) {
     $texts = [ordered]@{
         'licenses\zlib-LICENSE.txt' = 'placeholder zlib license'
@@ -303,21 +336,19 @@ function Add-BundledLicenses([string]$dir) {
     Write-LicenseSources $dir -RealHashes
 }
 
-# N16 缺内嵌第三方许可全文（删除一个必配项）
+# N16 缺内嵌第三方许可全文（删除一个必配项；P-D 修复：保留其正确声明，
+# 不重生成清单消除缺项——删除后清单仍声明该文件，双向核验暴露缺失）
 Run-Negative 'N16-missing-bundled-license' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     Remove-Item (Join-Path $d 'licenses\zlib-LICENSE.txt') -Force
-    Write-LicenseSources $d
-    Write-Manifest $d
+    Write-Manifest $d   # 不调用 Write-LicenseSources：清单保留 zlib 正确声明
 }
 
 # N17 许可文本篡改（内容改动后 license-sources.json hash 不符）
 Run-Negative 'N17-license-content-tamper' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     Set-Content (Join-Path $d 'licenses\harfbuzz-COPYING.txt') 'tampered' -Encoding ascii
     Write-Manifest $d
 }
@@ -326,7 +357,6 @@ Run-Negative 'N17-license-content-tamper' {
 Run-Negative 'N18-sources-list-mismatch' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     Remove-Item (Join-Path $d 'licenses\tinycbor-LICENSE.txt') -Force
     Write-Manifest $d   # sources.json 仍列 tinycbor，但包内缺失
 }
@@ -335,7 +365,6 @@ Run-Negative 'N18-sources-list-mismatch' {
 Run-Negative 'N19-unknown-license-file' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     New-Placeholder (Join-Path $d 'licenses\unknown-vendor-EULA.txt') 'unknown license material'
     Write-Manifest $d
 }
@@ -348,7 +377,6 @@ Run-Negative 'N19-unknown-license-file' {
 Run-Negative 'N20-sources-missing-files-array' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     @{ schema = 'issue6-license-sources v1'; components = @() } |
         ConvertTo-Json -Depth 4 | Set-Content (Join-Path $d 'license-sources.json') -Encoding utf8
     Write-Manifest $d
@@ -358,7 +386,6 @@ Run-Negative 'N20-sources-missing-files-array' {
 Run-Negative 'N21-components-files-conflict' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     $j = Get-Content (Join-Path $d 'license-sources.json') -Raw | ConvertFrom-Json
     # 直接改第一个组件引用的 hash，使其与 files 中同路径条目不一致
     $j.components[0].license_files[0].sha256 = ('f' * 64)
@@ -366,15 +393,24 @@ Run-Negative 'N21-components-files-conflict' {
     Write-Manifest $d
 }
 
-# N22 清单大小写重复（同一路径不同大小写两条目）
+# N22 清单大小写重复（同一路径不同大小写两条目；R-A 修复：保持 28 条目总数，
+# 把位于 zlib 之前的 Qt-COPYING 条目改名为其大写变体，构造 casefold 后置重复，
+# 精确命中检查器"清单大小写重复条目"分支，不再撞 28 计数拒绝）
 Run-Negative 'N22-case-duplicate-entries' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     $j = Get-Content (Join-Path $d 'license-sources.json') -Raw | ConvertFrom-Json
-    $extra = @{ file = 'LICENSES/ZLIB-LICENSE.txt'; sha256 = $j.files[0].sha256 }
-    # 原 files 里有 licenses/zlib-LICENSE.txt；加入大写变体路径构造大小写重复
-    $j.files = @($j.files) + [pscustomobject]$extra
+    $zlibIdx = -1
+    $victimIdx = -1
+    for ($i = 0; $i -lt $j.files.Count; $i++) {
+        if ($j.files[$i].file -eq 'licenses/zlib-LICENSE.txt') { $zlibIdx = $i }
+        if ($j.files[$i].file -eq 'licenses/Qt-COPYING.txt') { $victimIdx = $i }
+    }
+    if ($zlibIdx -lt 0 -or $victimIdx -lt 0 -or $victimIdx -gt $zlibIdx) {
+        throw "N22 fixture assumption broken: zlibIdx=$zlibIdx victimIdx=$victimIdx (victim must precede zlib)"
+    }
+    # 大写变体与 zlib 条目 casefold 撞车：总数保持 28，重复在第二次出现时暴露
+    $j.files[$victimIdx].file = 'licenses/ZLIB-LICENSE.txt'
     $j | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $d 'license-sources.json') -Encoding utf8
     Write-Manifest $d
 }
@@ -383,7 +419,6 @@ Run-Negative 'N22-case-duplicate-entries' {
 Run-Negative 'N23-rewritten-json-manifest-unknown-license' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     New-Placeholder (Join-Path $d 'licenses\rogue-EULA.txt') 'rogue license injected with rewritten manifest'
     # 重写 license-sources.json 让 files 也声明 rogue（自生成清单不自证）
     $j = Get-Content (Join-Path $d 'license-sources.json') -Raw | ConvertFrom-Json
@@ -397,7 +432,6 @@ Run-Negative 'N23-rewritten-json-manifest-unknown-license' {
 Run-Negative 'N24-sources-path-escape-dotdot' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     $j = Get-Content (Join-Path $d 'license-sources.json') -Raw | ConvertFrom-Json
     $j.files[0].file = 'licenses/../licenses/zlib-LICENSE.txt'
     $j | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $d 'license-sources.json') -Encoding utf8
@@ -408,7 +442,6 @@ Run-Negative 'N24-sources-path-escape-dotdot' {
 Run-Negative 'N25-sources-path-ads' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     $j = Get-Content (Join-Path $d 'license-sources.json') -Raw | ConvertFrom-Json
     $j.files[0].file = 'licenses/zlib-LICENSE.txt:hidden'
     $j | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $d 'license-sources.json') -Encoding utf8
@@ -419,31 +452,36 @@ Run-Negative 'N25-sources-path-ads' {
 Run-Negative 'N26-nested-license-subdir' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     New-Placeholder (Join-Path $d 'licenses\sub\extra.txt') 'nested unknown license'
     Write-Manifest $d
 }
 
-# N27 清单声明包内链接/非普通文件（对声明文件建立 symlink；环境不允许则此项记 FAIL 由 Run-Negative 捕获）
+# N27 清单声明包内链接/非普通文件（对声明文件建立硬链接；R-B 修复：声明 hash/size
+# 与链接后内容完全一致，读取前 LinkType 核验必须拒绝——不再依赖 hash 失配间接拒绝。
+# 环境不允许建链接则恢复普通文件，case 意外通过计入 failed_negatives，由 Report 上报）
 Run-Negative 'N27-declared-file-is-link' {
     param($d)
     New-BasePackage $d
-    Add-BundledLicenses $d
     $target = Join-Path $d 'licenses\zlib-LICENSE.txt'
-    $link = Join-Path $d 'licenses\zlib-LICENSE-link.txt'
     $j = Get-Content (Join-Path $d 'license-sources.json') -Raw | ConvertFrom-Json
     $realHash = (Get-FileHash $target -Algorithm SHA256).Hash.ToLower()
+    $realSize = (Get-Item $target).Length
+    # 建立同内容硬链接：把 zlib 替换为指向 Qt-LICENSE 的链接（两者内容一致 →
+    # 声明 hash/size 均不变，唯一区别是对象类型为链接，读取前必须拒绝）
+    $src = Join-Path $d 'licenses\Qt-LICENSE.txt'
+    Set-Content $src 'placeholder zlib license' -Encoding ascii
     Remove-Item $target -Force
     try {
-        New-Item -ItemType SymbolicLink -Path $target -Target (Join-Path $d 'licenses\Qt-LICENSE.txt') -ErrorAction Stop | Out-Null
-        # 链接建立成功：把声明 hash 保留，包内实为链接→应被拒绝（source_member hash 仍指原文本）
-        $j | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $d 'license-sources.json') -Encoding utf8
+        New-Item -ItemType HardLink -Path $target -Target $src -ErrorAction Stop | Out-Null
+        # 校验链接后 hash/size 与声明一致（若不一致本负例构造失败，恢复普通文件）
+        $hAfter = (Get-FileHash $target -Algorithm SHA256).Hash.ToLower()
+        $sAfter = (Get-Item $target).Length
+        if ($hAfter -ne $realHash -or $sAfter -ne $realSize) { throw 'hardlink hash/size mismatch after creation' }
         Write-Manifest $d
     } catch {
         # 环境不允许建链接：恢复普通文件，case 保持完整但目标条件未触发——
         # 该负例将以 exit0 通过并计入 failed_negatives（由 Report 交 Product BLOCKED）
         Set-Content $target -Value 'placeholder zlib license' -Encoding ascii
-        Write-LicenseSources $d -RealHashes
         Write-Manifest $d
     }
 }
@@ -454,7 +492,6 @@ $good = Join-Path $WorkDirFull 'case-P-good'
 if (Test-Path $good) { Remove-Item $good -Recurse -Force }
 New-Item -ItemType Directory -Force $good | Out-Null
 New-BasePackage $good
-Add-BundledLicenses $good
 Write-Manifest $good
 & pwsh -NoProfile -File $checkScript -PackageDir $good *> (Join-Path $WorkDirFull 'check-output-P-good.txt')
 if ($LASTEXITCODE -ne 0) {

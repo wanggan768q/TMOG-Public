@@ -216,3 +216,45 @@ SHA-256 `97157b9673365a3d0b5ca3cee768cd86c59a5c88fbb751517ef6c834447fab04`，用
   与 README-PACKAGE 已同步该边界。
 - 新增负例 N20–N27（schema 残缺/组件冲突/大小写重复/整体改写自证/路径逃逸/
   ADS/嵌套子目录/链接文件）与 P-good 前后通过，共 28 案例 exit 0（0 意外通过）。
+
+## 10. 材料恢复修复轮1 追加记录（2026-10-31，repair_round=1/2）
+
+Review attempt1（review-1.md，run=`parallel-plan-20261029-6-11-17`）裁定
+PASS+必改整体不通过，两项必改（R-A/R-B）与两处测试构造偏差（P-C/P-D）在
+material-dev-2-contract.md 修复合同内由 dev attempt2 完成最小修复：
+
+1. **R-B（check-package.ps1 包内侧读前拒绝）**：新增统一"读取前链接/重解析
+   拒绝"段——任何 Test-Path/Get-Item/Get-Content/Get-FileHash 之前，先核输入
+   路径与解析后路径的逐层祖先 LinkType，再全树枚举（`-Force` 含隐藏项）包内
+   对象，LinkType 非空即 exit1（诊断指向具体对象与类型）。实测：同内容
+   HardLink（声明 hash/size 完全一致）probe exit=1（此前 ALL PASS）；同内容
+   SymbolicLink probe exit=1；干净正例不受影响（39 文件 ALL PASS）。
+2. **R-A（N22 构造修复）**：负例改为保持 28 条目、把位于 zlib 条目之前的
+   Qt-COPYING 条目改名为 `licenses/ZLIB-LICENSE.txt`（casefold 后置重复），
+   实测命中"清单大小写重复条目: licenses/zlib-LICENSE.txt"目标分支 exit1，
+   不再撞 28 计数拒绝。
+3. **P-C（基包统一）**：New-BasePackage 内联 22 内嵌第三方许可占位 + 真实
+   hash 的 license-sources.json（Write-LicenseSources 上移定义），N1–N15/
+   N16–N27/P-good 不再重复调用 Add-BundledLicenses（函数保留不删除）。
+   每个未变异基包先整体 PASS，负例仅变异目标条件。
+4. **P-D（N4/N16 构造修复）**：N4 只篡改 MANIFEST size 字段（文件内容与
+   hash 保持正确），实测诊断"size 不符: readme-package.md (清单 23 != 实际
+   22)"；N16 仅删 zlib 许可文件并保留清单正确声明（不重生成 sources.json），
+   实测诊断"缺内嵌组件许可文件"。N24/N25 实际由固定允许集合拒绝
+   （"清单路径不在固定允许集合"），如实记录，不伪造专项分支覆盖。
+5. **N27 重构（R-B 负例）**：改为同内容 HardLink（zlib→Qt-LICENSE，内容一致
+   保证声明 hash/size 不变），创建后校验 hash/size 一致，目标诊断"包内链接/
+   重解析对象（读取前拒绝）: licenses\Qt-LICENSE.txt (HardLink)"。
+6. **全量复验（真实机器 UTC + raw exit + 净耗时，dev-2.ops.jsonl）**：
+   `pwsh -NoProfile -File tests/package_checks.ps1`（合同精确工具路径，
+   WorkDir=`build/issue6-m-repair1-checks`）raw exit=0，28 cases（27 负例 +
+   P-good）0 意外通过，净耗时 25,062ms，边界 0.59MiB；每 case 目标诊断逐一
+   命中（汇总文件 dev2-percase-diagnostics.md，ALL_TARGETS_HIT=True）；
+   `pwsh -NoProfile -File scripts/check-package.ps1 -PackageDir case-P-good`
+   raw exit=0 ALL PASS 净耗时 742ms。外部哨兵（boundary 内 sentinel/canary.txt）
+   路径逃逸 probe 前后 SHA-256 不变。symlink 探针在本机可用（SymbolicLink
+   创建成功且被读前拒绝）。Parser 三脚本零错误；CodeGraph sync no-op
+   （PS1/MD 不在索引语言内）。
+
+上节 §9 的"共 28 案例 exit 0"为修复前旧构造记录（历史保留）；本轮 §10 为
+修复后新证据，Review attempt2 以新固定 SHA 复审。
