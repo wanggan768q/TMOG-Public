@@ -2205,6 +2205,7 @@ constexpr std::size_t kSgMaxOps = 2000;
 // SG 驱动记录：send 命令序列与计数、log_sample 调用数、sleep 数。
 struct SgRecord {
     std::vector<std::string> sent_commands;
+    std::vector<std::int64_t> send_clocks;   // send 入场时的 fake clock（GC 系列用）
     std::size_t send_calls = 0;          // send 回调实际进入次数
     std::size_t log_calls = 0;
     std::size_t ops = 0;
@@ -2451,6 +2452,141 @@ void sg3_write_failure_no_read() {
 // SG4：deadline=0/-1 → 无任何发送；成功段后到期 → 不发下一条；
 // 剩余 1ms 可发送但同步返回后到期 → 不发下一条。
 void sg4_deadline_boundaries() {
+    // GC 系列共享驱动（guard 独占覆盖，plan §2）：D=3000；目标段第二次有效
+    // log 回调内把 fake 时钟推进到 D-rem（rem∈{0,-1,1}）。有效差分计数由真实
+    // drive 自行达成（fake 不写 out/valid/cancelled），目标 log 后计数已达 2
+    // 且 cancelled=false → while 条件短路，唯一能拦住下一条 send 的是生产
+    // guard。send 入场即记账（次数/命令/clock），过期误发也返回 true 以显露
+    // guard 缺失；每次 send 后时钟前进 1ms 模拟同步返回耗时。guard 变异
+    // （M2/M3）在此构造下必然实际误发 write/read → 命名 FAIL。
+    auto gc_guard_case = [](bool read_guard, std::int64_t remaining_ms) {
+        constexpr std::int64_t D = 3000;
+        const std::int64_t T = D - remaining_ms;
+        SgClock clock;
+        g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
+        SgRecord rec;
+        SgSampleScript sc = sg_samples({1, 2, 3, 10, 11, 12});
+        HelperOps ops{};
+        ops.now_ms = &sg_now_ms;
+        ops.sleep_ms = &sg_sleep_ms;
+        int promote_count = 0;         // 目标段第二次 log 推进次数（恰 1）
+        std::int64_t promote_to = -1;
+        SegmentIo io{};
+        io.sample = [&sc, &rec](IoSample& s) {
+            if (!rec.try_begin()) return false;
+            return sc.next(s);   // 未脚本化采样显式失败
+        };
+        io.send = [&rec](const std::string& cmd) {
+            if (!rec.try_begin()) return false;
+            ++rec.send_calls;                       // 入场先实记（误发也记录）
+            rec.sent_commands.push_back(cmd);
+            rec.send_clocks.push_back(g_sg_clock->now);   // 入场 clock
+            g_sg_clock->advance(1);                 // 同步 send 返回耗时
+            return true;                            // 不由 fake 二次拦截
+        };
+        int target_seg_logs = 0;       // 目标段（GC-R: write 段；GC-W: idle 段）log 计数
+        io.log_sample = [&rec, read_guard, T, &promote_count, &promote_to,
+                         &target_seg_logs](const std::string& seg,
+                                           const IoSample&, const IoSample&) {
+            if (!rec.try_begin()) return;
+            ++rec.log_calls;
+            const bool target = read_guard ? (seg == "write") : (seg == "idle");
+            if (target) {
+                ++target_seg_logs;
+                if (target_seg_logs == 2) {   // 目标段第二次有效 log
+                    ++promote_count;
+                    promote_to = T;
+                    g_sg_clock->now = T;
+                }
+            }
+        };
+        const SegmentOutcome out =
+            run_activity_segments(D, 16777216, ops, io, fs::path("sg-fake-log"));
+        check(rec.budget_exceeded == false, "GC: fake op budget not exceeded");
+        check(promote_count == 1, "GC: target log promoted clock exactly once");
+        check(rec.log_calls == (read_guard ? 4 : 2),
+              "GC: exactly 2 valid differentials logged (per segment)");
+        const std::string case_id =
+            std::string(read_guard ? "GC-R" : "GC-W")
+            + (remaining_ms < 0 ? "-1" : (remaining_ms == 0 ? "0" : "1"));
+        // 计划 §2.2：GC-W 系列原件 write 零样本（idle 达标后 guard 拦截/
+        // 放行时机不同），GC-R 系列 idle=2、write=2（write 已真实发送）。
+        if (read_guard) {
+            check(out.idle_samples == 2 && out.write_samples == 2,
+                  (case_id + ": idle and write reached 2 valid (real drive counted)").c_str());
+        } else {
+            check(out.idle_samples == 2 && out.write_samples == 0,
+                  (case_id + ": idle reached 2 valid, write segment never entered").c_str());
+        }
+        // 每次采样/发送/日志用 rec.try_begin，结合 sleep_calls 核总操作护栏。
+        check(rec.ops + clock.sleep_calls <= kSgMaxOps,
+              "GC: total ops within guardrail");
+        if (remaining_ms <= 0) {
+            // 0/-1ms：guard 必须独占拦截下一条 send（计数已达标、未取消，
+            // 非采样不足）。误发即 guard 缺失 → 命名 FAIL。
+            check(rec.send_calls == (read_guard ? 1 : 0),
+                  (case_id + ": "
+                   + (read_guard
+                      ? std::string("read guard alone blocks expired send")
+                      : std::string("write guard alone blocks expired send"))).c_str());
+            const std::size_t want_cmds = read_guard ? 1 : 0;
+            check(rec.sent_commands.size() == want_cmds
+                      && (want_cmds == 0
+                          || (rec.sent_commands[0] == "write 8392704\n"
+                              && (read_guard
+                                  || rec.sent_commands[0].rfind("write ", 0) == 0))),
+                  (case_id + ": command ledger matches guard verdict").c_str());
+            if (read_guard) {
+                check(rec.send_clocks.size() == 1
+                          || rec.send_clocks.back() >= D,
+                      (case_id + ": any read send would enter with expired clock").c_str());
+                check(rec.sent_commands.size() == 1
+                          && rec.sent_commands[0] == "write 8392704\n",
+                      (case_id + ": only the already-sent write is in the ledger").c_str());
+            }
+        } else {
+            // 剩余 1ms：guard 必须放行本段 send（阈值对照；<=0 改 <=1 会 FAIL）。
+            const std::size_t want_sends = read_guard ? 2 : 1;
+            check(rec.send_calls == want_sends,
+                  (case_id + ": guard admits send with exactly 1ms remaining").c_str());
+            check(rec.send_clocks.size() == want_sends
+                      && rec.send_clocks.back() == D - 1,
+                  (case_id + ": send entered at remaining=1ms clock").c_str());
+            check(rec.sent_commands.back()
+                      == (read_guard ? "read\n" : "write 8392704\n"),
+                  (case_id + ": admitted command is the segment command").c_str());
+            // send 推进 1ms 到 D：下一段 drive now0=D 不采样；后续段被
+            // guard/取消拦住，不产生额外命令；已发命令不撤账。
+            check(rec.sent_commands.size() == want_sends,
+                  (case_id + ": no further command after deadline reached").c_str());
+            check(out.read_samples == 0 && out.cancelled == true,
+                  (case_id + ": next segment zero samples, cancelled=true").c_str());
+            if (read_guard) {
+                check(rec.sent_commands.size() == 2
+                          && rec.sent_commands[0] == "write 8392704\n"
+                          && rec.sent_commands[1] == "read\n",
+                      (case_id + ": write+read each exactly once in order").c_str());
+                check(out.requested_write_bytes == 8392704,
+                      (case_id + ": requested_write_bytes=8392704 recorded").c_str());
+            } else {
+                check(rec.sent_commands.size() == 1
+                          && rec.sent_commands[0] == "write 8392704\n",
+                      (case_id + ": only write sent, read never sent").c_str());
+                check(out.requested_write_bytes == 8392704,
+                      (case_id + ": requested_write_bytes=8392704 recorded").c_str());
+            }
+        }
+        check(out.cancelled == true, (case_id + ": final cancelled=true").c_str());
+        TeardownObservation obs{};
+        obs.exited = true;
+        obs.exit_code_known = true;
+        obs.child_exit_code = 0;
+        obs.wait_result = WAIT_OBJECT_0;
+        check(activity_exit_code(classify_activity_result(out, obs)) == 6,
+              (case_id + ": exit0 observes Incomplete/6").c_str());
+        g_sg_clock = nullptr;   // 复位：失败也不得遗留悬空指针
+    };
+
     // SG4-A：deadline=0（已到期）→ 0 send
     {
         SgClock clock;
@@ -2501,8 +2637,9 @@ void sg4_deadline_boundaries() {
         check(rec.send_calls == 0, "SG4-B: deadline=-1 → 0 sends");
         check(out.cancelled == true, "SG4-B: cancelled=true");
     }
-    // SG4-C：idle 达标后 fake log/send 推进时钟越过 deadline → write 不发；
-    // 已发命令不追溯删除。用 deadline=3000，idle 3 样本耗尽后时钟恰=3000。
+    // SG4-C：deadline=3000 正常路径对照——idle/write/read 全部达标且 clock
+    // 始终 < deadline → 两条命令正常发送。idle 3 样本：sleep 300×2 = 600；
+    // write 段 sleep 600 → 1200；read 再 600 → 1800；均 < 3000。
     {
         SgClock clock;
         g_sg_clock = &clock;   // 挂载本 case 时钟（单线程顺序）
@@ -2530,13 +2667,12 @@ void sg4_deadline_boundaries() {
         const SegmentOutcome out = run_activity_segments(3000, 16777216, ops, io, fs::path("sg-fake-log"));
         check(rec.budget_exceeded == false, "SG4-C: fake op budget not exceeded");
         check(rec.sent_commands.size() == 2, "SG4-C: both commands sent within deadline");
-        // SG4-D：write 达标后时钟恰越过 deadline → read 不发（guard 拦截）。
-        // 用 deadline=1500：idle sleep 600、write sleep 600 → 1200 < 1500
-        // write 可发；write 段完成后 clock=1200，read guard 剩余=300>0 可发。
-        // 改用 deadline=1210：write 段结束 clock=1200，read guard 剩余 10>0
-        // 仍可发。为精确测 guard，用脚本 clock 恰在 read guard 时 = deadline：
-        // deadline=1200：idle 600 → write guard 剩余 600>0 发 write；write
-        // 段 sleep 600 → clock=1200 == deadline → read guard 剩余 0 → 拦截。
+        // SG4-D：write 段样本不足 → 不发 read（由采样不足置 cancelled 拦截，
+        // 不是 send guard 的独占证明；guard 独占覆盖见下方 GC-W/R 系列）。
+        // deadline=1200：idle sleep 600 → clock=600，write guard 剩余 600>0
+        // 发 write；write 段 sleep 600 → clock=1200，while 退出时有效差分仅 1
+        // <2 → cancelled 由样本不足置位；read 块因 !cancelled 跳过，read send
+        // guard 未执行。
         {
             SgClock clock2;
             g_sg_clock = &clock2;   // 挂载嵌套 case 时钟
@@ -2561,7 +2697,7 @@ void sg4_deadline_boundaries() {
             const SegmentOutcome out2 = run_activity_segments(1200, 16777216, ops2, io2, fs::path("sg-fake-log"));
             check(rec2.budget_exceeded == false, "SG4-D: fake op budget not exceeded");
             check(rec2.sent_commands.size() == 1,
-                  "SG4-D: write sent, read blocked by guard at deadline");
+                  "SG4-D: write sent, read blocked by sample shortage (not guard)");
             check(!rec2.sent_commands.empty()
                       && rec2.sent_commands[0].rfind("write ", 0) == 0,
                   "SG4-D: sent command is write (not retroactively removed)");
@@ -2575,6 +2711,12 @@ void sg4_deadline_boundaries() {
                   "SG4-D: same-source classify -> 6");
         }
     }
+    gc_guard_case(false, 0);    // GC-W0：write send guard 独占拦截过期 send
+    gc_guard_case(false, -1);   // GC-W-1：write send guard 拦截（时钟已越过）
+    gc_guard_case(false, 1);    // GC-W1：剩余 1ms guard 放行（阈值对照）
+    gc_guard_case(true, 0);     // GC-R0：read send guard 独占拦截过期 send
+    gc_guard_case(true, -1);    // GC-R-1：read send guard 拦截（时钟已越过）
+    gc_guard_case(true, 1);     // GC-R1：剩余 1ms guard 放行（阈值对照）
 }
 
 // SG5：复用三段成功段观测；teardown 分别 exit7 / GetExitCode 失败 /

@@ -314,3 +314,57 @@ Base/HBC：8510ee90fb44d5b07554c86462f30fc86959bb1d（HBC 独立 Review 技术�
 - 未执行：真实 helper spawn/EOF/有效 I/O、--allow-controlled-io 授权路径、
   终止/UI/smoke/全量 CTest/推送发布（各自独立人工门槛）。
 - fake 技术通过不证明真实 I/O 成功；不关闭 #11，不自动解锁 11H/11T。
+
+## guard_coverage_stage 追加（GC-D，attempt=1）
+
+计划：doc/plans/2026-10-31-issue-11-guard-coverage-repair-plan-v1.md v1
+      SHA-256 4a7d3fefda168c27baa3a67f53cbb9289775c397a5204ba2e654c8b7e6d6f208
+      （用户批准"批准最小补齐（推荐）"，新 1 Dev + 1 独立 Review +
+      0 自动返工；旧预算不清零）
+Base：4361d8e9723e398bf100e506bca26626e1528e53（固定基点；父/HBC 8510ee9）
+产物根：build/issue11-guard-dev/{green/{debug,release},M2,M3}（本阶段全新登记）
+
+### 实现（仅 SG fake/断言/SG4 注释；生产函数字节不变）
+
+1. `SgRecord` 增加 `send_clocks`（send 入场 fake clock 记录，GC 系列专用）。
+2. `sg4_deadline_boundaries()` 内新增 `gc_guard_case(read_guard, remaining_ms)`
+   局部 lambda 与六个顺序 case：GC-W0/W-1/W1（write guard）、
+   GC-R0/R-1/R1（read guard）；D=3000、max_bytes=16777216；rem∈{0,-1,1}。
+3. 时钟推进机制：目标段（GC-W=idle、GC-R=write）第二次有效 log_sample 回调
+   内把 fake clock 推到 T=D-rem（目标推进恰 1 次）；有效差分计数全部由真实
+   drive_segment 自行达成（fake 不写 out/valid/cancelled）；目标 log 后计数
+   已达门槛 2 且 cancelled=false → while 条件短路，唯一能拦住下一条 send 的
+   是生产 guard。
+4. send fake：入场即记账（次数/命令/入场 clock），过期误发也返回 true（不由
+   fake 二次拦截掩盖 guard 缺失）；每次 send 后 clock+1ms 模拟同步返回耗时；
+   已发命令不追溯从账本移除。
+5. 状态全部局部复位：每 case 独立 SgClock/SgRecord/脚本，g_sg_clock 退出复位
+   nullptr；未脚本化采样显式失败；每 case 断言 rec.ops+sleep_calls ≤2000。
+6. SG4-C 注释改为"deadline=3000 正常路径对照"（原注释声称"推进时钟越过
+   deadline"与实际断言不符）；SG4-D 注释与断言标签改为"read blocked by
+   sample shortage (not guard)"（原"guard 拦截"经旧 Review 静态时钟追踪证实
+   为采样不足拦截，guard 从未执行）。
+
+### 验证（RED/GREEN，真实命令与日志见 build/issue11-guard-dev 与 dev-1.md）
+
+- RED（单变异探针，独立 candidate-source 副本，未改 WT 生产 guard）：
+  M2（write guard → if(false)）双配编译 0、run 1，命名 FAIL 恰为
+  GC-W0/GC-W-1 "write guard alone blocks expired send"（+账本断言）；
+  M3（read guard → if(false)）双配编译 0、run 1，命名 FAIL 恰为
+  GC-R0/GC-R-1 "read guard alone blocks expired send"（+账本断言：read 误发
+  实际发生、已发 write 仍在账本）；阈值对照 GC-W1/GC-R1（剩余 1ms 放行）在
+  两个变异下均 PASS。compile_commands 实际源=各 case candidate-source。
+- GREEN（未变异 WT）：双配全量构建 exit0；--check-helper-binding-only
+  exit0 ALL PASS（SG1..SG6+GC 六 case+HB 全部 PASS）；ctest -N 恰 6 项；
+  ctest -j1 --timeout 120 6/6 passed exit0；gate 2/2/4（无 flag/--helper/
+  混用）。
+- 六安全库存精确过滤正则不变（process/close/sampling/stale/io_table/
+  helper_binding 六项）。
+
+### 限制与未验证
+
+- 同步已发操作（WriteFile/sample/log/helper I/O）无硬墙钟上限；已发送
+  write/read 不可撤回；guard 检查与同步 send 之间无原子硬截止（计划 §6 保留）。
+- 本阶段 fake/变异证据不证明真实 Windows I/O 行为；不运行 --allow-controlled-io、
+  真实 spawn/EOF/有效 I/O、终止/UI/smoke/全量 CTest 之外的入口（本阶段仍禁止）。
+- 不关闭 #11；不创建 Issue/PR；推送/发布/集成另批。
