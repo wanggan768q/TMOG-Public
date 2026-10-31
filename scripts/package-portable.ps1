@@ -40,6 +40,9 @@ foreach ($lic in (Join-Path $QtDir '..\..\Licenses\LICENSE'),
                   (Join-Path $MinGWDir 'licenses\mingw-w64\COPYING.MinGW-w64-runtime.txt')) {
     if (-not (Test-Path $lic)) { throw "许可证源缺失: $lic" }
 }
+if (-not (Test-Path (Join-Path $SourceDir 'packaging\license-sources.json'))) { throw "许可来源清单缺失: packaging\license-sources.json" }
+$packagingLicenses = (Get-ChildItem (Join-Path $SourceDir 'packaging\licenses') -File -ErrorAction Stop)
+if ($packagingLicenses.Count -lt 22) { throw ("packaging/licenses/ 许可文本不足 (发现 {0}, 预期 >=22)" -f $packagingLicenses.Count) }
 $gcc = Join-Path $MinGWDir 'bin\g++.exe'
 if (-not (Test-Path $gcc)) { throw "g++ 缺失: $gcc" }
 
@@ -79,7 +82,10 @@ foreach ($dll in 'Qt6Core.dll','Qt6Gui.dll','Qt6Widgets.dll','platforms/qwindows
     if (-not (Test-Path (Join-Path $pkg $dll))) { throw "staged 包缺运行库: $dll（windeployqt 或 install 未完成）" }
 }
 
-# 3) 许可证文本收集（只复制本机明确合法源的单个文本文件，不复制整个 licenses 目录）
+# 3) 许可证文本收集：
+#    a. Qt/GCC 工具链 6 文件：只复制本机明确合法源的单个文本文件，不复制整个 licenses 目录
+#    b. 内嵌第三方 22 文件：从随源提交的 packaging/licenses/ 复制（官方 6.12.0 tarball
+#       静态提取，hash 记录在 packaging/license-sources.json），制作时逐文件核 hash
 New-Item -ItemType Directory -Force (Join-Path $pkg 'licenses') | Out-Null
 Copy-Item (Join-Path $QtDir '..\..\Licenses\LICENSE')    (Join-Path $pkg 'licenses\Qt-LICENSE.txt')
 Copy-Item (Join-Path $QtDir '..\..\Licenses\COPYING.txt')(Join-Path $pkg 'licenses\Qt-COPYING.txt')
@@ -87,6 +93,78 @@ Copy-Item (Join-Path $MinGWDir 'licenses\gcc\COPYING3')  (Join-Path $pkg 'licens
 Copy-Item (Join-Path $MinGWDir 'licenses\gcc\COPYING.RUNTIME') (Join-Path $pkg 'licenses\gcc-COPYING.RUNTIME.txt')
 Copy-Item (Join-Path $MinGWDir 'licenses\winpthreads\COPYING') (Join-Path $pkg 'licenses\winpthreads-COPYING.txt')
 Copy-Item (Join-Path $MinGWDir 'licenses\mingw-w64\COPYING.MinGW-w64-runtime.txt') (Join-Path $pkg 'licenses\mingw-w64-runtime-COPYING.txt')
+
+# 3b) 内嵌第三方许可材料���来源清单与文本必须先在源树中就绪且 hash 一致
+# 接口（材料恢复计划 §4M2）：files 必须 28 项精确允许路径、相对路径排序、
+# 小写 64 位 hex；components 与 files 的文件引用双向一致（Unicode 共享同路径同 hash）。
+# 固定允许集合独立于清单存在——清单整体改写不能引入清单外路径。
+$allowedLicensePaths = @(
+    'licenses/Qt-COPYING.txt','licenses/Qt-LICENSE.txt',
+    'licenses/double-conversion-LICENSE.txt',
+    'licenses/freetype-BDF-LICENSE.txt','licenses/freetype-FTL.txt',
+    'licenses/freetype-GPL-2.0-only.txt','licenses/freetype-LICENSE.txt',
+    'licenses/freetype-PCF-LICENSE.txt','licenses/freetype-ZLIB-LICENSE.txt',
+    'licenses/gcc-COPYING.RUNTIME.txt','licenses/gcc-COPYING3.txt',
+    'licenses/harfbuzz-COPYING.txt',
+    'licenses/libjpeg-turbo-COPYRIGHT.txt','licenses/libjpeg-turbo-ijg-license.txt',
+    'licenses/libjpeg-turbo-LICENSE.txt',
+    'licenses/libpng-libpng-2.0-LICENSE.txt','licenses/libpng-LICENSE.txt',
+    'licenses/mingw-w64-runtime-COPYING.txt',
+    'licenses/pcre2-BSD-3-Clause-PCRE2-exception.txt','licenses/pcre2-LICENCE.md',
+    'licenses/pcre2-LICENSE-SLJIT.txt',
+    'licenses/tinycbor-LICENSE.txt',
+    'licenses/unicode-Unicode-3.0.txt','licenses/winpthreads-COPYING.txt',
+    'licenses/wintab-Lcs-Telegraphics-LICENSE.txt','licenses/wintab-pktdef.h',
+    'licenses/wintab-wintab.h','licenses/zlib-LICENSE.txt'
+)
+$allowedSet = @{}
+foreach ($a in $allowedLicensePaths) { $allowedSet[$a.ToLower()] = $true }
+$sourcesSrc = Join-Path $SourceDir 'packaging\license-sources.json'
+if (-not (Test-Path $sourcesSrc)) { throw "license-sources.json 缺失: $sourcesSrc" }
+try {
+    $sources = Get-Content $sourcesSrc -Raw | ConvertFrom-Json
+    if (-not $sources.files -or $sources.files.Count -eq 0) { throw 'files 数组为空' }
+    if ($sources.files.Count -ne 28) { throw ("files 必须 28 项，实际 {0}" -f $sources.files.Count) }
+    if (-not $sources.components -or $sources.components.Count -eq 0) { throw 'components 数组缺失或为空' }
+    $seenFiles = @{}
+    foreach ($e in $sources.files) {
+        if (-not $e.file -or -not $e.sha256) { throw "来源清单项缺 file/sha256" }
+        if ($e.sha256 -notmatch '^[0-9a-f]{64}$') { throw "来源清单 sha256 格式错误: $($e.file)" }
+        if (-not $allowedSet.ContainsKey($e.file.ToLower())) { throw "来源清单路径不在固定允许集合: $($e.file)" }
+        # 路径安全：拒绝绝对/UNC/盘符/ADS/反斜杠/点段/空段/首尾斜杠/嵌套
+        if ($e.file -match '^[A-Za-z]:') { throw "来源清单绝对/盘符路径: $($e.file)" }
+        if ($e.file -match '\\')        { throw "来源清单路径含反斜杠: $($e.file)" }
+        if ($e.file -match '(^|/)\.\.?(/|$)') { throw "来源清单路径含点段: $($e.file)" }
+        if ($e.file -match '(^//|//|/$|(^|/)/)') { throw "来源清单路径含空段或尾斜杠: $($e.file)" }
+        if ($e.file -match ':')        { throw "来源清单路径含 ADS/流分隔: $($e.file)" }
+        if ($e.file -notmatch '^[^/]+(/[^/]+)*$') { throw "来源清单路径非法: $($e.file)" }
+        if ($e.file -notmatch '^licenses/[^/]+$') { throw "来源清单路径必须直接位于 licenses/ 下: $($e.file)" }
+        if ($seenFiles.ContainsKey($e.file.ToLower())) { throw "来源清单大小写重复条目: $($e.file)" }
+        $seenFiles[$e.file.ToLower()] = $e.sha256
+        $srcFile = Join-Path $SourceDir ('packaging\' + ($e.file -replace '^licenses/', 'licenses\'))
+        if (-not (Test-Path $srcFile)) { throw "来源清单声明文件缺失于源树: $srcFile" }
+        $srcItem = Get-Item -LiteralPath $srcFile -Force
+        if ($srcItem.LinkType) { throw "来源清单声明文件是链接/重解析点: $srcFile" }
+        if ($srcItem.PSIsContainer) { throw "来源清单声明文件是目录: $srcFile" }
+        $srcHash = (Get-FileHash $srcFile -Algorithm SHA256).Hash.ToLower()
+        if ($srcHash -ne $e.sha256) { throw ("源树许可文本 hash 与来源清单不符: {0} (清单 {1} != 实际 {2})" -f $e.file, $e.sha256, $srcHash) }
+        if ($srcItem.Length -eq 0) { throw "来源清单声明文件为空: $srcFile" }
+    }
+    # components 与 files 双向一致：组件引用的每个文件必须在 files 中且 hash 相同
+    foreach ($c in $sources.components) {
+        foreach ($f in $c.license_files) {
+            $key = $f.file.ToLower()
+            if (-not $seenFiles.ContainsKey($key)) { throw ("组件 {0} 引用文件 {1} 不在 files" -f $c.component, $f.file) }
+            if ($seenFiles[$key] -ne $f.sha256) { throw ("组件 {0} 引用 {1} hash 与 files 不一致" -f $c.component, $f.file) }
+        }
+    }
+} catch { throw "license-sources.json 校验失败: $($_.Exception.Message)" }
+foreach ($e in $sources.files) {
+    $srcFile = Join-Path $SourceDir ('packaging\' + ($e.file -replace '^licenses/', 'licenses\'))
+    $dest = Join-Path $pkg ($e.file -replace '/', '\')
+    Copy-Item $srcFile $dest
+}
+Copy-Item $sourcesSrc (Join-Path $pkg 'license-sources.json')
 
 # 4) MANIFEST.txt（文件 SHA-256 + size + 包内相对路径）
 $qtVer = (Get-Item (Join-Path $pkg 'Qt6Core.dll')).VersionInfo.FileVersion

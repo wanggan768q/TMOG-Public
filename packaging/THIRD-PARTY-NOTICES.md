@@ -28,8 +28,10 @@ MinGW-w64 GCC 13.1.0），组件清单与 `MANIFEST.txt` 对应。
   https://download.qt.io/official_releases/qt/6.12/6.12.0/submodules/
   （qtbase-everywhere-src-6.12.0.tar.xz、qtsvg-everywhere-src-6.12.0.tar.xz）；
   git 镜像 https://code.qt.io/cgit/qt/qtbase.git/ 与 qtsvg.git
-- 书面 offer：以上官方源码链接即满足 LGPLv3 第 6 条的对应源码提供方式；如链接失效，
-  分发者须自行提供源码副本或新链接。**通用首页 https://www.qt.io/ 不作为对应源码交付证据。**
+- 书面 offer：对应源码以官方发布点链接指示取得途径；链接失效时分发者须自行
+  提供源码副本或新链接。**链接本身不等于已完成对应源码交付——分发者须确认
+  目标版本可实际取得，最终交付方式由维护者确认。通用首页 https://www.qt.io/
+  不作为对应源码交付证据。**
 - 修改状态：未修改（使用官方二进制原样部署）
 - 库替换：可替换为同一 6.12.0 版本、ABI 兼容的自编译库并重新链接本应用；LGPLv3
   保证反编译/调试所需的反向工程权利不受限制
@@ -92,17 +94,28 @@ contributors.），逐行列出以避免"同上"在表格中不可追溯：
 - 反向工程/调试权利：按 LGPLv3 对 Qt 二进制的条款执行；内嵌组件自身的调试权利
   以其上游许可为准（SBOM `licenseDeclared` 均为 NOASSERTION，本表"许可"列为
   Attribution 条目与公开上游许可的一致性记录，不代上游与 Qt 做法律判定）。
-- **完整许可证文本：本包内未随附**（见下方"全文交付状态"）。
+- **完整许可证文本：随包交付**——上述 11 项内嵌组件 + Qt/GCC 工具链 6 项共 28 个
+  许可/版权/头文件文本位于包内 `licenses/`，逐文件 SHA-256 记录于
+  `license-sources.json`（顶层 `files` 数组，28 条目），来源对应关系见同文件
+  `components` 各条目（`source_member` 指向 Qt 6.12.0 官方 tarball 成员或本机
+  Qt 安装器/MinGW 工具链合法源）。
 
-**全文交付状态（诚实边界，dev-2 轮如实记录）：**
+**全文交付状态（2026-10-31 材料恢复轮更新）：**
 
-- 本机 Qt 安装（mingw_64/、Licenses/、mingw 工具链 licenses/）内**不存在**上述
-  11 项内嵌组件的许可全文文本（仅 SBOM Attribution 元数据；工具链 zlib 文本对应
-  MinGW-builds 2013 版本，与本处 zlib 1.3.2 非同一来源，不作冒替）。
-- 交付状态：**pending**——完整许可文本需从各组件对应源码（精确 6.12.0 tarball
-  `src/3rdparty/`，或上游发布点）取得并加入包内 `licenses/`，须维护者批准获取方式
-  与包内容扩大（涉及白名单/负例/NOTICES 同步更新）后实施。在此之前本包**不得
-  声称第三方许可材料完整**。
+- 上述 11 项内嵌组件的许可全文已随包交付：22 个文本从 Qt 6.12.0 官方
+  tarball（`qtbase-everywhere-src-6.12.0.tar.xz`，本地 SHA-256 与官方发布点
+  `.sha256` 一致）`src/3rdparty/` 与 `LICENSES/` 成员静态提取，字节未改；
+  6 个工具链文本来自本机 Qt 安装器/MinGW 工具链合法源。逐文件 hash 见
+  `license-sources.json`。
+- **仍然 unknown / 待维护者确认（不虚称完整）：**
+  - Qt Network PSL/MPL 相关（`Network_Attribution_psl-data` MPL-2.0、
+    `Network_Attribution_libpsl`）是否实际嵌入 Qt6Network 及其许可文本是否
+    须随附，尚无独立静态证据，本表仅如实转录 SBOM 记录，**不能据此称
+    第三方材料已穷尽**。
+  - `qtsvg` 模块（Qt6Svg.dll / qsvgicon.dll / qsvg.dll）对应源码 tarball 未
+    本地核验 hash，仅提供官方发布点链接。
+  - 各构件与 SBOM 版本对应、上游修改状态、完整对应源码交付方式仍须维护者
+    依原验收门槛确认；官方 GPG/签名元数据未取得（发布点未提供逐文件签名）。
 - `Network_Attribution_psl-data`（MPL-2.0，libpsl 数据，SBOM 版本
   2026-05-14_08-35-31_UTC）：qnetworklistmanager 插件运行时使用 QNetworkInformation；
   libpsl 静态数据仅链接进 Qt6Network 的 HSTS/PSL 相关功能。Qt 官方 mingw 二进制中
@@ -134,7 +147,8 @@ contributors.），逐行列出以避免"同上"在表格中不可追溯：
   MinGW-w64 项目源码 https://www.mingw-w64.org/downloads/ ；
   本包二进制来源为 MinGW-Builds 发行（Qt 安装器捆绑），其构建配置
   https://github.com/niXman/mingw-builds-binaries/releases/tag/13.1.0
-- 书面 offer：以上官方源码链接满足 GPLv3 第 6 条；分发者须保持链接可达或提供副本
+- 书面 offer：对应源码以官方发布点链接指示取得途径；分发者须保持链接可达或
+  提供副本，并确认目标版本可实际取得——链接本身不等于已完成对应源码交付
 - 修改状态：未修改（使用发行版二进制原样部署）
 - 库替换：可替换为 ABI 兼容的同名运行库并重新链接；GPLv3+例外允许替换后的
   同条件再分发

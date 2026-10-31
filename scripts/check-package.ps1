@@ -38,6 +38,107 @@ foreach ($lic in 'licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
     if ((Test-Path $p) -and ((Get-Item $p).Length -gt 0)) { Pass "许可齐备: $lic" } else { Fail "缺许可文件: $lic" }
 }
 
+# 内嵌第三方组件许可全文（Qt 6.12.0 SBOM 内嵌 11 组件；材料轴 attempt=3 补齐）
+# 缺任一 = 第三方许可材料不完整；文件名与 packaging/license-sources.json 精确对应。
+$bundledLicenseFiles = @(
+    'licenses/zlib-LICENSE.txt',
+    'licenses/libpng-LICENSE.txt','licenses/libpng-libpng-2.0-LICENSE.txt',
+    'licenses/libjpeg-turbo-LICENSE.txt','licenses/libjpeg-turbo-ijg-license.txt','licenses/libjpeg-turbo-COPYRIGHT.txt',
+    'licenses/pcre2-LICENCE.md','licenses/pcre2-LICENSE-SLJIT.txt','licenses/pcre2-BSD-3-Clause-PCRE2-exception.txt',
+    'licenses/freetype-LICENSE.txt','licenses/freetype-FTL.txt','licenses/freetype-GPL-2.0-only.txt',
+    'licenses/freetype-ZLIB-LICENSE.txt','licenses/freetype-BDF-LICENSE.txt','licenses/freetype-PCF-LICENSE.txt',
+    'licenses/harfbuzz-COPYING.txt',
+    'licenses/unicode-Unicode-3.0.txt',
+    'licenses/double-conversion-LICENSE.txt',
+    'licenses/tinycbor-LICENSE.txt',
+    'licenses/wintab-Lcs-Telegraphics-LICENSE.txt','licenses/wintab-wintab.h','licenses/wintab-pktdef.h'
+)
+foreach ($lic in $bundledLicenseFiles) {
+    $p = Join-Path $PackageDir $lic
+    if ((Test-Path $p) -and ((Get-Item $p).Length -gt 0)) { Pass "内嵌许可齐备: $lic" } else { Fail "缺内嵌组件许可文件: $lic" }
+}
+
+# license-sources.json 来源清单：包内许可文件与声明的 hash 必须逐项一致。
+# 清单缺失/不可解析/文件与清单双向不一致 = 来源材料失真（N17/N18/N19 覆盖）。
+# 材料恢复计划 §4M2：固定 28 允许路径集合独立于清单存在（整体改写清单不能引入
+# 清单外路径）；路径安全校验在包内读取/复制前进行；components 与 files 一致。
+$allowedLicensePaths = @(
+    'licenses/Qt-COPYING.txt','licenses/Qt-LICENSE.txt',
+    'licenses/double-conversion-LICENSE.txt',
+    'licenses/freetype-BDF-LICENSE.txt','licenses/freetype-FTL.txt',
+    'licenses/freetype-GPL-2.0-only.txt','licenses/freetype-LICENSE.txt',
+    'licenses/freetype-PCF-LICENSE.txt','licenses/freetype-ZLIB-LICENSE.txt',
+    'licenses/gcc-COPYING.RUNTIME.txt','licenses/gcc-COPYING3.txt',
+    'licenses/harfbuzz-COPYING.txt',
+    'licenses/libjpeg-turbo-COPYRIGHT.txt','licenses/libjpeg-turbo-ijg-license.txt',
+    'licenses/libjpeg-turbo-LICENSE.txt',
+    'licenses/libpng-libpng-2.0-LICENSE.txt','licenses/libpng-LICENSE.txt',
+    'licenses/mingw-w64-runtime-COPYING.txt',
+    'licenses/pcre2-BSD-3-Clause-PCRE2-exception.txt','licenses/pcre2-LICENCE.md',
+    'licenses/pcre2-LICENSE-SLJIT.txt',
+    'licenses/tinycbor-LICENSE.txt',
+    'licenses/unicode-Unicode-3.0.txt','licenses/winpthreads-COPYING.txt',
+    'licenses/wintab-Lcs-Telegraphics-LICENSE.txt','licenses/wintab-pktdef.h',
+    'licenses/wintab-wintab.h','licenses/zlib-LICENSE.txt'
+)
+$allowedSet = @{}
+foreach ($a in $allowedLicensePaths) { $allowedSet[$a.ToLower()] = $true }
+$sourcesPath = Join-Path $PackageDir 'license-sources.json'
+$declaredLicenseFiles = $null
+if ((-not (Test-Path $sourcesPath)) -or ((Get-Item $sourcesPath).Length -eq 0)) {
+    Fail 'license-sources.json 缺失或为空（第三方材料来源清单必需）'
+} else {
+    try {
+        $sources = Get-Content $sourcesPath -Raw | ConvertFrom-Json
+        if (-not $sources.files -or $sources.files.Count -eq 0) { throw 'files 数组为空' }
+        if ($sources.files.Count -ne 28) { throw ("files 必须 28 项，实际 {0}" -f $sources.files.Count) }
+        if (-not $sources.components -or $sources.components.Count -eq 0) { throw 'components 数组缺失或为空' }
+        $declaredLicenseFiles = @{}
+        foreach ($e in $sources.files) {
+            if (-not $e.file -or -not $e.sha256) { throw "清单项缺 file/sha256: $($e | ConvertTo-Json -Compress)" }
+            if ($e.sha256 -notmatch '^[0-9a-f]{64}$') { throw "清单 sha256 格式错误: $($e.file)" }
+            if (-not $allowedSet.ContainsKey($e.file.ToLower())) { throw "清单路径不在固定允许集合: $($e.file)" }
+            if ($e.file -match '^[A-Za-z]:') { throw "清单绝对/盘符路径: $($e.file)" }
+            if ($e.file -match '\\')        { throw "清单路径含反斜杠: $($e.file)" }
+            if ($e.file -match '(^|/)\.\.?(/|$)') { throw "清单路径含点段: $($e.file)" }
+            if ($e.file -match '(^//|//|/$|(^|/)/)') { throw "清单路径含空段或尾斜杠: $($e.file)" }
+            if ($e.file -match ':')        { throw "清单路径含 ADS/流分隔: $($e.file)" }
+            if ($e.file -notmatch '^[^/]+(/[^/]+)*$') { throw "清单路径非法: $($e.file)" }
+            if ($e.file -notmatch '^licenses/[^/]+$') { throw "清单路径必须直接位于 licenses/ 下: $($e.file)" }
+            if ($declaredLicenseFiles.ContainsKey($e.file.ToLower())) { throw "清单大小写重复条目: $($e.file)" }
+            $declaredLicenseFiles[$e.file.ToLower()] = $e.sha256
+        }
+        foreach ($c in $sources.components) {
+            foreach ($f in $c.license_files) {
+                $key = $f.file.ToLower()
+                if (-not $declaredLicenseFiles.ContainsKey($key)) { throw ("组件 {0} 引用文件 {1} 不在 files" -f $c.component, $f.file) }
+                if ($declaredLicenseFiles[$key] -ne $f.sha256) { throw ("组件 {0} 引用 {1} hash 与 files 不一致" -f $c.component, $f.file) }
+            }
+        }
+        Pass "license-sources.json 可解析（$($declaredLicenseFiles.Count) 项，路径/大小写/组件一致性通过）"
+    } catch {
+        Fail "license-sources.json 不可解析: $($_.Exception.Message)"
+        $declaredLicenseFiles = $null
+    }
+    if ($declaredLicenseFiles) {
+        # 声明 → 包内：每项存在且 hash 一致
+        foreach ($k in $declaredLicenseFiles.Keys) {
+            $p = Join-Path $PackageDir $k
+            if (-not (Test-Path $p)) { Fail "来源清单声明缺失（包内无此文件）: $k"; continue }
+            $actualHash = (Get-FileHash $p -Algorithm SHA256).Hash.ToLower()
+            if ($actualHash -ne $declaredLicenseFiles[$k]) { Fail "来源清单 hash 不符: $k" }
+        }
+        # 包内 → 声明：licenses/ 下每个文件必须被清单声明（未知许可材料拒绝）
+        $licDir = Join-Path $PackageDir 'licenses'
+        if (Test-Path $licDir) {
+            foreach ($f in (Get-ChildItem $licDir -File)) {
+                $rel = 'licenses/' + $f.Name
+                if (-not $declaredLicenseFiles.ContainsKey($rel.ToLower())) { Fail "未声明许可材料: $rel" }
+            }
+        }
+    }
+}
+
 $files = Get-ChildItem $PackageDir -Recurse -File
 
 # 禁入物：构建中间物 / 抓包 / 压缩包 / 原厂资产 / 多余 exe
@@ -57,11 +158,14 @@ foreach ($f in ($files | Where-Object { $_.Extension -in '.md','.txt' })) {
     if ((Get-Content $f.FullName -Raw) -match '(?m)(?:^|(?<=\s))[A-Za-z]:[\\/](?!/)') { Fail "文本含绝对开发路径: $($f.Name)" }}
 
 # 组件白名单（计划 §1.3：未知新组件不默认许可；windeployqt 增加新插件必须先更新此清单）
+# 许可文件名清单与 packaging/license-sources.json 对应；不因文件名含 license 就自动允许，
+# 未知许可文本仍被 N19 路径（未声明许可材料）与白名单双重拒绝。
 $whitelist = @(
     'TmogReplica.exe',
     'MANIFEST.txt',
     'README-PACKAGE.md',
     'THIRD-PARTY-NOTICES.md',
+    'license-sources.json',
     'Qt6Core.dll','Qt6Gui.dll','Qt6Widgets.dll','Qt6Network.dll','Qt6Svg.dll',
     'libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll',
     'platforms/qwindows.dll',
@@ -76,6 +180,8 @@ $whitelist = @(
     'licenses/winpthreads-COPYING.txt',
     'licenses/mingw-w64-runtime-COPYING.txt'
 )
+# 内嵌第三方许可文件并入白名单（与上方 $bundledLicenseFiles 同一清单对象）
+$whitelist += $bundledLicenseFiles
 $whitelistSet = @{}
 foreach ($w in $whitelist) { $whitelistSet[$w.ToLower()] = $true }
 

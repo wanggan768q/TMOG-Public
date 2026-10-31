@@ -198,3 +198,21 @@ Qt 内嵌 11 组件的**许可全文未随包附带且当前不可获取**（本
 扩包前，本包不得声称第三方许可材料完整；完整验收（含材料项）不能在此状态宣称
 ALL PASS。**本轮安全/脚本/清单类检查项与材料项分列：前者全部完成并验证，后者
 BLOCKED（缺合法源，需用户决定获取方式）。
+
+## 9. 材料恢复轮追加记录（2026-10-31，本记录由材料恢复合同 §第6路径授权更新）
+
+上述 §8 末尾的材料 BLOCKED 状态已由材料恢复阶段解除（run=`parallel-plan-20261029-6-11-17`，
+task=`issue6-material-recovery`，计划 `doc/plans/2026-10-31-issue-6-material-recovery-plan-v1.md`
+SHA-256 `97157b9673365a3d0b5ca3cee768cd86c59a5c88fbb751517ef6c834447fab04`，用户批准）：
+
+- 22 个内嵌第三方许可/版权/头文件文本已从 Qt 6.12.0 官方 tarball
+  `src/3rdparty/`、`LICENSES/` 成员静态提取（本地 tarball SHA-256 与官方发布点
+  `.sha256` 一致），加上 6 个工具链文本共 28 文件随包交付于 `licenses/`；
+  逐文件来源与 hash 记录于 `packaging/license-sources.json`（顶层 `files` 28 条目
+  + `components` 组件对应）。
+- **仍然 unknown / 不声称完整**：Qt Network PSL/MPL 数据是否实际嵌入及许可文本
+  是否须随附无独立静态证据；qtsvg 对应源码 tarball 未本地核验；各构件与 SBOM
+  版本对应、完整对应源码交付方式须维护者确认；官方 GPG/签名未取得。NOTICES
+  与 README-PACKAGE 已同步该边界。
+- 新增负例 N20–N27（schema 残缺/组件冲突/大小写重复/整体改写自证/路径逃逸/
+  ADS/嵌套子目录/链接文件）与 P-good 前后通过，共 28 案例 exit 0（0 意外通过）。

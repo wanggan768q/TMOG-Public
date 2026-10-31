@@ -8,8 +8,12 @@ Windows 11 x64。无安装器：解压后直接运行 `TmogReplica.exe`。
 - `TmogReplica.exe`：主程序
 - `Qt6*.dll` 与插件目录（platforms/、styles/、imageformats/ 等）：Qt 6.12.0 运行库
 - `libgcc_s_seh-1.dll`、`libstdc++-6.dll`、`libwinpthread-1.dll`：GCC 13.1.0 运行库
-- `licenses/`：Qt 与 GCC/winpthreads/mingw-w64 许可证全文
+- `licenses/`：Qt 与 GCC/winpthreads/mingw-w64 许可证全文，及 Qt 内嵌第三方
+  组件（zlib/libpng/libjpeg-turbo/PCRE2/Freetype/HarfBuzz/Unicode/double-conversion/
+  tinycbor/wintab）的许可/版权/头文件文本，共 28 个文件
 - `THIRD-PARTY-NOTICES.md`：第三方组件逐项声明（版本/版权/许可/源码获取）
+- `license-sources.json`：逐文件来源与 SHA-256 清单（28 条目 `files` 数组 +
+  组件对应关系 `components`），供来源核验
 - `MANIFEST.txt`：包内全部文件 SHA-256+size 清单（可用仓库 scripts/check-package.ps1 核验）
 
 ## 启动验证要点（干净环境人工验收清单）
