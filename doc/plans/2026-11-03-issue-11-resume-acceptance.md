@@ -86,11 +86,26 @@ stale_persistence/io_table/io_helper_binding）全部通过。
 - UIA（UIAutomation）真实窗口树（uia-tree.txt，UTF-8）：表头
   名称/PID/CPU/内存/I/O 读/I/O 写/状态；真实进程行（ztsmwscsrv.exe 等）；工具栏
   暂停/刷新/结束任务。
-- CloseMainWindow 干净退出，每次 exited=True；tasklist 无残留。
+- 退出事实（经独立 Review R-11-local-r1 v2 补核的三分口径，原"每次干净退出"
+  表述不成立，此处更正）：
+  - 第 1 轮（alive.txt）：经 Stop-Process 结束；是否先调 CloseMainWindow 前置
+    调用 unknown（首版脚本未落盘）。
+  - 第 2/3 轮（alive2/alive3.txt）：记录 closed=True/exited=True，但所走脚本版本
+    unknown。
+  - 可确证走最终版脚本（CloseMainWindow→等待→必要时兜底）的仅第 5 轮
+    （window-final.txt，pid 19756，closed=True exited_final=True）。
+  - 另有第 4 轮（脚本缺陷 Add-Type 失败，无有效记录）。
+  - Review_R11_local_1 独立复现 1 次：pid=74908，CloseMainWindow=True，
+    10s 内自然退出 exitcode=0，无残留（receipt evidence/R11-local/ui-close-repro/）；
+    单次样本不外推"生产关闭可靠"。
+  - 会话首版 RELEASE_READY 后发现的 pid 19156 残留（UIA 轮次孤儿）处置原始输出
+    未落盘：unknown 维持，不追认任何根因。
+- tasklist 复验 0 残留（RELEASE_READY 时点）。
 - 限制：CopyFromScreen 全透明（会话隔离）已弃用改 PrintWindow，如实记录；
   I/O 列数值变化的视觉人工点验仍 pending 用户。
 - 证据：evidence/R-11/a1-ui-smoke/（window-final.png、window-final-view.png、
-  uia-tree.txt、alive*.txt、capture-window.ps1）。
+  uia-tree.txt、alive*.txt、capture-window.ps1）；Review 独立复现
+  evidence/R11-local/ui-close-repro/。
 
 ## 6. Issue #11 验收映射（对照 GitHub 正文四条）
 
