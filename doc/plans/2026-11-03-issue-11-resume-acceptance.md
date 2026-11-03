@@ -140,8 +140,18 @@ stale_persistence/io_table/io_helper_binding）全部通过。
 - 逐对元数据（含每文件 SHA-256 与场景同一性）：evidence/R-11/a1-f3-pairs.json；
   两侧机器输出各自落档 evidence/R-11/a1-f3-{before,after}/（version-meta.txt、
   configure/build log、exits.txt、*-meta.txt、*-window.png、*-uia.txt、capture-side.ps1）。
-- 差异事实：I/O 读/I/O 写两列在 After 真实出现于表头（UIA 双侧独立文本），尺寸/场景/
-  工具链/启动/关闭全对齐；截图像素差异由两列渲染引起。
+- **截图证据效力更正（local-r2 v2 补核 + 本轮根因调查，原"像素差异由两列渲染引起"
+  表述撤回）**：After 与 Before 截图在表头/数据区**逐像素一致（0 差异）**，唯一差异
+  在状态栏 56 像素——截图**不能证明 I/O 列视觉呈现**，截图证据降级为视觉 unknown。
+- **根因（本轮探针 D/E/G/H/I 确立，高置信机制）**：PrintWindow+PW_RENDERFULLCONTENT
+  对无人值守 Qt/DWM 合成窗口返回**冻结首帧**表面（resize 失效/前台激活+移动/最小化
+  还原均无法刷新捕获表面）；UIA 读的是活控件树——同刻配对取证（探针 I）显示 UIA
+  报 7 表头而截图仍为冻结帧，矛盾直接复现并归档。CopyFromScreen（地面真值路径）在
+  本执行环境不可用（宿主无桌面输入绑定，handle invalid）。原始图未覆盖，全部探针
+  输出在 evidence/R-11/a1-shot-probe/。
+- **仍有效的 F3 证据**：UIA 文本对照（Before 5 表头无 I/O ↔ After 7 表头含
+  I/O 读/I/O 写，插状态列前）、meta 场景同一性（尺寸/显示/Qt 运行时/启动/关闭）、
+  exe/源码树 hash 链 8/8、双侧自然退出。**视觉呈现（像素级）回归用户人工点验**。
 - F1 修正注：process_checks 汇总文案 51→53（真实 check 数，Review_R11_pr_1 独立直跑
   核验），head be6ad14 双配置 ctest 6/6 当次验证。
 
