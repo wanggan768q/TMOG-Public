@@ -1,13 +1,28 @@
 {
-  "Dev_Setting": "",
-  "Review_Setting": "",
-  "IssueWriter_Setting": "",
-  "Plan_Setting": "",
-  "TeamReview_Setting": "",
-  "Max_Dev": 1,
-  "Max_Review": 1,
-  "Max_IssueWriter": 1,
-  "Max_Plan": 1,
-  "Worktree_Root": "E:\\Git\\TMOG-Public-WorkTree",
-  "Merge_Method": "merge"
+  "schemaVersion": 2,
+  "paused": false,
+  "eval": {
+    "mode": "observe",
+    "model": null
+  },
+  "executor": {
+    "maxWorkers": 3,
+    "model": null
+  },
+  "policy": {
+    "allowInferred": false,
+    "merge": "manual",
+    "botReviewRounds": 3
+  },
+  "claude": {
+    "settings": {
+      "dev": "",
+      "plan": "",
+      "review": "",
+      "issue-writer": "",
+      "team-review": ""
+    },
+    "worktreeRoot": "E:\\Git\\TMOG-Public-WorkTree",
+    "mergeMethod": "merge"
+  }
 }

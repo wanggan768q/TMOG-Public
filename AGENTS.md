@@ -14,7 +14,9 @@
 
 ## 团队协作与独立审计
 
-启动 Product、制定或修订计划、派发 Dev/Review、发布合并 PR、回写 Issue、恢复进度或清理任务 worktree 时，必须读取 `.claude/agent-team/README.md`。角色定义在 `.claude/agents/`，本地配置为 `.claude/agent-team/config.json`，执行进度在当前主工程 `.claude/workflow/`。建立流程不授权自动恢复历史功能开发；先取得用户指定任务或继续指令。
+团队采用 Claude Code + Orca 上的 **主 Agent / Ticket Worker** 模型，借鉴 dsh-superagent 的工作方式，不部署 DSH。启动 Product、指定或恢复 Ticket、请求专项 Plan/Review/IssueWriter、交付 PR 或清理 worktree 时，必须读取 `.claude/agent-team/README.md`。角色在 `.claude/agents/`；本地配置 `.claude/agent-team/config.json` 须使用新版结构；运行资料在主工程 `.workflow/`。Worker 全程负责同一工单，主 Agent 只接单、路由与交付，专项角色按需使用，不走固定流水线。
+
+建立规则不授权自动恢复历史功能、改变权限、安装工具或发布 GitHub 内容。原始用户授权限定范围，明确 stop/等待确认优先于普通跟进；新模型不自动继承旧 Product 的全权扩大范围/合并授权。
 
 用户主动调用 TeamReview 审计团队流程、技能使用或跟进改进建议时，必须读取 `.claude/agent-team/team-review.md`。TeamReview 独立于 Product，仅用户管理；不自动运行，不自行整改或改变技能复制策略。
 
