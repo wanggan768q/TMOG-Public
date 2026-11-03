@@ -120,6 +120,31 @@ stale_persistence/io_table/io_helper_binding）全部通过。
 4. 差分/身份/失败检查及回归：process/io_table/io_activity(静态)/close_lifecycle/
    sampling_recovery/stale_persistence 六库存双配置 6/6。
 
+## 6b. F3 真实 Before/After UI 对照（F-3 缺口补齐，R-11/a1 F1-F3 轮）
+
+共享合同要求同版本同场景真实对照；本轮以独立构建取证，不模拟、不隐藏列。
+
+| 项 | Before（基线） | After（本票） |
+|---|---|---|
+| 源码版本 | ae5cc44902d7a55c0a22c945fe3a3b22bfc6f7fd（origin/main，detached worktree baseline-main-20261103） | be6ad14993c14975ea4671da546ab6e0fa2bd966（本分支，F1 文案修正含） |
+| src/tests/CMake tree hash | 56e102fc8899b2488e5639cf2090eb826eaeee36 | 6093f209c2d413d0908831ddfc881e80e3cd12d8 |
+| TmogReplica.exe SHA-256 | BDECC5274A8BBF70F2D1641ADA928057E5BE6E3FAFA0E52F8292659822EEBA24（256571 B） | 8EBBCFBF5F917181014ACEEF6D34583B24C6E58A04ABCFE76C2595EDA78FDF77（265876 B） |
+| 构建命令/工具链 | cmake -S <wt> -B <build> -G Ninja -DCMAKE_BUILD_TYPE=Release + 显式 ninja/g++/ar/ranlib/Qt 路径；cmake3.31.2+ninja1.12.1+g++13.1.0+Qt6.12.0 | 同左（同工具链同参数，仅源码树不同） |
+| 启动命令 | Start-Process 无参数，同工作目录模式，Qt 运行时同路径 | 同左 |
+| 场景 | 主屏原生显示、无 DPI/主题覆盖；窗口 GetWindowRect 632,245 尺寸 272x274 | 同左（同尺寸同位置模式） |
+| 截图 | before-window.png（PrintWindow flags=2） | after-window.png（同脚本同参数） |
+| UIA 真实文本 | 31 元素；表头 5 列：名称/PID/CPU/内存/状态（**无 I/O 列**） | 33 元素；表头 7 列：名称/PID/CPU/内存/**I/O 读/I/O 写**/状态 |
+| 关闭 | CloseMainWindow=True，10s 内自然退出，无兜底，残留 0 | 同左 |
+| 进程归属 | pid 9208 自建自关（before-meta.txt） | pid 76628 自建自关（after-meta.txt） |
+
+- 逐对元数据（含每文件 SHA-256 与场景同一性）：evidence/R-11/a1-f3-pairs.json；
+  两侧机器输出各自落档 evidence/R-11/a1-f3-{before,after}/（version-meta.txt、
+  configure/build log、exits.txt、*-meta.txt、*-window.png、*-uia.txt、capture-side.ps1）。
+- 差异事实：I/O 读/I/O 写两列在 After 真实出现于表头（UIA 双侧独立文本），尺寸/场景/
+  工具链/启动/关闭全对齐；截图像素差异由两列渲染引起。
+- F1 修正注：process_checks 汇总文案 51→53（真实 check 数，Review_R11_pr_1 独立直跑
+  核验），head be6ad14 双配置 ctest 6/6 当次验证。
+
 ## 7. 未完成与限制（保留，不豁免）
 
 - 11H 受控 I/O 实验（--allow-controlled-io 真实路径）：未执行，需用户单独授权。
