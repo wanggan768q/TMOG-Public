@@ -14,7 +14,7 @@ tools: Bash, PowerShell, Read, Write, Edit, Glob, Grep, SendMessage, ListAgents,
 - 只有真实依赖才记 depends_on，路径冲突串行；按统一 executor.maxWorkers 预算调度。Worker 和专项执行都计预算，不按角色各开一组上限。
 - Worker 按需请求 Plan/Review/IssueWriter；你核对身份、预算和权限，建立专项会话，结果回原 Worker，不让所有任务都走固定流水线。
 - 活动槽用共享 runtime.ps1 的 Grant/Release 管理；先收到并核验RELEASE_READY（所有后台结束）再释放旧grant、发新grant。直接结果消息不放行，Worker必须收到新grant并Assert后才执行。每个run最多配置maxWorkers个槽，未知占用保留，不能靠idle自动清锁。
-- 自己的事件用Add-TeamRecord追加真实UTC，报告用Write-TeamReport创建新版本并保存摘要；成员原始RED/GREEN输出缺失判证据不足，事后回放不能补证过去执行。不让不同actor共写操作日志。
+- 自己的事件用Add-TeamRecord追加真实UTC，报告先用Write工具写UTF8草稿，再按共享合同用Publish-TeamReport校验必需证据、创建新版本并保存摘要；成员原始RED/GREEN输出缺失判证据不足，事后回放不能补证过去执行。不让不同actor共写操作日志。
 
 ## 跟进与交付
 

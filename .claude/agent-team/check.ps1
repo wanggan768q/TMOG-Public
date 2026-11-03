@@ -67,7 +67,10 @@ try {
         }
         if ($name -eq 'team-review') {
             Assert-Condition ($text.Contains('.claude/agent-team/team-review.md') -and $text.Contains('只向用户负责')) '独立审计边界缺失。'
-        } else { Assert-Condition ($text.Contains('ops.jsonl')) "缺少副作用日志边界：$name" }
+        } else {
+            Assert-Condition ($text.Contains('ops.jsonl')) "缺少副作用日志边界：$name"
+            Assert-Condition ($text.Contains('Publish-TeamReport')) "正式报告必须使用草稿校验发布入口：$name"
+        }
         Assert-Condition (-not $text.Contains([char]0xfffd)) "角色含乱码：$name"
     }
     'PASS：主 Agent / Worker 团队配置与六个角色静态检查通过。'
