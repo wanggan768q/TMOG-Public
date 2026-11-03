@@ -1,5 +1,5 @@
 # 只读：输出本地任务分支 / worktree / PR 状态的 Markdown 表，供 Product 写入 BOARD.md。
-# 不删除任何东西；"建议"列只是候选，真正清理仍按 README“关闭与清理”逐项核查。
+# 不删除任何东西；"建议"列只是候选，真正清理仍按 README 第9节“通知、看板与收口”逐项核查。
 [CmdletBinding()]
 param([switch]$NoFetch)
 $ErrorActionPreference = 'Stop'

@@ -6,7 +6,7 @@ TeamReview 的目标是持续优化整个团队流程，包含技能使用、协
 
 单例固定最多一个未关闭 TeamReview，不提供 Max_TeamReview。启动前由用户委托的当前会话或 TeamReview 核查 ListAgents/已有审计登记；已有实例联系用户选择使用，可能存活但失联不重复创建。待命不授权新审计，关闭必须用户明确要求。
 
-直接在主工程启动形态：`claude -n TeamReview_<唯一编号> --agent team-review --settings <已核实绝对路径>`。TeamReview_Setting 从本地 config 读取，相对路径以主工程为根；`pwsh -NoProfile -File .claude/agent-team/check.ps1 -Ready -Role team-review` 只预检审计设置，不要求自动团队的四个设置。命令参数按 PowerShell 正确引用；配置中设置路径不是自动展开的 shell 变量。
+直接在主工程启动形态：`claude -n TeamReview_<唯一编号> --agent team-review --settings <已核实绝对路径>`。设置从新版 config 的 `claude.settings.team-review` 读取，相对路径以主工程为根；`pwsh -NoProfile -File .claude/agent-team/check.ps1 -Ready -Role team-review` 只预检审计设置，不要求其他角色设置。旧 TeamReview_Setting 须显式迁移，不覆盖历史记录。命令参数按 PowerShell 正确引用；配置中设置路径不是自动展开的 shell 变量。
 
 用户也可明确委托当前会话使用 orchestration 技能及版本匹配普通终端指南创建 Orca 会话，显式加载角色，尽量加入已核实工作标签页；不能为找布局控制 Product。用户直接开窗口时不假定有 Orca handle。登记名字、实时 ref、实际 cwd、可取得的真实 terminal handle 和创建来源；缺失写未知，不编造 handle。无真实 handle 就不能靠名字猜终端关闭。
 
