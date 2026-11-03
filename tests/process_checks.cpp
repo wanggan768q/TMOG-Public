@@ -293,6 +293,6 @@ int main() {
     test_io_near_uint64_upper_bound();
     test_io_wall_regression_dt_zero_treated();
     test_io_status_independent_from_cpu_status();
-    std::cout << (failures == 0 ? "process_checks: ALL PASS (51 checks)\n" : "process_checks: FAILURES\n");
+    std::cout << (failures == 0 ? "process_checks: ALL PASS (53 checks)\n" : "process_checks: FAILURES\n");
     return failures == 0 ? 0 : 1;
 }
