@@ -110,6 +110,9 @@ void MainWindow::start_sample() {
                           sample_failed_ = false;
                           stale_label_->setVisible(false);
                       }
+                      // #11 R1：当前代际成功帧同步清 model 全表陈旧提示
+                      //（失败回调置位；恢复首帧整表"待采样"时 tooltip 同步恢复）。
+                      model_->set_table_stale(false);
                   },
                   [this, generation](const std::string& error) {
                       if (generation != sample_generation_) return;   // 跨代际失败：静默丢弃
@@ -122,6 +125,9 @@ void MainWindow::start_sample() {
                           tr("数据已陈旧（采样失败：%1）")
                               .arg(QString::fromStdString(error)));
                       stale_label_->setVisible(true);
+                      // #11 R1：model 全表陈旧置位——I/O 列 tooltip 追加
+                      // 陈旧提示（不隐藏各 I/O 具体状态，模型数据不动）。
+                      model_->set_table_stale(true);
                   });
 }
 

@@ -50,7 +50,7 @@ std::optional<SampleResult> WindowsProcessEnumerator::take_sample() {
             ps.identity.pid = entry.th32ProcessID;
             ps.name = WideToUtf8(entry.szExeFile);
 
-            // 同一快照内逐进程取身份（创建时间）、CPU 时间与工作集
+            // 同一快照内逐进程取身份（创建时间）、CPU 时间、工作集与累计 I/O
             HANDLE h = OpenProcess(
                 PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
             if (h) {
@@ -66,6 +66,16 @@ std::optional<SampleResult> WindowsProcessEnumerator::take_sample() {
                         reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc))) {
                     ps.resident_bytes = pmc.WorkingSetSize;
                     ps.resident_available = true;
+                }
+                // #11：同一已有句柄读累计 I/O（不按裸 PID 取第二句柄，不增权限）。
+                // 仅在有效创建身份核实后记录，避免 PID 复用时误绑计数。
+                if (ps.identity.creation_tick != 0) {
+                    IO_COUNTERS io{};
+                    if (GetProcessIoCounters(h, &io)) {
+                        ps.io_read_bytes = io.ReadTransferCount;
+                        ps.io_write_bytes = io.WriteTransferCount;
+                        ps.io_available = true;
+                    }
                 }
                 CloseHandle(h);
             }

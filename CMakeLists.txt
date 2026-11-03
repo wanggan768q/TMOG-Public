@@ -47,6 +47,19 @@ if(WIN32)
     target_link_libraries(smoke_enumerate PRIVATE tmog_core)
     add_test(NAME smoke_enumerate COMMAND smoke_enumerate)
 
+    # #11 受控 I/O 实验入口（11H）：纯 Win32（windows.h），置于 WIN32 门内；
+    # 只构建，不默认 add_test。无 --allow-controlled-io 时 exit 2；
+    # 执行需用户单独批准（计划 §5.4）。
+    # shell32：CommandLineToArgvW（宽入口解析，helper-binding 修复计划 D2）。
+    add_executable(io_activity_checks tests/io_activity_checks.cpp)
+    target_link_libraries(io_activity_checks PRIVATE tmog_core shell32)
+
+    # helper-binding 安全检查（本版计划 D7）：同源纯参数/状态检查入口，
+    # 无真实 helper/文件/进程副作用；故障即 exit 1（不使用 assert）。
+    add_test(NAME io_helper_binding_checks
+             COMMAND io_activity_checks --check-helper-binding-only)
+    set_tests_properties(io_helper_binding_checks PROPERTIES TIMEOUT 120)
+
     add_executable(process_ops_checks tests/process_ops_checks.cpp)
     target_link_libraries(process_ops_checks PRIVATE tmog_core)
     add_test(NAME process_ops_checks COMMAND process_ops_checks)
@@ -78,7 +91,8 @@ if(TARGET Qt6::Widgets)
 
     # #16 G5 检查：持久陈旧标注走生产呈现路径（离屏真实 MainWindow +
     # 生产 SamplingWorker；GUI 目标可用时才有意义）。MainWindow.cpp 与
-    # TmogReplica 同源编入（非镜像）。
+    # TmogReplica 同源编入（非镜像）。offscreen 需要合法 Qt 插件路径
+    # （Qt6::Core 位于 <Qt>/bin，插件在 <Qt>/plugins/platforms）。
     add_executable(stale_persistence_checks
         tests/stale_persistence_checks.cpp
         src/MainWindow.cpp
@@ -88,7 +102,20 @@ if(TARGET Qt6::Widgets)
     add_test(NAME stale_persistence_checks
              COMMAND stale_persistence_checks)
     set_tests_properties(stale_persistence_checks PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins/platforms")
+
+    # #11 检查：I/O 列模型呈现/数值排序/哨兵/选择保持（生产 model + 同源
+    # proxy + 生产 MainWindow 注入路径；离屏）。合法 Qt 插件路径 + TIMEOUT 120。
+    add_executable(io_table_checks
+        tests/io_table_checks.cpp
+        src/MainWindow.cpp
+        src/ProcessTableModel.cpp
+    )
+    target_link_libraries(io_table_checks PRIVATE tmog_core Qt6::Widgets)
+    add_test(NAME io_table_checks COMMAND io_table_checks)
+    set_tests_properties(io_table_checks PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins/platforms"
+        TIMEOUT 120)
 
     # M4：Windows 便携目录（windeployqt 收集 Qt 运行库与插件）
     if(WIN32)

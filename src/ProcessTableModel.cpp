@@ -43,6 +43,26 @@ QVariant ProcessTableModel::data(const QModelIndex& index, int role) const {
             case ProcessStatus::InvalidDelta:   return tr("无效增量");
             }
             return {};
+        case ColIoRead:
+        case ColIoWrite: {
+            const bool is_read = index.column() == ColIoRead;
+            const auto& rate = is_read ? r.io_read_bytes_per_sec
+                                       : r.io_write_bytes_per_sec;
+            const auto io_st = r.io_status;
+            if (io_st == ProcessStatus::FirstSample) return QStringLiteral("待采样");
+            if (io_st == ProcessStatus::Unavailable) return QStringLiteral("不可用");
+            if (io_st == ProcessStatus::IdentityChanged) return QStringLiteral("身份变化");
+            if (io_st == ProcessStatus::InvalidDelta) return QStringLiteral("无效增量");
+            if (!rate) return QStringLiteral("—");
+            const double bps = *rate;
+            if (bps >= 1024.0 * 1024.0)
+                return QString::number(bps / (1024.0 * 1024.0), 'f', 2)
+                     + QStringLiteral(" MiB/s");
+            if (bps >= 1024.0)
+                return QString::number(bps / 1024.0, 'f', 1)
+                     + QStringLiteral(" KiB/s");
+            return QString::number(bps, 'f', 0) + QStringLiteral(" B/s");
+        }
         }
     }
     // 排序角色：数值列按值；文本列返回原串（Qt 按字典序比较 QString）
@@ -53,7 +73,40 @@ QVariant ProcessTableModel::data(const QModelIndex& index, int role) const {
         case ColCpu:    return r.cpu_percent ? *r.cpu_percent : -1;
         case ColMemory: return r.snapshot.resident_available
                               ? static_cast<qulonglong>(r.snapshot.resident_bytes) : -1;
+        // I/O 排序：始终同一 double 类型有效数值，无效哨兵 -1.0（同类型可比）
+        case ColIoRead:  return r.io_read_bytes_per_sec  ? *r.io_read_bytes_per_sec  : -1.0;
+        case ColIoWrite: return r.io_write_bytes_per_sec ? *r.io_write_bytes_per_sec : -1.0;
         default:        return {};
+        }
+    }
+    // #11 R1：陈旧提示辅助——全表陈旧时给 I/O tooltip 追加统一后缀，
+    // 不隐藏各列原有具体状态（待采样/不可用/身份变化/无效增量/速率）。
+    const auto with_stale = [this](QString tip) -> QVariant {
+        if (!table_stale_) return tip;
+        return tip + tr("\n数据已陈旧（最近一次采样失败，当前显示非实时）");
+    };
+    if (role == Qt::ToolTipRole) {
+        switch (index.column()) {
+        case ColIoRead:
+        case ColIoWrite: {
+            const bool is_read = index.column() == ColIoRead;
+            const auto& rate = is_read ? r.io_read_bytes_per_sec
+                                       : r.io_write_bytes_per_sec;
+            QString base = is_read ? tr("Windows 进程 I/O 读；并非物理磁盘吞吐")
+                                   : tr("Windows 进程 I/O 写；并非物理磁盘吞吐");
+            if (r.io_status == ProcessStatus::FirstSample)
+                return with_stale(base + tr("\n待采样：下一帧将建立基线"));
+            if (r.io_status == ProcessStatus::Unavailable)
+                return with_stale(base + tr("\n不可用：平台未提供或本次读取失败"));
+            if (r.io_status == ProcessStatus::IdentityChanged)
+                return with_stale(base + tr("\n身份变化：PID 复用，基线无效"));
+            if (r.io_status == ProcessStatus::InvalidDelta)
+                return with_stale(base + tr("\n无效增量：累计值倒退，速率不可信"));
+            if (!rate) return with_stale(base + tr("\n无有效速率"));
+            return with_stale(base + QStringLiteral("\n当前速率: ")
+                 + data(index, Qt::DisplayRole).toString() + tr("（非物理磁盘吞吐）"));
+        }
+        default: return {};
         }
     }
     return {};
@@ -62,11 +115,13 @@ QVariant ProcessTableModel::data(const QModelIndex& index, int role) const {
 QVariant ProcessTableModel::headerData(int section, Qt::Orientation orientation, int role) const {
     if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
     switch (section) {
-    case ColName:   return tr("名称");
-    case ColPid:    return tr("PID");
-    case ColCpu:    return tr("CPU");
-    case ColMemory: return tr("内存");
-    case ColStatus: return tr("状态");
+    case ColName:    return tr("名称");
+    case ColPid:     return tr("PID");
+    case ColCpu:     return tr("CPU");
+    case ColMemory:  return tr("内存");
+    case ColIoRead:  return tr("I/O 读");
+    case ColIoWrite: return tr("I/O 写");
+    case ColStatus:  return tr("状态");
     }
     return {};
 }
@@ -79,6 +134,17 @@ void ProcessTableModel::replace_snapshot(std::vector<SampledRow> rows) {
 
 const SampledRow* ProcessTableModel::row_at(int row) const {
     return row >= 0 && row < (int)rows_.size() ? &rows_[row] : nullptr;
+}
+
+void ProcessTableModel::set_table_stale(bool stale) {
+    if (table_stale_ == stale) return;
+    table_stale_ = stale;
+    // 陈旧提示只影响 I/O 列 tooltip：精确发出这些单元格的 dataChanged，
+    // 不做全表 reset（不打断选择/排序状态）。
+    if (rowCount() > 0) {
+        emit dataChanged(index(0, ColIoRead), index(rowCount() - 1, ColIoWrite),
+                         {Qt::ToolTipRole});
+    }
 }
 
 } // namespace tmog

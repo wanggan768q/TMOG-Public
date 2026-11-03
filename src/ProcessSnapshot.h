@@ -20,6 +20,12 @@ struct ProcessSnapshot {
     std::uint64_t resident_bytes = 0;   // 驻留内存：Windows 工作集 / macOS·Linux RSS
     bool cpu_time_available = false;
     bool resident_available = false;
+
+    // Windows 进程累计 I/O（自创建，IO_COUNTERS 字节读/写）
+    // 仅在有效创建身份核实后读取；非 Windows 平台保持不可用
+    std::uint64_t io_read_bytes = 0;
+    std::uint64_t io_write_bytes = 0;
+    bool io_available = false;
 };
 
 // 一次全系统采样
