@@ -8,13 +8,13 @@
 |---|---|---|---|---|
 | before-800x500.png | 786x493 | 800x500（窗口含边框） | ae5cc44902d7a55c0a22c945fe3a3b22bfc6f7fd（origin/main 基线，baseline worktree 独立 Release 构建） | Windows.Graphics.Capture（TryCreateFromWindowId） |
 | after-800x500.png | 786x493 | 800x500 | 66b2fc6cc0922f79b246f1a728f2faf3c6ba067e 等价源码（be6ad14..aa6c882 仅文档差异；exe 由 be6ad14 树构建） | 同上 |
-| before-after-side-by-side.png | 536x1068 | 拼合图（左=before-800x500 右=after-800x500，各 2x 缩放） | 同上两版本 | PIL 拼合 |
+| before-after-side-by-side.png | 1588x493 | 拼合图（左=before-800x500，右=after-800x500，各 1x 原尺寸，中间 16px 间隔） | 同上两版本 | PIL 拼合，无缩放 |
 
 ## SHA-256
 
 - before-800x500.png：见 doc 提交时 git hash-object；源 = evidence/R-11/a1-agent-shot/before-wgc-big.png（0f3f5a21894cfc93…30521 bytes）
 - after-800x500.png：源 = evidence/R-11/a1-agent-shot/after-wgc-early.png（829d23c932a31fe5…34027 bytes）
-- before-after-side-by-side.png：源 = evidence/R-11/a1-agent-shot/before-after-side-by-side.png
+- before-after-side-by-side.png：由本目录 before-800x500.png 与 after-800x500.png 程序化拼合（PIL），无缩放无重采样
 
 ## 捕获场景
 
