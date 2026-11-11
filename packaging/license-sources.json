@@ -280,7 +280,8 @@
           "file": "licenses/Qt-COPYING.txt",
           "source_member": "local Qt installer / MinGW toolchain (see note)",
           "sha256": "eb7e9ab9690124c5c9f42bdc81383d886a3dede26345b6ed15bbad7caf81f7ea",
-          "note": "Qt 官方安装器 Licenses/COPYING.txt（GPL 与例外说明），本机合法源原样复制"
+          "note": "Qt 官方安装器 Licenses/COPYING.txt（Apache License 2.0 全文），本机合法源原样复制",
+          "purpose": "官方随附材料：该文本为 Apache-2.0，不含 GPL/LGPL/例外内容；不作为本包 Qt 运行库的分发许可依据（该依据为 licenses/Qt-LICENSE.txt 的 LGPLv3/GPLv3 多许可）。因其不对应包内任何组件，未列入本组件 license_ids"
         },
         {
           "file": "licenses/gcc-COPYING3.txt",
@@ -308,7 +309,7 @@
         }
       ],
       "upstream_download": "https://download.qt.io/official_releases/qt/6.12/6.12.0/ ; https://gcc.gnu.org/pub/gcc/releases/gcc-13.1.0/",
-      "notes": "这 6 个文件源自本机 Qt 官方安装器/MinGW 工具链（attempt=2 已核与随附源逐字节一致），列入本清单以满足来源清单与包内许可文件双向闭环。"
+      "notes": "这 6 个文件源自本机 Qt 官方安装器/MinGW 工具链（attempt=2 已核与随附源逐字节一致），列入本清单以满足来源清单与包内许可文件双向闭环。其中 licenses/Qt-COPYING.txt 实为 Apache License 2.0（R-6 审查阻断项 B1 已更正描述），属官方随附材料而非本包分发许可依据，故不进入 license_ids；包内 Qt/GCC 组件的许可依据为 Qt-LICENSE.txt（LGPLv3/GPLv3）、gcc-COPYING3/COPYING.RUNTIME（GPLv3 + 例外）、winpthreads-COPYING（MIT 式）与 mingw-w64-runtime-COPYING（汇总）。"
     }
   ],
   "files": [

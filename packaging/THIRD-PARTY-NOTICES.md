@@ -21,7 +21,10 @@ MinGW-w64 GCC 13.1.0），组件清单与 `MANIFEST.txt` 对应。
 | Qt6Network.dll | 6.12.0.0 | 同上 | LGPLv3 |
 | Qt6Svg.dll | 6.12.0.0 | 同上 | LGPLv3 |
 
-- 许可证全文：`licenses/Qt-LICENSE.txt`（LGPLv3）、`licenses/Qt-COPYING.txt`（GPL 及例外说明，Qt 官方随附）
+- 许可证全文：`licenses/Qt-LICENSE.txt`（LGPLv3/GPLv3 多许可全文；本包 Qt 运行库按
+  LGPLv3 选项分发，分发许可依据即此文件）、`licenses/Qt-COPYING.txt`（**Apache
+  License 2.0** 全文，Qt 官方安装器 `Licenses/COPYING.txt` 原样随附；属官方随附材料，
+  不含 GPL/LGPL/例外文本，**不作为本包分发许可依据**）
 - 来源：Qt 官方在线安装器的 6.12.0 mingw_64 组件原样部署（制作过程只读使用官方安装内容，
   未修改任何 Qt 二进制）
 - 对应源码：Qt 6.12.0 的 qtbase/qtsvg 模块源码，官方发布点

@@ -293,14 +293,15 @@ material-dev-2-contract.md 修复合同内由 dev attempt2 完成最小修复：
   （27 负例 + 1 正例对照），0 意外通过，raw exit=0**，净耗时 40,264 ms。
   §10 各轮目标诊断（R-A/N22 casefold 重复、N4 size 单篡改、N16 缺内嵌许可、
   N27 HardLink 读前拒绝等）本轮同样命中。
-- **完整打包**：`scripts/package-portable.ps1`（`-BuildDir <WT>/build/issue6-release`）
-  strict configure → `portable_package` staging → 许可收集 → MANIFEST →
-  包内自检，raw exit=0，净耗时 9,323 ms。产物
-  `<WT>/build/issue6-release/portable`：**盘上 52 文件，合计 40,769,058 字节
-  （38.88 MiB）**，其中 `TmogReplica.exe` 265,876 字节、`MANIFEST.txt` 5,380 字节
-  （清单主体 51 条，MANIFEST 自身不入列）。MANIFEST 头部实测：
+- **完整打包**（rebase 轮快照，`-BuildDir <WT>/build/issue6-release`）：
+  `scripts/package-portable.ps1` strict configure → `portable_package` staging →
+  许可收集 → MANIFEST → 包内自检，raw exit=0，净耗时 9,323 ms。该轮产物盘上 52 文件、
+  合计 40,769,058 字节；**B1 修复后重建**（`-BuildDir <WT>/build/issue6-fix-package`，
+  见 §12）为同 52 文件、**合计 40,769,990 字节（38.88 MiB）**，差值即 §12 两处描述
+  文本净增 932 字节。`TmogReplica.exe` 265,876 字节、`MANIFEST.txt` 5,380 字节
+  （清单主体 51 条，MANIFEST 自身不入列）两轮一致。MANIFEST 头部实测：
   `app-version: 0.1.0`、`qt: 6.12.0.0`、`compiler-runtime: MinGW-w64 GCC 13.1.0`。
-  `scripts/check-package.ps1 -PackageDir .../portable` 输出
+  两轮 `scripts/check-package.ps1 -PackageDir .../portable` 均输出
   **`check-package: ALL PASS`**（exit 0）。
 - **缺组件失败路径**（真实执行，非静态声称）：以 `-DTMOG_PORTABLE_STRICT=ON` 且
   不传 Qt 前缀在 `<WT>/build/issue6-strict-noqt` configure，CMake 在
@@ -313,7 +314,8 @@ material-dev-2-contract.md 修复合同内由 dev attempt2 完成最小修复：
   scripts/package-portable.ps1 `3c015ad5f508fc4d7edd193be11862374798f5a7c18cdfba14664c33ee52d5eb`；
   scripts/check-package.ps1 `7edce6fc36401b5b32eb85ae925b31e131bd3d361bfcf612978c6673c52cdb4b`；
   packaging/README-PACKAGE.md `a6180dc0c06d187e91b88d85b0540315f9c4e3bdd548482124c607714ef5deb2`；
-  packaging/THIRD-PARTY-NOTICES.md `1ecc208c4a703a8a179f04323f5477eeeb695307397e08d43dce4c98e5921cfc`；
+  packaging/THIRD-PARTY-NOTICES.md `6cc8aa5a2caeabaf2e869add97202ba87820e1e68a975e247d2db8b9d264e713`
+  （B1 修复后值；修复前 `1ecc208c…921cfc`）；
   tests/package_checks.ps1 `3b78d01e7e84676f2c4ddfcb67f7916e85ad9df8ae8a142952e8add945c0500e`。
   §1 表内数值为 attempt=2 时快照（材料恢复轮改动了这些文件），不再代表当前内容。
 - **本轮仍未验证（与 §7/§9 一致，不因本节复测而消失）**：
@@ -321,3 +323,48 @@ material-dev-2-contract.md 修复合同内由 dev attempt2 完成最小修复：
   - 跨机器复现与产物逐字节可重复（仅声明清单主体可重复，不声明 EXE 逐字节相同）；
   - 维护者逐项法律/合规确认（动态链接不等于全部许可义务已履行）；
   - 代码签名、Qt PSL/MPL 是否实际嵌入、qtsvg 源码 tarball 本地 hash 核验。
+
+## 12. R-6 审查阻断项 B1 修复（2026-11-11）
+
+独立审查（`.workflow/dsh-resume-20261111/reports/R-6-pr-review-r1.md`）阻断项 B1：
+`packaging/licenses/Qt-COPYING.txt`（202 行）实为 **Apache License 2.0**，但
+`packaging/THIRD-PARTY-NOTICES.md:24` 与 `packaging/license-sources.json:283` 将其
+描述为「GPL 及例外说明」。本轮只改描述与声明，**未改任何许可文本字节**（28 个文本
+SHA-256 全部未变，逐项复核 0 不符）。
+
+1. **NOTICES 描述**：`THIRD-PARTY-NOTICES.md:24` 改为如实写明
+   `licenses/Qt-COPYING.txt` 是 **Apache License 2.0** 全文（Qt 官方安装器
+   `Licenses/COPYING.txt` 原样随附），并明确其为「官方随附材料，不作为本包分发许可
+   依据」，分发依据指向 `licenses/Qt-LICENSE.txt`（LGPLv3/GPLv3 多许可）。未写
+   「本包按 Apache-2.0 分发」类无证据断言（包内无 Apache-2.0 组件二进制）。
+2. **JSON note/purpose**：`license-sources.json` 该文件条目 `note` 改为
+   「Apache License 2.0 全文」，并新增同条目 `purpose`
+   （官方随附材料、不含 GPL/LGPL/例外内容、不作为分发许可依据），复用该 schema
+   既有 `purpose` 字段（wintab 条目已在用），未新增无验证字段。
+3. **`license_ids` 未加入 Apache-2.0（选择理由）**：该清单 `license_ids` 的语义是
+   「随附文本对应的**组件**许可」（见 `provenance.license_declaration_status` 与各
+   `components[].embedded_in`）。本包不含任何 Apache-2.0 许可的组件二进制，
+   `Qt-COPYING.txt` 只是 Qt 安装器随附材料；若登记为 `license_ids: Apache-2.0`，
+   会与「本包 Qt 运行库按 LGPLv3 分发」的既有断言冲突并制造虚假组件映射。故按审查
+   建议的第二分支处理：以显式声明（文件级 `purpose` + 组件级 `notes`）说明其角色；
+   该组件 `notes` 同轮补写「Qt-COPYING 为 Apache-2.0 随附材料、不进入 license_ids」。
+4. **全文检索**：`GPL 及例外|GPL 与例外` 在 `packaging/`、`scripts/`、`tests/` 与
+   `doc/plans/` 内已 0 命中；`licenses/` 下 28 个文本文件 `git status` 无改动。
+5. **复验实测**（同环境，PATH 前缀 MinGW/Ninja/Qt bin）：
+   - `tests/package_checks.ps1`（`-WorkDir <WT>/build/issue6-fix-checks`）：
+     **28 cases（27 负例 + 1 正例），0 意外通过，raw exit=0**，净耗时 34,407 ms；
+     日志 `evidence/worker-r6-b1-fix-package_checks.log`。
+   - `scripts/package-portable.ps1`（`-BuildDir <WT>/build/issue6-fix-package`，
+     全新构建目录、含全量编译）：raw exit=0，净耗时 22,967 ms（§11 的 9,323 ms
+     为增量构建轮），包内自检 `check-package: ALL PASS`；
+     日志 `evidence/worker-r6-b1-fix-package.log`。
+   - `scripts/check-package.ps1 -PackageDir <WT>/build/issue6-fix-package/portable`：
+     **`check-package: ALL PASS`**，exit=0；产物 **52 文件 / 40,769,990 字节**，
+     `MANIFEST.txt` 5,380 字节、主体 51 条（与 §11 一致）；
+     日志 `evidence/worker-r6-b1-fix-check-package.log`。
+6. **本轮改动文件 hash**：`packaging/THIRD-PARTY-NOTICES.md`
+   `6cc8aa5a2caeabaf2e869add97202ba87820e1e68a975e247d2db8b9d264e713`
+   （13,704 B，修复前 13,453 B）；`packaging/license-sources.json`
+   `e3942baa3cd612243dea72f74762638ac0cb38d7075b4b3e41e5f0a92db4431b`
+   （18,323 B，修复前 17,642 B）。JSON 内 `files` 仍 28 条、`components` 仍 12 个，
+   28 项 `files[].sha256` 与磁盘逐项一致。
