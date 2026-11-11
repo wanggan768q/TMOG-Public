@@ -41,7 +41,8 @@ hash 取自 `git show <c62992b8>:<path> | sha256sum` 固定对象。
 - **逐命令退出码**：`Assert-NativeOk` 覆盖 configure/build/staging/dumpfullversion；
   许可证源缺失即 throw（新增 COPYING3 与 winpthreads COPYING 前置检查）。
 - **check-package 增强**：必备文件存在性（exe/notices/readme/manifest/licenses 6 文件）、
-  运行库 7 项、许可 6 项、白名单 28 项、清单行 hash(64hex)/size(数字)/路径合法性
+  运行库 7 项、许可 6 项、白名单 52 项（30 基础项 + 22 内嵌第三方许可文本，材料恢复轮后；
+  本条 §2 写作时为 28 项）、清单行 hash(64hex)/size(数字)/路径合法性
   （拒绝对路径、反斜杠、`..`、空段、尾斜杠）、重复路径拒绝、双向 hash+size、
   白名单独立于清单（篡改清单加未知文件仍失败）。
 - **不新增自动启动器**；`portable_package`/`TMOG_PORTABLE_STRICT` root 目标名保留。
@@ -113,8 +114,9 @@ Ninja `E:/InstallApplication/Qt/Tools/Ninja/ninja.exe`。
   -BuildDir <WT>/build/issue6-release -QtDir <QT> -MinGWDir <MinGW父> -CMakeExe <CMAKE>
   -NinjaExe <NINJA>`，随后 `check-package.ps1 -PackageDir <WT>/build/issue6-release/portable`。
   同一命令重跑两次。
-- 两次均：strict configure OK → portable_package staging → 6 许可文件复制 →
-  MANIFEST 生成 → check-package ALL PASS（28 文件）。
+- 两次均：strict configure OK → portable_package staging → 6 工具链许可文件 + 22 内嵌第三方
+  许可文本复制 → MANIFEST 生成 → check-package ALL PASS（材料恢复前 28 文件；当前 51 条
+  清单条目 / 盘上 52 文件，见 §11）。
 - **可重复性**：剔除 `# generated:` UTC 行后，两次 MANIFEST 主体（路径+sha256+size）
   **逐行一致**（diff 为空），组件清单可重复。按计划不声称 EXE 或含 UTC 的 MANIFEST
   逐字节重现。
@@ -122,15 +124,18 @@ Ninja `E:/InstallApplication/Qt/Tools/Ninja/ninja.exe`。
 - 期间修复两个脚本缺陷（均属获准写域）：BuildDir 根化路径双拼（与 package_checks
   同因）、专用目录 leaf 变量取错层级。
 
-## 5. 组件清单（= 白名单 28 项，两次制作一致）
+## 5. 组件清单（= 白名单 52 项，两次制作一致）
 
 TmogReplica.exe、MANIFEST.txt、README-PACKAGE.md、THIRD-PARTY-NOTICES.md、
+license-sources.json、
 Qt6Core/Gui/Widgets/Network/Svg.dll、libgcc_s_seh-1/libstdc++-6/libwinpthread-1.dll、
 platforms/qwindows.dll、generic/qtuiotouchplugin.dll、iconengines/qsvgicon.dll、
 imageformats/qgif|qico|qjpeg|qsvg.dll、networkinformation/qnetworklistmanager.dll、
 styles/qmodernwindowsstyle.dll、tls/qcertonlybackend|qschannelbackend.dll、
-licenses/ 下 6 个文本（Qt-LICENSE、Qt-COPYING、gcc-COPYING3、gcc-COPYING.RUNTIME、
-winpthreads-COPYING、mingw-w64-runtime-COPYING）。
+licenses/ 下 28 个文本（6 个工具链/Qt 文本：Qt-LICENSE、Qt-COPYING、gcc-COPYING3、
+gcc-COPYING.RUNTIME、winpthreads-COPYING、mingw-w64-runtime-COPYING；22 个内嵌第三方
+许可/版权/头文件文本，见 `packaging/license-sources.json` 顶层 `files` 数组）。
+原文"白名单 28 项 / licenses 下 6 个文本"为材料恢复轮之前的状态，已按 §11 实测更正。
 
 ## 6. 提交与产物归属
 
@@ -258,3 +263,61 @@ material-dev-2-contract.md 修复合同内由 dev attempt2 完成最小修复：
 
 上节 §9 的"共 28 案例 exit 0"为修复前旧构造记录（历史保留）；本轮 §10 为
 修复后新证据，Review attempt2 以新固定 SHA 复审。
+
+## 11. rebase 到 main 后复测（2026-11-11，提交 PR 前）
+
+本节记录分支 rebase 到 `origin/main` `d3e9e2e6c68d75f60d4cd2aa2af1303b04ec36d4`
+之后的实测数据。§1 迁移表与 §4 的数字/哈希是各轮当时的历史快照；§5 的组件/白名单
+数字已按本节实测更正；其余冲突处一律以本节为准（6 个受校准文件的本轮哈希见下）。
+
+- **rebase**：`git rebase origin/main` 5 个 commit 全部自动应用，**0 冲突**
+  （`git merge-tree --write-tree` 预判 rc=0 与实际一致）。rebase 后、本次文档
+  提交前 tip = `5c1bdb5`。远端此前无该分支，推送为新建分支。
+- **工具链**（全部绝对路径，`$env:PATH` 仅会话内加 MinGW/Ninja/Qt bin 前缀）：
+  CMake 3.31.2（`D:/InstallApplication/CMake/bin/cmake.exe`）、Ninja 1.12.1、
+  Qt 6.12.0 mingw_64（`Qt6Core.dll` FileVersion 6.12.0.0）、
+  MinGW-w64 GCC 13.1.0（`g++ -dumpfullversion` = 13.1.0）。
+- **Debug / Release**：各在 `<WT>/build/issue6-{debug,release}` configure
+  （`-G Ninja`，`-DTMOG_PORTABLE_STRICT=ON`）rc=0、`cmake --build --parallel 4`
+  rc=0；`ctest --output-on-failure -j 4` 两配置均 **8/8 Passed，0 failed**
+  （库存 `ctest -N` = 8；§4.1 的 4 项是当时按 `-R` 过滤的安全子集，之后 main 增加
+  `smoke_enumerate`/`io_helper_binding_checks`/`process_ops_checks`/`io_table_checks`）。
+  逐项耗时（Release / Debug，秒）：process_checks 0.05/0.06、smoke_enumerate
+  0.41/0.45、io_helper_binding_checks 0.05/0.09、process_ops_checks 0.09/0.13、
+  sampling_recovery_checks 1.79/1.83、io_table_checks 7.93/7.96、
+  stale_persistence_checks 9.00/8.87、close_lifecycle_checks 11.63/11.59
+  （总 11.68s / 11.60s）。`process_ops_checks` 按默认参数运行，未触发真实
+  TerminateProcess。
+- **package_checks 负例**：`pwsh -NoProfile -File tests/package_checks.ps1
+  -SourceDir <WT> -WorkDir <WT>/build/issue6-r6-checks ...`，**28 cases
+  （27 负例 + 1 正例对照），0 意外通过，raw exit=0**，净耗时 40,264 ms。
+  §10 各轮目标诊断（R-A/N22 casefold 重复、N4 size 单篡改、N16 缺内嵌许可、
+  N27 HardLink 读前拒绝等）本轮同样命中。
+- **完整打包**：`scripts/package-portable.ps1`（`-BuildDir <WT>/build/issue6-release`）
+  strict configure → `portable_package` staging → 许可收集 → MANIFEST →
+  包内自检，raw exit=0，净耗时 9,323 ms。产物
+  `<WT>/build/issue6-release/portable`：**盘上 52 文件，合计 40,769,058 字节
+  （38.88 MiB）**，其中 `TmogReplica.exe` 265,876 字节、`MANIFEST.txt` 5,380 字节
+  （清单主体 51 条，MANIFEST 自身不入列）。MANIFEST 头部实测：
+  `app-version: 0.1.0`、`qt: 6.12.0.0`、`compiler-runtime: MinGW-w64 GCC 13.1.0`。
+  `scripts/check-package.ps1 -PackageDir .../portable` 输出
+  **`check-package: ALL PASS`**（exit 0）。
+- **缺组件失败路径**（真实执行，非静态声称）：以 `-DTMOG_PORTABLE_STRICT=ON` 且
+  不传 Qt 前缀在 `<WT>/build/issue6-strict-noqt` configure，CMake 在
+  `CMakeLists.txt:139` 以
+  `TMOG_PORTABLE_STRICT=ON 但未找到 Qt6 Widgets：便携包要求 GUI 与部署工具齐备`
+  失败，exit=1，不静默降级。包内缺 DLL/缺许可的失败路径由 package_checks 负例
+  N1/N2 覆盖（真实 check-package.ps1 实测非零）。
+- **6 个受校准文件当前 SHA-256**（rebase 后、本节提交前实测）：
+  CMakeLists.txt `bed7647c8d5509596b95aece319cbfbe16eca9b511343792ca48350c92d5d860`；
+  scripts/package-portable.ps1 `3c015ad5f508fc4d7edd193be11862374798f5a7c18cdfba14664c33ee52d5eb`；
+  scripts/check-package.ps1 `7edce6fc36401b5b32eb85ae925b31e131bd3d361bfcf612978c6673c52cdb4b`；
+  packaging/README-PACKAGE.md `a6180dc0c06d187e91b88d85b0540315f9c4e3bdd548482124c607714ef5deb2`；
+  packaging/THIRD-PARTY-NOTICES.md `1ecc208c4a703a8a179f04323f5477eeeb695307397e08d43dce4c98e5921cfc`；
+  tests/package_checks.ps1 `3b78d01e7e84676f2c4ddfcb67f7916e85ad9df8ae8a142952e8add945c0500e`。
+  §1 表内数值为 attempt=2 时快照（材料恢复轮改动了这些文件），不再代表当前内容。
+- **本轮仍未验证（与 §7/§9 一致，不因本节复测而消失）**：
+  - 干净 Windows 11（未装 Qt/开发工具）实机运行、清 PATH 启动（6H 人工授权项）；
+  - 跨机器复现与产物逐字节可重复（仅声明清单主体可重复，不声明 EXE 逐字节相同）；
+  - 维护者逐项法律/合规确认（动态链接不等于全部许可义务已履行）；
+  - 代码签名、Qt PSL/MPL 是否实际嵌入、qtsvg 源码 tarball 本地 hash 核验。
