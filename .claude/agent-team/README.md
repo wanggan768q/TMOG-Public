@@ -1,3 +1,5 @@
+> **历史实现（Claude Code + Orca）。本工程团队协作已迁移到 DSH，规则以 [.dsh/team/README.md](../../.dsh/team/README.md) 为准；角色提示见 [.dsh/team/roles/](../../.dsh/team/roles/)。本文件及其脚本不再用于新任务，保留仅供查阅历史。**
+
 # 团队工作合同：主 Agent + Ticket Worker
 
 借鉴 `deepseek-ai/dsh-superagent-prototype`（固定 SHA `6337fc823ce20251c8de8085948165c81aaa701e`）的接单、授权、Worker 所有权、跟进恢复和低打扰交付方式。**运行环境仍是 Claude Code + Orca，不安装或依赖 DSH。** 本合同和角色文件是行为约定，不是调度服务或安全沙箱；自动 Source 轮询、数据库事务、订阅推送、优先槽和后台生命周期只在本环境有真实实现/receipt 时才能宣称成立。

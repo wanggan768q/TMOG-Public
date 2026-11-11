@@ -17,6 +17,22 @@
 !.workflow/
 .workflow/*
 !.workflow/README.md
+# DSH 团队合同与角色提示入库；技能、本地配置与其他私有资料仍忽略。
+!.dsh/
+.dsh/*
+!.dsh/team/
+.dsh/team/*
+!.dsh/team/README.md
+!.dsh/team/team-review.md
+!.dsh/team/program.md
+!.dsh/team/config.example.json
+!.dsh/team/check.ps1
+!.dsh/team/check.tests.ps1
+!.dsh/team/runtime.ps1
+!.dsh/team/runtime.tests.ps1
+!.dsh/team/branches.ps1
+!.dsh/team/roles/
+!.dsh/team/roles/*.md
 build/
 build-dsh-alignment/
 build-debug/

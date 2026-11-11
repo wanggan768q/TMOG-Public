@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 3,
+  "paused": false,
+  "eval": {
+    "mode": "observe"
+  },
+  "executor": {
+    "maxTeammates": 3
+  },
+  "policy": {
+    "allowInferred": false,
+    "merge": "manual",
+    "botReviewRounds": 3
+  },
+  "dsh": {
+    "worktreeRoot": "E:\\Git\\TMOG-Public-WorkTree",
+    "mergeMethod": "merge"
+  }
+}
