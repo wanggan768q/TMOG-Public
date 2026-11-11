@@ -1,4 +1,4 @@
-# Issue #11 截图证据���单（capture manifest）
+# Issue #11 截图证据清单（capture manifest）
 
 发布授权：用户知情同意（2026-11-03，风险披露：状态栏像素文字无法完整判读、可能含本地路径）。
 
@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | before-800x500.png | 786x493 | 800x500（窗口含边框） | ae5cc44902d7a55c0a22c945fe3a3b22bfc6f7fd（origin/main 基线，baseline worktree 独立 Release 构建） | Windows.Graphics.Capture（TryCreateFromWindowId） |
 | after-800x500.png | 786x493 | 800x500 | 66b2fc6cc0922f79b246f1a728f2faf3c6ba067e 等价源码（be6ad14..aa6c882 仅文档差异；exe 由 be6ad14 树构建） | 同上 |
-| before-after-side-by-side.png | 1588x493 | 拼合图（左=before-800x500，右=after-800x500，各 1x 原尺寸，中间 16px 间隔） | 同上两版本 | PIL 拼合，无缩放 |
+| before-after-side-by-side.png | 1588x493 | 拼合图（左=before-800x500，右=after-800x500，各 1x 原尺寸，中间 16px 间隔） | 同上两版本 | PIL 拼合，无缩放；源图为 RGBA，仅取 RGB 通道、不做 alpha 合成 |
 
 ## SHA-256
 
