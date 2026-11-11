@@ -12,6 +12,8 @@ run_id=product-20261028-issue8；task_id=issue13-recovery-plan；attempt=1；Pla
 
 本次远程只读main与origin/main均 `54596d28d96ac497b6100901dcd093e5954ef07c`，本地HEAD `e822792dc1b32864dc9564735e5c7811d0f02a83` 仅团队提交；两者指定业务文件diff空。后续Product重新fetch确认fresh基点，不从本地未推团队提交或旧分支建树。旧#13 `c1a225813430183ac96be4d7b68385999b656a6c`仅参考；不整分支恢复、不覆盖当前MainWindow/CMake。
 
+**2026-11-11 rebase 后状态（补充，不改上文历史记录）：** 交付分支 `fix/issue-13-modal-checks-20261028` 已 rebase 到 `origin/main` = `d3e9e2e6c68d75f60d4cd2aa2af1303b04ec36d4`（PR #51 合并点），rebase 零冲突；新 tip `3b5cc14`，相对新 base 仅 6 文件（MainWindow.cpp/.h 注入参数、tests/end_confirm_checks.cpp、CMakeLists.txt、3 份 doc/plans）。#51 未改 `src/MainWindow.cpp/.h`（其 diff 仅 DisplaySettings/settings 测试与团队文档），故第 1 节所述注入接口与 #51 的 I/O 列无同文件语义交叉；双配置全量 ctest 9/9 通过，见 `.workflow/dsh-resume-20261111/reports/worker-R13-integration-r1.md`。
+
 #13当前OPEN、comments空；唯一原生前置#5 CLOSED。用户继续修复开发由Product转达，只授权制定本票计划，不默认为注入接口、helper或真实终止实验批准。总优先级v1只是导航，#8审批也不迁移。
 
 源码事实：MainWindow.cpp:221为`const ProcessSnapshot snap = row->snapshot`；246异步lambda值捕获identity。#14/#16单在途/持久陈旧/关闭收束保留。旧end_confirm_checks缺于当前main；旧取消是常量bool、独立vector替换不执行on_end_task；不能复用旧PASS为当前生产覆盖。旧dangling地址关系比较也不迁入，禁止读取/操作已失效指针或故意UAF。
