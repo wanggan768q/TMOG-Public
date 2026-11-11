@@ -12,9 +12,9 @@ run_id=product-20261028-issue8；task_id=issue13-recovery-plan；attempt=1；Pla
 
 本次远程只读main与origin/main均 `54596d28d96ac497b6100901dcd093e5954ef07c`，本地HEAD `e822792dc1b32864dc9564735e5c7811d0f02a83` 仅团队提交；两者指定业务文件diff空。后续Product重新fetch确认fresh基点，不从本地未推团队提交或旧分支建树。旧#13 `c1a225813430183ac96be4d7b68385999b656a6c`仅参考；不整分支恢复、不覆盖当前MainWindow/CMake。
 
-**2026-11-11 rebase 后状态（补充，不改上文历史记录）：** 交付分支 `fix/issue-13-modal-checks-20261028` 已 rebase 到 `origin/main` = `d3e9e2e6c68d75f60d4cd2aa2af1303b04ec36d4`（PR #51 合并点），rebase 零冲突；最终 head `0a95abc0e92581098130f97f84a0c9c35c8294e4`，相对 base 7 文件（`CMakeLists.txt`、`src/MainWindow.cpp`、`src/MainWindow.h`、`tests/end_confirm_checks.cpp`、3 份 `doc/plans/`；合计 +1139/-7）。
+**2026-11-11 rebase 后状态（补充，不改上文历史记录）：** 交付分支 `fix/issue-13-modal-checks-20261028` 已 rebase 到 `origin/main` = `d3e9e2e6c68d75f60d4cd2aa2af1303b04ec36d4`（PR #51 合并点），rebase 零冲突；Review r1 绑定的 head 为 `0a95abc0e92581098130f97f84a0c9c35c8294e4`，相对 base 7 文件（`CMakeLists.txt`、`src/MainWindow.cpp`、`src/MainWindow.h`、`tests/end_confirm_checks.cpp`、3 份 `doc/plans/`；合计 +1139/-7）。本勘误提交在其后仅追加本文件改动，不改代码与测试；实际最新 head 以远端分支为准，避免自指数字再次陈旧。
 
-**更正（2026-11-11，独立 Review R-13 r1 阻断项 1）：** 本段初版写的「新 tip `3b5cc14`、相对新 base 仅 6 文件」是提交本文档之前的旧值，已按最终 head 实测数字更正（`0a95abc`、7 文件）；初版「#51 未改 `src/MainWindow.cpp/.h`（其 diff 仅 DisplaySettings/settings 测试与团队文档）」为错误陈述，所列文件实际属于 PR #50，现更正如下。
+**更正（2026-11-11，独立 Review R-13 r1 阻断项 1）：** 本段初版写的「新 tip `3b5cc14`、相对新 base 仅 6 文件」是提交本文档之前的旧值，已按 Review r1 绑定 head 的实测数字更正（`0a95abc`、7 文件）；初版「#51 未改 `src/MainWindow.cpp/.h`（其 diff 仅 DisplaySettings/settings 测试与团队文档）」为错误陈述，所列文件实际属于 PR #50，现更正如下。
 
 #51 的真实改动由合并提交 `d3e9e2e` 自身带入（first-parent 可见）：
 
