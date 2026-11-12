@@ -8,7 +8,9 @@
 //  - 失败/暂停/恢复后重建基线：恢复首帧回到「待采样」；
 //  - 物理内存总量/可用/已用单位与口径（已用 = 总量 − 可用，非工作集）；
 //  - 内存失败时 CPU 曲线继续、内存显示「不可用」而不是 0；
-//  - 关窗收束无残留（close 后进程可退出）。
+//  - CPU 失败但内存有效时，内存数据点仍被绘制（两条曲线独立判定缺口）；
+//  - 进程枚举失败但整机读取成功 → 性能页历史继续（解耦）；
+//  - 关窗后整机读取与进程枚举计数都不再增长（无残留采样）。
 //
 // 退出码：0 = 全部通过；1 = 有失败。离屏渲染截图写入当前目录。
 #include "IProcessEnumerator.h"
@@ -94,11 +96,13 @@ tmog::SystemReading make_reading(std::uint64_t idle_ns, std::uint64_t kernel_ns,
 }
 
 // 受控进程枚举：每帧固定一个进程，成功快照（不参与本页断言，仅驱动生产
-// SamplingWorker 的同一调度）。
+// SamplingWorker 的同一调度）。failing=true 时模拟枚举失败（返回 nullopt），
+// 用于验证「进程失败不影响整机性能页」的解耦语义。
 class FakeEnumerator final : public tmog::IProcessEnumerator {
 public:
     std::optional<tmog::SampleResult> take_sample() override {
         ++calls;
+        if (failing) return std::nullopt;
         tmog::SampleResult result;
         result.ok = true;
         result.wall_clock_ns = static_cast<std::uint64_t>(calls) * 1'000'000'000ULL;
@@ -116,6 +120,7 @@ public:
     }
 
     int calls = 0;
+    bool failing = false;
 };
 
 // 受控整机来源：按脚本逐帧返回读数，脚本耗尽后重复最后一帧；记录读取次数。
@@ -189,7 +194,8 @@ void run_checks(const QString& settings_path, QString* screenshot_path) {
     //  r1 首帧（无基线）→ 待采样；r2 时间差 → 66.7%；
     //  r3 整机时间读取失败 → 缺样；r4 失败后首帧 → 重建基线；
     //  r5 → 66.7% 新段；r6 仅内存失败 → CPU 继续、内存不可用；
-    //  r7 暂停帧；r8 恢复首帧；r9 恢复后第二帧 → 66.7% 第三段。
+    //  r7 暂停帧；r8 恢复首帧；r9 恢复后第二帧 → 66.7% 第三段；
+    //  r10/r11 供「进程枚举失败解耦」与「关窗前最后一次成功采样」使用。
     std::vector<tmog::SystemReading> script;
     script.push_back(make_reading(1000, 2000, 1000, 1'000'000'000ULL));
     script.push_back(make_reading(1100, 2200, 1100, 2'000'000'000ULL));
@@ -204,6 +210,8 @@ void run_checks(const QString& settings_path, QString* screenshot_path) {
     script.push_back(make_reading(1600, 3000, 1500, 7'000'000'000ULL));
     script.push_back(make_reading(1700, 3200, 1600, 8'000'000'000ULL));
     script.push_back(make_reading(1800, 3400, 1700, 9'000'000'000ULL));
+    script.push_back(make_reading(1900, 3600, 1800, 10'000'000'000ULL));
+    script.push_back(make_reading(2000, 3800, 1900, 11'000'000'000ULL));
 
     WindowFixture fixture(settings_path, std::move(script));
     tmog::MainWindow* window = fixture.window.get();
@@ -278,6 +286,9 @@ void run_checks(const QString& settings_path, QString* screenshot_path) {
     check(text_of(page, "cpu_value_label") == QStringLiteral("66.7%"),
           "T3: 66.7% from whole-system time deltas");
     check(page->cpu_curve_segments() == 1, "T3: one CPU curve segment");
+    // 内存序列从 r1 起一直有效：CPU 首帧的 Pending 不应断开内存曲线。
+    check(page->memory_curve_segments() == 1,
+          "T3: memory curve stays continuous across CPU Pending frame");
     check(error_label->isVisible() == false,
           "T3: no error label on healthy sample");
 
@@ -293,6 +304,12 @@ void run_checks(const QString& settings_path, QString* screenshot_path) {
     check(error_label->isVisible(), "T4: error label visible on failure");
     check(error_label->text().contains(QStringLiteral("GetSystemTimes failed")),
           "T4: original error text surfaced");
+    // 反向组合：CPU 失败、内存仍有效 → 内存数值继续显示、内存曲线不断开。
+    check(text_of(page, "memory_used_label") ==
+              QStringLiteral("已用 8.00 GiB / 16.00 GiB"),
+          "T4: memory stays valid during CPU gap");
+    check(page->memory_curve_segments() == 1,
+          "T4: CPU gap does not break the still-valid memory curve");
 
     // ---- T5：失败后恢复首帧重建基线 → 待采样，再下一帧 Ok 新段 ----
     check(drive_sample(fixture, page, 4), "T5: first sample after gap delivered");
@@ -304,6 +321,9 @@ void run_checks(const QString& settings_path, QString* screenshot_path) {
           "T5: CPU recovers after baseline rebuild");
     check(page->cpu_curve_segments() == 2,
           "T5: curve starts a new segment instead of bridging the gap");
+    // CPU 缺口/重建基线期间内存一直有效，内存曲线应保持同一段（不被 CPU 连带断开）。
+    check(page->memory_curve_segments() == 1,
+          "T5: memory curve remains one segment through CPU gap and recovery");
 
     // ---- T6：内存失败时 CPU 继续、内存显示不可用（不是 0） ----
     check(drive_sample(fixture, page, 6), "T6: memory-failed sample delivered");
@@ -321,6 +341,9 @@ void run_checks(const QString& settings_path, QString* screenshot_path) {
           "T6: memory error text surfaced");
     check(page->cpu_curve_segments() == 2,
           "T6: CPU curve continues across memory-only failure");
+    // 反向：内存失败只断开内存曲线；此前 r1–r5 仍是同一段，失败帧不开启新段。
+    check(page->memory_curve_segments() == 1,
+          "T6: memory-only failure breaks only the memory curve");
 
     // ---- T7：暂停后手动采样重建基线；恢复后再建基线，曲线不跨缺口 ----
     pause_action->setChecked(true);
@@ -341,6 +364,8 @@ void run_checks(const QString& settings_path, QString* screenshot_path) {
           "T7: CPU resumes after pause/resume baseline rebuild");
     check(page->cpu_curve_segments() == 3,
           "T7: pause/resume gap starts another curve segment");
+    check(page->memory_curve_segments() == 2,
+          "T7: pause/resume gaps break CPU curve but keep memory points connected");
 
     // ---- T8：返回进程页恢复进程操作 ----
     auto* nav_processes = window->findChild<QAction*>("nav_processes_action");
@@ -368,6 +393,42 @@ void run_checks(const QString& settings_path, QString* screenshot_path) {
     check(page->history_size() >= 9, "T9: bounded history keeps recent samples");
     check(fixture.raw_enumerator->calls >= 9,
           "T9: process sampling still ran in the same scheduler");
+
+    // ---- T10：进程枚举失败不影响整机性能页采样（解耦） ----
+    fixture.raw_enumerator->failing = true;
+    const int reads_before_enum_failure = fixture.raw_system->reads;
+    check(drive_sample(fixture, page, 10),
+          "T10: sample delivered while process enumeration fails");
+    check(fixture.raw_system->reads == reads_before_enum_failure + 1,
+          "T10: system source still read when process enumeration fails");
+    check(page->history_size() == 10,
+          "T10: performance history keeps growing during enumeration failure");
+    check(text_of(page, "cpu_value_label") == QStringLiteral("66.7%"),
+          "T10: CPU still computed from system deltas");
+    check(text_of(page, "memory_used_label") ==
+              QStringLiteral("已用 8.00 GiB / 16.00 GiB"),
+          "T10: memory still valid during enumeration failure");
+    check(page->cpu_curve_segments() == 3,
+          "T10: CPU curve continues across enumeration failure");
+    fixture.raw_enumerator->failing = false;
+    check(drive_sample(fixture, page, 11),
+          "T10: sampling recovers after enumeration failure");
+    check(text_of(page, "cpu_value_label") == QStringLiteral("66.7%"),
+          "T10: CPU continues after enumeration recovery");
+
+    // ---- T11：关闭窗口后不再采样（无残留定时器/在途读取） ----
+    const int reads_before_close = fixture.raw_system->reads;
+    const int calls_before_close = fixture.raw_enumerator->calls;
+    const std::size_t history_before_close = page->history_size();
+    const bool closed = window->close();
+    pump_ms(600);
+    check(closed, "T11: window close accepted after worker shutdown");
+    check(fixture.raw_system->reads == reads_before_close,
+          "T11: no system reads after close");
+    check(fixture.raw_enumerator->calls == calls_before_close,
+          "T11: no process enumerations after close");
+    check(page->history_size() == history_before_close,
+          "T11: performance history frozen after close");
 }
 
 } // namespace

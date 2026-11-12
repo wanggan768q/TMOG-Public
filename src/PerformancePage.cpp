@@ -19,7 +19,8 @@
 namespace tmog {
 
 // 自绘整机指标曲线：纵轴 0–100，横轴固定最近 5 分钟（右端 = 最新样本）。
-// 只有连续 Ok 样本之间连线；Pending/Gap 处断开（不跨缺口伪连）。
+// CPU 与内存按各自序列独立判定可绘制性：任一 API 失败只断开自己那条曲线，
+// 不连带对方；各自缺口处断开，不跨缺口伪连。
 class SystemHistoryChart final : public QWidget {
 public:
     enum class Metric { CpuPercent, MemoryPercent };
@@ -136,8 +137,12 @@ private:
     }
 
     bool drawable(const SystemSample& sample) const {
-        if (sample.status != SystemSampleStatus::Ok) return false;
-        if (metric_ == Metric::CpuPercent) return sample.cpu_percent.has_value();
+        // CPU 曲线要求该帧 CPU 时间差分成功；内存曲线只要求该帧内存 API 成功。
+        // 两者互不连累：CPU 为 Gap/待采样时，内存点仍应保留在曲线上（反之亦然）。
+        if (metric_ == Metric::CpuPercent) {
+            return sample.status == SystemSampleStatus::Ok &&
+                   sample.cpu_percent.has_value();
+        }
         return sample.memory_available && sample.total_memory_bytes > 0;
     }
 

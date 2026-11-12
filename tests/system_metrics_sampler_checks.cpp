@@ -3,7 +3,8 @@
 // 覆盖：首样本待采样、累计时间差百分比、有效空闲 0.0%、满负载 100%、
 // 计数器回退/增量非法重建基线、读取失败缺样（Gap）、失败恢复重建基线、
 // 内存口径（已用 = 总量 − 可用）、内存不可用不回退成 0、历史 5 分钟窗口与
-// 600 样本硬上限、展示格式化单位（GiB/MiB/字节、一位小数百分率）。
+// 600 样本硬上限（默认参数构造 700 条，另用小参数等价验证窗口淘汰）、
+// 展示格式化单位（GiB/MiB/字节、一位小数百分率）。
 //
 // 退出码：0 = 全部通过；1 = 有失败（失败项打印到 stderr）。
 #include "SystemMetrics.h"
@@ -168,7 +169,25 @@ void check_history_capacity_bound() {
           "S8: newest sample retained");
 }
 
+void check_default_history_bound() {
+    // 默认参数即 5 分钟 / 600 样本；构造 700 条验证硬上限实际生效。
+    tmog::SystemMetricsSampler sampler;
+    check(sampler.capacity() == 600, "S12: default capacity is 600");
+    check(sampler.window_ns() == 300ULL * 1000ULL * 1000ULL * 1000ULL,
+          "S12: default window is 300s");
+    for (std::uint64_t i = 1; i <= 700; ++i) {
+        sampler.ingest(make_reading(i * 10, i * 10, i * 10, i * 10));
+    }
+    const auto& history = sampler.history();
+    check(history.size() == 600, "S12: 700 samples bounded to 600");
+    check(history.front().wall_clock_ns == 1010,
+          "S12: oldest of the newest 600 retained");
+    check(history.back().wall_clock_ns == 7000,
+          "S12: newest sample retained");
+}
+
 void check_history_time_window() {
+    // 小参数等价验证窗口淘汰（加速；窗口逻辑与默认 300s 相同）。
     tmog::SystemMetricsSampler sampler(/*capacity=*/600, /*window_ns=*/100);
     for (std::uint64_t wall = 0; wall <= 500; wall += 50) {
         sampler.ingest(make_reading(wall, wall, wall, wall));
@@ -220,6 +239,7 @@ int main() {
     check_read_failure_gap();
     check_memory_failure_not_zero();
     check_history_capacity_bound();
+    check_default_history_bound();
     check_history_time_window();
     check_formatting();
     check_memory_underflow_guard();
