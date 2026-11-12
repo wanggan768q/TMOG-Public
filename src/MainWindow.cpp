@@ -3,53 +3,63 @@
 #include "SamplingWorker.h"
 #include "platform/WindowsProcesses.h"
 #include "platform/WindowsProcessOps.h"
-#include <QTableView>
-#include <QToolBar>
 #include <QAction>
-#include <QHeaderView>
+#include <QActionGroup>
+#include <QButtonGroup>
 #include <QCloseEvent>
-#include <QSortFilterProxyModel>
-#include <QMessageBox>
 #include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
+#include <QFont>
+#include <QGroupBox>
+#include <QHeaderView>
+#include <QKeySequence>
 #include <QLabel>
+#include <QMessageBox>
+#include <QRadioButton>
+#include <QResizeEvent>
+#include <QScreen>
+#include <QSignalBlocker>
+#include <QSortFilterProxyModel>
+#include <QStackedWidget>
+#include <QStandardPaths>
 #include <QStatusBar>
+#include <QTableView>
 #include <QThread>
+#include <QTimer>
+#include <QToolBar>
+#include <QVBoxLayout>
 #include <utility>
 
 namespace tmog {
 
+namespace {
+
+constexpr const char* kSettingsFileName = "display-settings.json";
+
+// 生产设置路径：当前用户应用配置目录（main.cpp 已设 app/organization）。
+// 不写厂商路径/源码目录/注册表；无法确定时返回空，由 MainWindow 反馈。
+QString production_settings_path() {
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    if (dir.isEmpty()) return QString();
+    return QDir(dir).filePath(QString::fromLatin1(kSettingsFileName));
+}
+
+} // namespace
+
 MainWindow::MainWindow(QWidget* parent,
                        std::unique_ptr<IProcessEnumerator> enumerator_override,
-                       std::unique_ptr<IProcessOps> process_ops_override)
+                       std::unique_ptr<IProcessOps> process_ops_override,
+                       QString settings_path_override)
     : QMainWindow(parent) {
     // #13：注入的 ops 最先接收（默认平台分支不得覆盖检查注入实例）
     process_ops_ = std::move(process_ops_override);
-    model_ = new ProcessTableModel(this);
-    proxy_ = new QSortFilterProxyModel(this);
-    proxy_->setSourceModel(model_);
-    proxy_->setSortRole(Qt::UserRole);
+    settings_path_ = settings_path_override.isEmpty()
+                         ? production_settings_path()
+                         : settings_path_override;
 
-    table_ = new QTableView(this);
-    table_->setModel(proxy_);
-    table_->setSortingEnabled(true);
-    table_->horizontalHeader()->setStretchLastSection(true);
-    table_->verticalHeader()->setVisible(false);
-    table_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    table_->setSelectionMode(QAbstractItemView::SingleSelection);
-    table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table_->setAlternatingRowColors(true);
-    setCentralWidget(table_);
-
-    auto* toolbar = addToolBar(tr("main"));
-    auto* pause_act = toolbar->addAction(tr("暂停"));
-    pause_act->setCheckable(true);
-    connect(pause_act, &QAction::toggled, this, &MainWindow::on_pause_toggled);
-    auto* refresh_act = toolbar->addAction(tr("刷新"));
-    connect(refresh_act, &QAction::triggered, this, &MainWindow::on_refresh_now);
-    auto* end_act = toolbar->addAction(tr("结束任务"));
-    connect(end_act, &QAction::triggered, this, &MainWindow::on_end_task);
-    connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged,
-            this, &MainWindow::on_selection_changed);
+    build_ui();
 
     // 平台枚举器与进程操作：编译期选择
     core_count_ = 0;
@@ -75,12 +85,19 @@ MainWindow::MainWindow(QWidget* parent,
     if (!process_ops_) process_ops_ = std::make_unique<LinuxProcessOps>();
 #endif
 
-    connect(&sample_timer_, &QTimer::timeout, this, &MainWindow::on_sample_tick);
-    sample_timer_.start(1000);   // 1/sec，对应原版 Normal — 1/sec
+    // 加载设置：不存在→静默默认；损坏/越界/未知版本→整份安全默认+可见错误。
+    load_and_apply_settings();
+
+    // 采样 timer：对象名供检查定位；刷新档位只调此 timer（不建第二 worker）。
+    sample_timer_ = new QTimer(this);
+    sample_timer_->setObjectName(QStringLiteral("sample_timer"));
+    connect(sample_timer_, &QTimer::timeout, this, &MainWindow::on_sample_tick);
+    sample_timer_->start(refresh_interval_ms_);
 
     // #16 G5：持久陈旧标注。addPermanentWidget 的 widget 不被临时 showMessage
     // 隐藏——失败标注在 busy/"正在结束进程…"等短时消息期间持续可见。
     stale_label_ = new QLabel(this);
+    stale_label_->setObjectName(QStringLiteral("stale_label"));
     stale_label_->setVisible(false);
     statusBar()->addPermanentWidget(stale_label_);
 
@@ -92,6 +109,372 @@ MainWindow::~MainWindow() {
     // #16 防御：正常路径 closeEvent 已确认两线程退出；若构造后未走
     // closeEvent（如测试直接销毁），尽力等待在途结束线程（terminate 有限）。
     if (kill_thread_) kill_thread_->wait(4000);
+}
+
+void MainWindow::build_ui() {
+    model_ = new ProcessTableModel(this);
+    proxy_ = new QSortFilterProxyModel(this);
+    proxy_->setSourceModel(model_);
+    proxy_->setSortRole(Qt::UserRole);
+
+    stack_ = new QStackedWidget(this);
+    stack_->setObjectName(QStringLiteral("main_stack"));
+    setCentralWidget(stack_);
+
+    // ---- Processes 页：现有表格作为独立真实页面（默认入口） ----
+    processes_page_ = new QWidget(stack_);
+    processes_page_->setObjectName(QStringLiteral("processes_page"));
+    auto* processes_layout = new QVBoxLayout(processes_page_);
+    processes_layout->setContentsMargins(0, 0, 0, 0);
+
+    table_ = new QTableView(processes_page_);
+    table_->setObjectName(QStringLiteral("process_table"));
+    table_->setModel(proxy_);
+    table_->setSortingEnabled(true);
+    table_->horizontalHeader()->setStretchLastSection(true);
+    table_->verticalHeader()->setVisible(false);
+    table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table_->setSelectionMode(QAbstractItemView::SingleSelection);
+    table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table_->setAlternatingRowColors(true);
+    processes_layout->addWidget(table_);
+    stack_->addWidget(processes_page_);
+
+    // ---- 显示设置页：真实四档刷新 + 窗口/排序偏好反馈 ----
+    settings_page_ = new QWidget(stack_);
+    settings_page_->setObjectName(QStringLiteral("settings_page"));
+    auto* settings_layout = new QVBoxLayout(settings_page_);
+    settings_layout->setContentsMargins(16, 16, 16, 16);
+    settings_layout->setSpacing(10);
+
+    auto* heading = new QLabel(tr("显示设置"), settings_page_);
+    QFont heading_font = heading->font();
+    heading_font.setPointSizeF(heading_font.pointSizeF() + 3.0);
+    heading_font.setBold(true);
+    heading->setFont(heading_font);
+    settings_layout->addWidget(heading);
+
+    auto* refresh_group_box = new QGroupBox(tr("刷新档位"), settings_page_);
+    auto* refresh_layout = new QVBoxLayout(refresh_group_box);
+    refresh_group_ = new QButtonGroup(this);
+    refresh_group_->setExclusive(true);
+    struct TierSpec {
+        int ms;
+        const char* label;
+        const char* object_name;
+    };
+    static const TierSpec kTiers[] = {
+        {500, "0.5 秒（500 ms）", "refresh_500"},
+        {1000, "1 秒（1000 ms，默认）", "refresh_1000"},
+        {2000, "2 秒（2000 ms）", "refresh_2000"},
+        {5000, "5 秒（5000 ms）", "refresh_5000"},
+    };
+    for (int i = 0; i < 4; ++i) {
+        auto* radio = new QRadioButton(tr(kTiers[i].label), refresh_group_box);
+        radio->setObjectName(QString::fromLatin1(kTiers[i].object_name));
+        radio->setToolTip(tr("采样间隔：%1 毫秒").arg(kTiers[i].ms));
+        refresh_group_->addButton(radio, kTiers[i].ms);
+        refresh_layout->addWidget(radio);
+        refresh_radios_[i] = radio;
+    }
+    settings_layout->addWidget(refresh_group_box);
+    for (int i = 1; i < 4; ++i)
+        setTabOrder(refresh_radios_[i - 1], refresh_radios_[i]);
+    connect(refresh_group_, &QButtonGroup::idClicked, this,
+            [this](int id) { set_refresh_interval(id); });
+
+    auto* refresh_hint = new QLabel(
+        tr("修改档位后立即生效，并保存到本机设置文件。采样线程始终只有一个，"
+           "改档不会新开采样。"),
+        settings_page_);
+    refresh_hint->setWordWrap(true);
+    settings_layout->addWidget(refresh_hint);
+
+    window_size_label_ = new QLabel(settings_page_);
+    window_size_label_->setObjectName(QStringLiteral("window_size_label"));
+    settings_layout->addWidget(window_size_label_);
+
+    sort_preference_label_ = new QLabel(settings_page_);
+    sort_preference_label_->setObjectName(QStringLiteral("sort_preference_label"));
+    settings_layout->addWidget(sort_preference_label_);
+
+    settings_error_label_ = new QLabel(settings_page_);
+    settings_error_label_->setObjectName(QStringLiteral("settings_error_label"));
+    settings_error_label_->setWordWrap(true);
+    settings_error_label_->setStyleSheet(QStringLiteral("color: #b00020;"));
+    settings_error_label_->setVisible(false);
+    settings_layout->addWidget(settings_error_label_);
+
+    settings_layout->addStretch(1);
+    stack_->addWidget(settings_page_);
+
+    // ---- 工具栏：既有进程操作 + 导航 action（Ctrl+1 / Ctrl+2） ----
+    auto* toolbar = addToolBar(tr("main"));
+    toolbar->setObjectName(QStringLiteral("main_toolbar"));
+
+    pause_action_ = toolbar->addAction(tr("暂停"));
+    pause_action_->setObjectName(QStringLiteral("pause_action"));
+    pause_action_->setCheckable(true);
+    connect(pause_action_, &QAction::toggled, this, &MainWindow::on_pause_toggled);
+
+    refresh_action_ = toolbar->addAction(tr("刷新"));
+    refresh_action_->setObjectName(QStringLiteral("refresh_action"));
+    connect(refresh_action_, &QAction::triggered, this, &MainWindow::on_refresh_now);
+
+    end_action_ = toolbar->addAction(tr("结束任务"));
+    end_action_->setObjectName(QStringLiteral("end_task_action"));
+    connect(end_action_, &QAction::triggered, this, &MainWindow::on_end_task);
+
+    toolbar->addSeparator();
+
+    auto* nav_group = new QActionGroup(this);
+    nav_group->setExclusive(true);
+    nav_processes_action_ = new QAction(tr("进程"), this);
+    nav_processes_action_->setObjectName(QStringLiteral("nav_processes_action"));
+    nav_processes_action_->setCheckable(true);
+    nav_processes_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+1")));
+    nav_processes_action_->setShortcutContext(Qt::WindowShortcut);
+    nav_processes_action_->setToolTip(tr("显示进程页（Ctrl+1）"));
+    nav_group->addAction(nav_processes_action_);
+    toolbar->addAction(nav_processes_action_);
+
+    nav_settings_action_ = new QAction(tr("显示设置"), this);
+    nav_settings_action_->setObjectName(QStringLiteral("nav_settings_action"));
+    nav_settings_action_->setCheckable(true);
+    nav_settings_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+2")));
+    nav_settings_action_->setShortcutContext(Qt::WindowShortcut);
+    nav_settings_action_->setToolTip(tr("显示设置页（Ctrl+2）"));
+    nav_group->addAction(nav_settings_action_);
+    toolbar->addAction(nav_settings_action_);
+
+    connect(nav_processes_action_, &QAction::triggered,
+            this, &MainWindow::on_nav_processes);
+    connect(nav_settings_action_, &QAction::triggered,
+            this, &MainWindow::on_nav_settings);
+
+    nav_processes_action_->setChecked(true);
+    stack_->setCurrentWidget(processes_page_);
+
+    connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged,
+            this, &MainWindow::on_selection_changed);
+
+    // 排序偏好：视图排序变化即"明确偏好变化"→保存（加载期间被
+    // preferences_ready_ 抑制）。窗口尺寸在关闭路径保存。
+    connect(table_->horizontalHeader(), &QHeaderView::sortIndicatorChanged,
+            this, [this](int, Qt::SortOrder) {
+                update_preference_labels();
+                save_preferences();
+            });
+}
+
+void MainWindow::on_nav_processes() {
+    stack_->setCurrentWidget(processes_page_);
+    set_process_actions_enabled(true);
+    nav_processes_action_->setChecked(true);
+    table_->setFocus();
+}
+
+void MainWindow::on_nav_settings() {
+    stack_->setCurrentWidget(settings_page_);
+    // 现有进程操作（含破坏性"结束任务"）只在 Processes 页可用；切页不触发
+    // 任何操作，也不改变暂停状态。
+    set_process_actions_enabled(false);
+    nav_settings_action_->setChecked(true);
+    if (auto* checked = refresh_group_->checkedButton()) checked->setFocus();
+}
+
+void MainWindow::set_process_actions_enabled(bool enabled) {
+    if (pause_action_) pause_action_->setEnabled(enabled);
+    if (refresh_action_) refresh_action_->setEnabled(enabled);
+    if (end_action_) end_action_->setEnabled(enabled);
+}
+
+void MainWindow::set_refresh_interval(int milliseconds) {
+    const bool valid = is_valid_refresh(milliseconds);
+    const int applied = valid ? milliseconds : 1000;
+    if (!valid) {
+        // 非模态可测反馈：状态栏消息，不用阻塞对话框。
+        statusBar()->showMessage(
+            tr("刷新档位无效：%1 ms；已回落到安全值 1000 ms。")
+                .arg(milliseconds),
+            5000);
+    }
+    const int previous = refresh_interval_ms_;
+    refresh_interval_ms_ = applied;
+    if (refresh_group_) {
+        QSignalBlocker blocker(refresh_group_);
+        if (auto* button = refresh_group_->button(applied)) button->setChecked(true);
+    }
+    if (sample_timer_) {
+        if (sample_timer_->isActive()) {
+            // 只调整同一个 timer；在途采样继续按真实时间差有效，不伪造 dt。
+            sample_timer_->setInterval(applied);
+        } else if (!paused_ && !closing_) {
+            sample_timer_->start(applied);
+        }
+    }
+    if (valid && applied != previous) save_preferences();
+}
+
+int MainWindow::current_sort_section() const {
+    if (!table_) return ProcessTableModel::ColPid;
+    const int section = table_->horizontalHeader()->sortIndicatorSection();
+    if (section < 0 || section >= ProcessTableModel::ColCount)
+        return ProcessTableModel::ColPid;
+    return section;
+}
+
+QString MainWindow::sort_column_key(int section) const {
+    switch (section) {
+    case ProcessTableModel::ColName:   return QStringLiteral("name");
+    case ProcessTableModel::ColPid:    return QStringLiteral("pid");
+    case ProcessTableModel::ColCpu:    return QStringLiteral("cpu");
+    case ProcessTableModel::ColMemory: return QStringLiteral("memory");
+    case ProcessTableModel::ColIoRead: return QStringLiteral("io_read");
+    case ProcessTableModel::ColIoWrite:return QStringLiteral("io_write");
+    case ProcessTableModel::ColStatus: return QStringLiteral("status");
+    }
+    return QStringLiteral("pid");
+}
+
+int MainWindow::sort_section_for_key(const QString& key) {
+    if (key == QLatin1String("name")) return ProcessTableModel::ColName;
+    if (key == QLatin1String("pid")) return ProcessTableModel::ColPid;
+    if (key == QLatin1String("cpu")) return ProcessTableModel::ColCpu;
+    if (key == QLatin1String("memory")) return ProcessTableModel::ColMemory;
+    if (key == QLatin1String("io_read")) return ProcessTableModel::ColIoRead;
+    if (key == QLatin1String("io_write")) return ProcessTableModel::ColIoWrite;
+    if (key == QLatin1String("status")) return ProcessTableModel::ColStatus;
+    return -1;
+}
+
+void MainWindow::load_and_apply_settings() {
+    if (settings_path_.isEmpty()) {
+        show_settings_error(
+            tr("无法确定设置文件位置：本次使用默认设置且不会保存。"));
+        apply_loaded_settings(DisplaySettings{});
+        return;
+    }
+    // 首次启动（文件不存在）：静默保留 Qt 默认窗口尺寸与排序，不用
+    // DisplaySettings 的字段默认值覆写界面；仅同步刷新档位与偏好反馈。
+    if (!QFileInfo::exists(settings_path_)) {
+        apply_loaded_settings(DisplaySettings{}, false);
+        return;
+    }
+    const SettingsLoadResult result = load_display_settings(settings_path_);
+    if (!result.error.isEmpty()) {
+        show_settings_error(
+            tr("设置加载失败：%1（已使用安全默认，旧文件未改动）")
+                .arg(result.error));
+    }
+    apply_loaded_settings(result.settings);
+}
+
+void MainWindow::apply_loaded_settings(const DisplaySettings& settings,
+                                       bool apply_sort_and_size) {
+    refresh_interval_ms_ =
+        is_valid_refresh(settings.refresh_ms) ? settings.refresh_ms : 1000;
+    if (refresh_group_) {
+        QSignalBlocker blocker(refresh_group_);
+        if (auto* button = refresh_group_->button(refresh_interval_ms_))
+            button->setChecked(true);
+    }
+
+    if (apply_sort_and_size) {
+        int section = sort_section_for_key(settings.sort_column);
+        if (section < 0) section = ProcessTableModel::ColPid;
+        table_->sortByColumn(
+            section, settings.sort_descending ? Qt::DescendingOrder
+                                              : Qt::AscendingOrder);
+
+        // 尺寸夹到当前 screen availableGeometry，避免加载出不可见窗口。
+        const QRect available =
+            screen() ? screen()->availableGeometry() : QRect(0, 0, 1920, 1080);
+        const int max_width = qMax(1, available.width());
+        const int max_height = qMax(1, available.height());
+        resize(qMax(1, qMin(settings.width, max_width)),
+               qMax(1, qMin(settings.height, max_height)));
+    }
+
+    update_preference_labels();
+    preferences_ready_ = true;
+}
+
+void MainWindow::save_preferences() {
+    if (!preferences_ready_) return;
+
+    DisplaySettings settings;
+    settings.width = width();
+    settings.height = height();
+    settings.refresh_ms = refresh_interval_ms_;
+    settings.sort_column = sort_column_key(current_sort_section());
+    settings.sort_descending =
+        table_->horizontalHeader()->sortIndicatorOrder() == Qt::DescendingOrder;
+
+    if (settings_path_.isEmpty()) {
+        show_settings_error(
+            tr("设置保存失败：无法确定设置文件位置（本次更改未保存）。"));
+        return;
+    }
+
+    const QString directory = QFileInfo(settings_path_).absolutePath();
+    QString error;
+    bool ok = false;
+    if (!QDir().mkpath(directory)) {
+        error = tr("无法创建设置目录：%1")
+                    .arg(QDir::toNativeSeparators(directory));
+    } else {
+        ok = save_display_settings(settings_path_, settings, error);
+    }
+    if (!ok) {
+        // 旧文件由 QSaveFile 保证不被破坏；不再弹阻塞模态。
+        show_settings_error(
+            tr("设置保存失败：%1（本次更改未写入；旧配置保持不变）")
+                .arg(error));
+    } else {
+        clear_settings_error();
+    }
+}
+
+void MainWindow::show_settings_error(const QString& text) {
+    if (settings_error_label_) {
+        settings_error_label_->setText(text);
+        settings_error_label_->setToolTip(text);
+        settings_error_label_->setVisible(true);
+    }
+    statusBar()->showMessage(text, 8000);
+}
+
+void MainWindow::clear_settings_error() {
+    if (!settings_error_label_) return;
+    settings_error_label_->clear();
+    settings_error_label_->setToolTip(QString());
+    settings_error_label_->setVisible(false);
+}
+
+void MainWindow::update_preference_labels() {
+    if (window_size_label_) {
+        window_size_label_->setText(
+            tr("窗口尺寸：%1 × %2 像素").arg(width()).arg(height()));
+    }
+    if (sort_preference_label_) {
+        const int section = current_sort_section();
+        const QString column =
+            model_->headerData(section, Qt::Horizontal, Qt::DisplayRole)
+                .toString();
+        const QString order =
+            table_->horizontalHeader()->sortIndicatorOrder() ==
+                    Qt::DescendingOrder
+                ? tr("降序")
+                : tr("升序");
+        sort_preference_label_->setText(
+            tr("排序偏好：%1（%2）").arg(column, order));
+    }
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event) {
+    QMainWindow::resizeEvent(event);
+    update_preference_labels();
 }
 
 void MainWindow::on_sample_tick() {
@@ -235,7 +618,7 @@ void MainWindow::on_end_task() {
         return;
     }
 
-    // 确认框：名称、PID、创建身份、未保存数据警告；取��不得执行
+    // 确认框：名称、PID、创建身份、未保存数据警告；取消不得执行
     const QDateTime created = QDateTime::fromMSecsSinceEpoch(
         static_cast<qint64>(snap.identity.creation_tick / 10000) - 11644473600000LL);
     QMessageBox::StandardButton reply = QMessageBox::question(
@@ -302,7 +685,7 @@ void MainWindow::show_kill_outcome(const KillOutcome& outcome) {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-    sample_timer_.stop();
+    sample_timer_->stop();
     // #14：区分采样完成、线程实际退出与资源销毁。shutdown 等待在途线程
     // 实际退出；超时不伪报安全——拒绝本次关闭，枚举器等资源所有权保持，
     // 绝不带着在途线程销毁。失败路径 worker 内部恢复运行态，timer 重启后
@@ -311,7 +694,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     if (!worker_.shutdown(2000)) {
         QMessageBox::warning(this, tr("退出"),
             tr("后台采样未能在 2 秒内结束，已取消关闭。请稍后重试。"));
-        sample_timer_.start(1000);   // 恢复采样循环，用户可再次关闭
+        sample_timer_->start(refresh_interval_ms_);   // 恢复采样循环，用户可再次关闭
         event->ignore();
         return;
     }
@@ -320,12 +703,18 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     if (kill_thread_ && !kill_thread_->wait(4000)) {
         QMessageBox::warning(this, tr("退出"),
             tr("结束进程操作未能在 4 秒内完成，已取消关闭。请稍后重试。"));
-        sample_timer_.start(1000);
+        sample_timer_->start(refresh_interval_ms_);
         event->ignore();
         return;
     }
+    // 成功关闭路径：保存窗口尺寸/档位/排序偏好；失败反馈并保留旧配置
+    // （QSaveFile 原子性由 DisplaySettings 保证），不跳过线程收束强关。
+    save_preferences();
     closing_ = true;   // 线程已确认退出，迟到回调（若有）由 closing_ 丢弃
     event->accept();
 }
 
 } // namespace tmog
+
+
+

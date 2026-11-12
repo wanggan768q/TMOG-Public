@@ -42,6 +42,21 @@ add_executable(process_checks tests/process_checks.cpp)
 target_link_libraries(process_checks PRIVATE tmog_core)
 add_test(NAME process_checks COMMAND process_checks)
 
+# 17S 设置检查：复用既有 tests/settings/settings_checks.cpp（不复制实现），
+# 同源编入 DisplaySettings.cpp；显式传 test root（build 目录）供临时目录
+# 约束，TIMEOUT 60。此前只在 tests/settings 独立工程构建，本版纳入 root CTest。
+if(TARGET Qt6::Core)
+    add_executable(settings_checks
+        tests/settings/settings_checks.cpp
+        src/DisplaySettings.cpp
+    )
+    target_include_directories(settings_checks PRIVATE src)
+    target_link_libraries(settings_checks PRIVATE Qt6::Core)
+    add_test(NAME settings_checks
+             COMMAND settings_checks $<TARGET_FILE_DIR:settings_checks>)
+    set_tests_properties(settings_checks PROPERTIES TIMEOUT 60)
+endif()
+
 if(WIN32)
     add_executable(smoke_enumerate tests/smoke_enumerate.cpp)
     target_link_libraries(smoke_enumerate PRIVATE tmog_core)
@@ -78,10 +93,15 @@ if(WIN32)
 endif()
 
 if(TARGET Qt6::Widgets)
+    # #17U：Ctrl+1/Ctrl+2 键序列交付检查需要 Qt Test（可选；缺失时测试内
+    # 回退为 shortcut 绑定 + action 触发断言并显式打印 SKIP）。
+    find_package(Qt6 COMPONENTS Test QUIET)
+
     add_executable(TmogReplica
         src/main.cpp
         src/MainWindow.cpp
         src/ProcessTableModel.cpp
+        src/DisplaySettings.cpp
     )
     target_link_libraries(TmogReplica PRIVATE tmog_core Qt6::Widgets)
     set_target_properties(TmogReplica PROPERTIES
@@ -97,6 +117,7 @@ if(TARGET Qt6::Widgets)
         tests/stale_persistence_checks.cpp
         src/MainWindow.cpp
         src/ProcessTableModel.cpp
+        src/DisplaySettings.cpp
     )
     target_link_libraries(stale_persistence_checks PRIVATE tmog_core Qt6::Widgets)
     add_test(NAME stale_persistence_checks
@@ -110,10 +131,30 @@ if(TARGET Qt6::Widgets)
         tests/io_table_checks.cpp
         src/MainWindow.cpp
         src/ProcessTableModel.cpp
+        src/DisplaySettings.cpp
     )
     target_link_libraries(io_table_checks PRIVATE tmog_core Qt6::Widgets)
     add_test(NAME io_table_checks COMMAND io_table_checks)
     set_tests_properties(io_table_checks PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins/platforms"
+        TIMEOUT 120)
+
+    # #17U 检查：页面导航（QStackedWidget/action/Ctrl 键）+ 四档刷新 +
+    # 显示设置持久化（窗口尺寸/档位/排序）经生产 MainWindow + fake 枚举器；
+    # 全程离屏，不写真实用户配置（测试传临时路径）。TIMEOUT 120。
+    add_executable(navigation_settings_checks
+        tests/navigation_settings_checks.cpp
+        src/MainWindow.cpp
+        src/ProcessTableModel.cpp
+        src/DisplaySettings.cpp
+    )
+    target_link_libraries(navigation_settings_checks PRIVATE tmog_core Qt6::Widgets)
+    if(TARGET Qt6::Test)
+        target_link_libraries(navigation_settings_checks PRIVATE Qt6::Test)
+        target_compile_definitions(navigation_settings_checks PRIVATE TMOG_HAVE_QT_TEST=1)
+    endif()
+    add_test(NAME navigation_settings_checks COMMAND navigation_settings_checks)
+    set_tests_properties(navigation_settings_checks PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins/platforms"
         TIMEOUT 120)
 
@@ -127,6 +168,7 @@ if(TARGET Qt6::Widgets)
             tests/end_confirm_checks.cpp
             src/MainWindow.cpp
             src/ProcessTableModel.cpp
+            src/DisplaySettings.cpp
         )
         target_link_libraries(end_confirm_checks PRIVATE tmog_core Qt6::Widgets)
         add_test(NAME end_confirm_checks COMMAND end_confirm_checks)
@@ -192,6 +234,11 @@ if(TARGET Qt6::Widgets)
         # 非 Windows 保持下方既有 offscreen 属性。测试本体零改动（5.3s
         # D1 断言/完整 4 PASS 不变）。
         set_tests_properties(stale_persistence_checks PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=${_plugin_dir_real}"
+            TIMEOUT 120)
+        # #17U：新导航/设置测试与上述测试同在构建目录根，同受 windeployqt
+        # platforms/ 部署影响；Windows 下统一用同源派生插件路径。
+        set_tests_properties(navigation_settings_checks PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=${_plugin_dir_real}"
             TIMEOUT 120)
         unset(_qt_cmake_real)
