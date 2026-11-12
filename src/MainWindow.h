@@ -8,6 +8,8 @@
 #include "IProcessEnumerator.h"
 #include "IProcessOps.h"
 #include "SamplingWorker.h"
+#include "SystemMetrics.h"
+#include "SystemMetricsSampler.h"
 
 class QAction;
 class QButtonGroup;
@@ -23,13 +25,16 @@ class QWidget;
 
 namespace tmog {
 
+class PerformancePage;
 class ProcessTableModel;
 
-// 主窗口：单一后台采样循环 + 两个真实页面（Processes / 显示设置）。
+// 主窗口：单一后台采样循环 + 三个真实页面（Processes / 显示设置 / 性能）。
 // #17U：QStackedWidget + Qt action 导航（Ctrl+1/Ctrl+2），每次启动默认
 // Processes；显示设置在独立页面提供四档刷新；窗口尺寸/刷新档位/排序偏好
 // 经 DisplaySettings 持久化（QStandardPaths::AppConfigLocation，测试可
 // 注入临时路径）。
+// #19：性能页数据来自独立整机系统 API（SystemMetricsSampler），不累加进程；
+// 与进程采样共用同一个 SamplingWorker/调度，界面只接收样本快照。
 // 采样生命周期由 SamplingWorker 管理（#14）：完成结果、线程实际退出与资源
 // 销毁分离；关窗时 shutdown 确认线程退出才销毁，超时拒绝关闭不伪报安全。
 class MainWindow : public QMainWindow {
@@ -44,7 +49,8 @@ public:
     explicit MainWindow(QWidget* parent = nullptr,
                         std::unique_ptr<IProcessEnumerator> enumerator_override = nullptr,
                         std::unique_ptr<IProcessOps> process_ops_override = nullptr,
-                        QString settings_path_override = QString());
+                        QString settings_path_override = QString(),
+                        std::unique_ptr<ISystemMetricsSource> system_metrics_override = nullptr);
     ~MainWindow() override;
 
     // 刷新档位：仅接受 500/1000/2000/5000；非法值回安全 1000，并在状态栏
@@ -65,6 +71,7 @@ private slots:
     void on_end_task();             // 确认框 + 安全结束（结束在工作线程执行，#16）
     void on_nav_processes();        // Ctrl+1：Processes 页（默认入口）
     void on_nav_settings();         // Ctrl+2：显示设置页
+    void on_nav_performance();      // Ctrl+3：整机性能页（#19）
 
 private:
     void build_ui();
@@ -93,8 +100,10 @@ private:
     QStackedWidget* stack_ = nullptr;
     QWidget* processes_page_ = nullptr;
     QWidget* settings_page_ = nullptr;
+    PerformancePage* performance_page_ = nullptr;   // #19：整机 CPU/内存快照页
     QAction* nav_processes_action_ = nullptr;
     QAction* nav_settings_action_ = nullptr;
+    QAction* nav_performance_action_ = nullptr;
 
     QTableView* table_ = nullptr;
     ProcessTableModel* model_ = nullptr;
@@ -118,6 +127,10 @@ private:
 
     std::unique_ptr<IProcessEnumerator> enumerator_;
     std::unique_ptr<IProcessOps> process_ops_;
+    // #19：整机系统指标来源（独立系统 API，非进程枚举接口）；仅在未注入时
+    // 按平台创建。采样器保存差分基线与有界历史，UI 只读快照。
+    std::unique_ptr<ISystemMetricsSource> system_source_;
+    SystemMetricsSampler system_sampler_;
     SamplingWorker worker_;         // 采样线程所有权与收束（#14）
     std::uint32_t core_count_ = 0;
 

@@ -1,8 +1,12 @@
 #include "MainWindow.h"
+#include "PerformancePage.h"
 #include "ProcessTableModel.h"
 #include "SamplingWorker.h"
 #include "platform/WindowsProcesses.h"
 #include "platform/WindowsProcessOps.h"
+#if defined(_WIN32)
+#include "platform/WindowsSystemMetrics.h"
+#endif
 #include <QAction>
 #include <QActionGroup>
 #include <QButtonGroup>
@@ -51,15 +55,22 @@ QString production_settings_path() {
 MainWindow::MainWindow(QWidget* parent,
                        std::unique_ptr<IProcessEnumerator> enumerator_override,
                        std::unique_ptr<IProcessOps> process_ops_override,
-                       QString settings_path_override)
+                       QString settings_path_override,
+                       std::unique_ptr<ISystemMetricsSource> system_metrics_override)
     : QMainWindow(parent) {
     // #13：注入的 ops 最先接收（默认平台分支不得覆盖检查注入实例）
     process_ops_ = std::move(process_ops_override);
+    // #19：注入的整机来源同样优先于平台默认实现。
+    system_source_ = std::move(system_metrics_override);
     settings_path_ = settings_path_override.isEmpty()
                          ? production_settings_path()
                          : settings_path_override;
 
     build_ui();
+
+    // #19：整机系统指标来源与进程枚举器相互独立（不累加进程、不复用
+    // 进程枚举接口）；未注入时按平台工厂创建。
+    if (!system_source_) system_source_ = make_system_metrics_source();
 
     // 平台枚举器与进程操作：编译期选择
     core_count_ = 0;
@@ -208,6 +219,10 @@ void MainWindow::build_ui() {
     settings_layout->addStretch(1);
     stack_->addWidget(settings_page_);
 
+    // ---- 性能页（#19）：整机 CPU／物理内存，只展示采样快照 ----
+    performance_page_ = new PerformancePage(stack_);
+    stack_->addWidget(performance_page_);
+
     // ---- 工具栏：既有进程操作 + 导航 action（Ctrl+1 / Ctrl+2） ----
     auto* toolbar = addToolBar(tr("main"));
     toolbar->setObjectName(QStringLiteral("main_toolbar"));
@@ -247,10 +262,21 @@ void MainWindow::build_ui() {
     nav_group->addAction(nav_settings_action_);
     toolbar->addAction(nav_settings_action_);
 
+    nav_performance_action_ = new QAction(tr("性能"), this);
+    nav_performance_action_->setObjectName(QStringLiteral("nav_performance_action"));
+    nav_performance_action_->setCheckable(true);
+    nav_performance_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+3")));
+    nav_performance_action_->setShortcutContext(Qt::WindowShortcut);
+    nav_performance_action_->setToolTip(tr("整机性能页（Ctrl+3）"));
+    nav_group->addAction(nav_performance_action_);
+    toolbar->addAction(nav_performance_action_);
+
     connect(nav_processes_action_, &QAction::triggered,
             this, &MainWindow::on_nav_processes);
     connect(nav_settings_action_, &QAction::triggered,
             this, &MainWindow::on_nav_settings);
+    connect(nav_performance_action_, &QAction::triggered,
+            this, &MainWindow::on_nav_performance);
 
     nav_processes_action_->setChecked(true);
     stack_->setCurrentWidget(processes_page_);
@@ -281,6 +307,16 @@ void MainWindow::on_nav_settings() {
     set_process_actions_enabled(false);
     nav_settings_action_->setChecked(true);
     if (auto* checked = refresh_group_->checkedButton()) checked->setFocus();
+}
+
+void MainWindow::on_nav_performance() {
+    stack_->setCurrentWidget(performance_page_);
+    // 性能页只读快照：暂停/刷新仍作用于统一采样调度（跨页有效），
+    // "结束任务"只对进程页选中行有意义，切换后禁用。
+    if (pause_action_) pause_action_->setEnabled(true);
+    if (refresh_action_) refresh_action_->setEnabled(true);
+    if (end_action_) end_action_->setEnabled(false);
+    nav_performance_action_->setChecked(true);
 }
 
 void MainWindow::set_process_actions_enabled(bool enabled) {
@@ -516,6 +552,15 @@ void MainWindow::start_sample() {
                       // #11 R1：model 全表陈旧置位——I/O 列 tooltip 追加
                       // 陈旧提示（不隐藏各 I/O 具体状态，模型数据不动）。
                       model_->set_table_stale(true);
+                  },
+                  // #19：整机读数与进程枚举同一调度、同一 worker 线程先后执行；
+                  // 整机失败只形成缺样（Gap），不影响进程结果投递。
+                  system_source_.get(),
+                  [this, generation](const SystemReading& reading) {
+                      if (generation != sample_generation_) return;   // 跨代际旧读数：丢弃
+                      system_sampler_.ingest(reading);
+                      if (performance_page_)
+                          performance_page_->set_history(system_sampler_.history());
                   });
 }
 
@@ -574,6 +619,9 @@ void MainWindow::on_pause_toggled(bool paused) {
         // 下个 tick 正常采样并建立新基线
         invalidate_baseline();
     }
+    // #19：整机差分基线同样作废——暂停/恢复后的首帧记「待采样」，不跨缺口
+    // 用暂停前的累计时间差算 CPU。
+    system_sampler_.invalidate_baseline();
 }
 
 void MainWindow::invalidate_baseline() { last_sample_.reset(); }
