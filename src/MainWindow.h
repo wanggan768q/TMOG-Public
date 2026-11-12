@@ -23,10 +23,13 @@ class ProcessTableModel;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    // enumerator_override 仅检查用（G5）：注入受控枚举器驱动生产采样路径；
-    // 生产路径传默认值，编译期平台选择不受影响。
+    // enumerator_override / process_ops_override 仅检查用（G5/#13）：注入
+    // 受控枚举器与进程操作驱动生产采样/结束路径；生产路径传默认值，编译期
+    // 平台选择不受影响（各平台默认 ops 仅在未注入时创建，不覆盖注入实例）。
+    // 所有权仍 MainWindow 持有至在途线程退出；外部不留销毁后裸指针。
     explicit MainWindow(QWidget* parent = nullptr,
-                        std::unique_ptr<IProcessEnumerator> enumerator_override = nullptr);
+                        std::unique_ptr<IProcessEnumerator> enumerator_override = nullptr,
+                        std::unique_ptr<IProcessOps> process_ops_override = nullptr);
     ~MainWindow() override;
 
 protected:

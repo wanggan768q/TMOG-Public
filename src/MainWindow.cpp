@@ -19,8 +19,11 @@
 namespace tmog {
 
 MainWindow::MainWindow(QWidget* parent,
-                       std::unique_ptr<IProcessEnumerator> enumerator_override)
+                       std::unique_ptr<IProcessEnumerator> enumerator_override,
+                       std::unique_ptr<IProcessOps> process_ops_override)
     : QMainWindow(parent) {
+    // #13：注入的 ops 最先接收（默认平台分支不得覆盖检查注入实例）
+    process_ops_ = std::move(process_ops_override);
     model_ = new ProcessTableModel(this);
     proxy_ = new QSortFilterProxyModel(this);
     proxy_->setSourceModel(model_);
@@ -60,14 +63,16 @@ MainWindow::MainWindow(QWidget* parent,
         auto* we = new WindowsProcessEnumerator();
         core_count_ = we->logical_processor_count();
         enumerator_.reset(we);
-        process_ops_ = std::make_unique<WindowsProcessOps>();
+        if (!process_ops_) process_ops_ = std::make_unique<WindowsProcessOps>();
     }
 #elif defined(__APPLE__)
+    // #13 attempt2：枚举器赋值恢复 base 原行为（无条件，撤销 attempt1 越范围
+    // 守卫）；ops 注入守卫为获准修改保留。
     enumerator_ = std::make_unique<MacProcessEnumerator>();
-    process_ops_ = std::make_unique<MacProcessOps>();
+    if (!process_ops_) process_ops_ = std::make_unique<MacProcessOps>();
 #elif defined(__unix__)
     enumerator_ = std::make_unique<LinuxProcessEnumerator>();
-    process_ops_ = std::make_unique<LinuxProcessOps>();
+    if (!process_ops_) process_ops_ = std::make_unique<LinuxProcessOps>();
 #endif
 
     connect(&sample_timer_, &QTimer::timeout, this, &MainWindow::on_sample_tick);

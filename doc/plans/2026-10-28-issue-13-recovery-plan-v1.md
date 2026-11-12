@@ -12,6 +12,21 @@ run_id=product-20261028-issue8；task_id=issue13-recovery-plan；attempt=1；Pla
 
 本次远程只读main与origin/main均 `54596d28d96ac497b6100901dcd093e5954ef07c`，本地HEAD `e822792dc1b32864dc9564735e5c7811d0f02a83` 仅团队提交；两者指定业务文件diff空。后续Product重新fetch确认fresh基点，不从本地未推团队提交或旧分支建树。旧#13 `c1a225813430183ac96be4d7b68385999b656a6c`仅参考；不整分支恢复、不覆盖当前MainWindow/CMake。
 
+**2026-11-11 rebase 后状态（补充，不改上文历史记录）：** 交付分支 `fix/issue-13-modal-checks-20261028` 已 rebase 到 `origin/main` = `d3e9e2e6c68d75f60d4cd2aa2af1303b04ec36d4`（PR #51 合并点），rebase 零冲突；Review r1 绑定的 head 为 `0a95abc0e92581098130f97f84a0c9c35c8294e4`，相对 base 7 文件（`CMakeLists.txt`、`src/MainWindow.cpp`、`src/MainWindow.h`、`tests/end_confirm_checks.cpp`、3 份 `doc/plans/`；合计 +1139/-7）。本勘误提交在其后仅追加本文件改动，不改代码与测试；实际最新 head 以远端分支为准，避免自指数字再次陈旧。
+
+**更正（2026-11-11，独立 Review R-13 r1 阻断项 1）：** 本段初版写的「新 tip `3b5cc14`、相对新 base 仅 6 文件」是提交本文档之前的旧值，已按 Review r1 绑定 head 的实测数字更正（`0a95abc`、7 文件）；初版「#51 未改 `src/MainWindow.cpp/.h`（其 diff 仅 DisplaySettings/settings 测试与团队文档）」为错误陈述，所列文件实际属于 PR #50，现更正如下。
+
+#51 的真实改动由合并提交 `d3e9e2e` 自身带入（first-parent 可见）：
+
+```
+git diff d3e9e2e6c68d75f60d4cd2aa2af1303b04ec36d4^1 d3e9e2e6c68d75f60d4cd2aa2af1303b04ec36d4 -- src/MainWindow.cpp
+→ 6 insertions(+)，全部在 start_sample()
+```
+
+`start_sample()` 成功回调新增 `model_->set_table_stale(false);`（当前 `src/MainWindow.cpp:120`），失败回调新增 `model_->set_table_stale(true);`（`:135`），源自提交 `68a301a`；#51 另改 `src/ProcessSampler.*`、`src/ProcessTableModel.*`、`src/platform/WindowsProcesses.cpp` 与 I/O 测试。初版使用的 `git diff 5c440a0 d3e9e2e -- src/MainWindow.cpp` 为空是构造必然：它比较的是「#51 分支 tip」与「#51 合并结果」，只能证明合并未额外改动，不能测量 #51 自身改了什么。
+
+本分支在 `src/MainWindow.cpp/.h` 上只改构造函数注入缝：新增第三参 `process_ops_override`（`src/MainWindow.h:30-32`）、构造首行接管注入 `process_ops_ = std::move(process_ops_override);`（`src/MainWindow.cpp:26`）、各平台默认 ops 创建加 `if (!process_ops_)` 守卫（`:66`/`:72`/`:75`）。本分支不触碰 `start_sample()` 及其两行 `set_table_stale`：二者一个在构造期决定 `process_ops_` 初值，一个在采样回调中置 model 陈旧位，无同文件语义交叉、无覆盖。双配置全量 ctest 9/9 通过，见 `.workflow/dsh-resume-20261111/reports/worker-R13-integration-r1.md`（该报告末尾已追加同主题勘误）。
+
 #13当前OPEN、comments空；唯一原生前置#5 CLOSED。用户继续修复开发由Product转达，只授权制定本票计划，不默认为注入接口、helper或真实终止实验批准。总优先级v1只是导航，#8审批也不迁移。
 
 源码事实：MainWindow.cpp:221为`const ProcessSnapshot snap = row->snapshot`；246异步lambda值捕获identity。#14/#16单在途/持久陈旧/关闭收束保留。旧end_confirm_checks缺于当前main；旧取消是常量bool、独立vector替换不执行on_end_task；不能复用旧PASS为当前生产覆盖。旧dangling地址关系比较也不迁入，禁止读取/操作已失效指针或故意UAF。
@@ -122,7 +137,7 @@ private:
 | Y确认 | 同上，额外当前选择/顺序变化 | 点Yes；exactly1目标等原A，timeout_ms=3000，记录线程!=QApplication::instance()->thread；主循环heartbeat在结束投递前后继续 |
 | X退出 | 第2轮删A，第3轮保留B；fake outcome=Failed“fixture exited” | Yes仍传A，非B；UI显示失败，不能声称已退出或终止B；fake模式不证明Windows实际退出错误码 |
 | R同PID复用 | 后续帧A同PID但creation_tick+1/name=fixture-reused，fake outcome=IdentityChanged | Yes目标仍原A创建身份；一次调用，非新身份；UI身份变化警告真实出现 |
-| N无注入覆盖 | 注入枚举器/ops在构造后真实Yes路径 | RecordingOps实际收到调用；防止平台分支覆盖注入，不能只检查constructor形参 |
+| N无注入覆盖 | 全部5场景均无条件同时注入`StepEnumerator`+`RecordingOps`（`tests/end_confirm_checks.cpp:377-384`），构造后走真实Yes路径 | `RecordingOps`实际收到调用（count==1）；覆盖的是「平台分支不覆盖注入ops」，不存在只注入ops、不注入枚举器的构造；不能只检查constructor形参 |
 
 C/Y/X/R每场景至少3实际reset与稳定modal文本；测试输出场景/seq/reset数量/目标身份/线程结果/失败数，自动最多8场景。缺对话框/缺reset/超时/空目标/多次调用/错误身份全fail退出1，不skip。Qt offscreen不是物理桌面验收，也不证明操作系统真实PID复用。
 
