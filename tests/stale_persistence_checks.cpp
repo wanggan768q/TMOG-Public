@@ -120,7 +120,8 @@ int main(int argc, char** argv) {
         // 构造函数 Queued 首帧采样（FailApi）→ 失败 → 陈旧置位。
         // 失败回调经队列连接投递，等标注真正出现再断言（呈现路径）。
         pump_until([&] { return raw->calls_ >= 1; }, 3000);
-        QLabel* stale = win.findChild<QLabel*>();
+        // #17U：按 objectName 定位（设置页含多个 QLabel，不能再取第一个）
+        QLabel* stale = win.findChild<QLabel*>(QStringLiteral("stale_label"));
         check(stale != nullptr, "D1: stale label exists in status bar");
         const bool shown = pump_until_bool(
             [&] { return stale && stale->isVisible(); }, 3000);
@@ -162,14 +163,17 @@ int main(int argc, char** argv) {
 
         // 帧1 失败 → 陈旧置位（等回调投递）
         pump_until([&] { return raw->calls_ >= 1; }, 3000);
-        QLabel* stale = win.findChild<QLabel*>();
+        // #17U：按 objectName 定位（设置页含多个 QLabel，不能再取第一个）
+        QLabel* stale = win.findChild<QLabel*>(QStringLiteral("stale_label"));
         pump_until([&] { return stale && stale->isVisible(); }, 3000);
         check(stale && stale->isVisible(), "D3: stale visible after failure");
 
-        QList<QAction*> acts = win.findChildren<QAction*>();
-        QAction* pause_act = nullptr;
-        for (auto* a : acts) if (a->isCheckable()) pause_act = a;
-        check(pause_act != nullptr, "D3: pause action found (production path)");
+        // #17U：按 objectName 定位暂停 action——导航 action 也可 checkable，
+        // 不能再按"第一个/最后一个 checkable"猜。
+        QAction* pause_act =
+            win.findChild<QAction*>(QStringLiteral("pause_action"));
+        check(pause_act != nullptr,
+              "D3: pause action found by objectName (production path)");
         if (pause_act) {
             // 帧2 已进入 Hang（暂停前被 tick 取走、捕获旧代际 generation）
             pump_until([&] { return raw->calls_ >= 2; }, 3000);
