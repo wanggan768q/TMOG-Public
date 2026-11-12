@@ -27,8 +27,8 @@
   - N2：`nav_processes_action`/`nav_settings_action` 的快捷键分别为 Ctrl+1/Ctrl+2；触发 action 与 `QTest::keyClick` 键序列均切换页面（无 Qt Test 时回退校验 shortcut 绑定 + action 触发）；设置页上暂停/刷新/结束任务三个 action 均为 disabled；切页不产生额外采样——先把档位设为 5000 ms，再在 action 与 Ctrl 键两条切页路径的前后比较 fake 枚举器采样计数不变，且 `refresh_interval_ms()` 保持 5000（断言消息「N2: page switch itself does not trigger sampling」）。
   - 窗口缩放：N5 中 `resize(700, 520)` 后关闭并重启式构造，窗口尺寸恢复为 700×520；加载尺寸会按 `screen()->availableGeometry()` 夹取，N6 对默认尺寸 `qMin(1000, availableWidth)` × `qMin(700, availableHeight)` 做断言。
 - 命令与结果（Debug/Release 均执行）：
-  - `ctest --test-dir build/issue17-debug -R navigation_settings_checks --output-on-failure` → Passed（10.77 s）
-  - `ctest --test-dir build/issue17-release -R navigation_settings_checks --output-on-failure` → Passed（10.82 s）
+  - `ctest --test-dir build/fix-17u-debug -R navigation_settings_checks --output-on-failure` → Passed（11.47 s）
+  - `ctest --test-dir build/fix-17u-release -R navigation_settings_checks --output-on-failure` → Passed（11.53 s）
 - 限制：GUI 实机视觉未验证（离屏自动检查已跑）；真实鼠标点击、Tab 焦点走查与窗口拖拽/缩放体验待用户实机验收。
 
 ### AC2 — 切换刷新档位按真实间隔采样，忙碌时不重入，暂停行为符合前置票合同
@@ -56,11 +56,13 @@
   - N8：`win.close()` 后 `sample_timer` 不再 active，继续 pump 1.2 s 无新采样；`close_lifecycle_checks` 通过（关闭失败/成功路径资源收束）。
   - 既有排序/选择/陈旧/结束确认回归：`stale_persistence_checks`、`io_table_checks`、`end_confirm_checks` 全部 Passed；其中 `stale_persistence_checks` 已改为按 objectName 定位控件，避免新导航 checkable action 干扰。
 - 命令与结果：
-  - Debug 全量：`ctest --test-dir build/issue17-debug --output-on-failure` → **11/11 passed，0 failed**（65.07 s）
-  - Release 全量：`ctest --test-dir build/issue17-release --output-on-failure` → **11/11 passed，0 failed**（65.28 s）
+  - Debug 全量：`ctest --test-dir build/fix-17u-debug --output-on-failure` → **11/11 passed，0 failed**（65.92 s）
+  - Release 全量：`ctest --test-dir build/fix-17u-release --output-on-failure` → **11/11 passed，0 failed**（65.94 s）
 - 限制：关闭路径的 Windows 句柄/线程级资源审计依赖现有检查，未做额外 ETW/Process Explorer 实机核对。关闭瞬间（`closeEvent` 内 `save_preferences()` 失败）的错误反馈写入设置页 label 与 8 秒状态栏消息后窗口立即 `accept()` 关闭，当前实现中用户基本不可感知；非阻断，已记录（代码审查确认，未自动断言）。
 
 ## 构建与测试实测记录
+
+本记录为补齐 N1/N2/N6 断言后的验证轮（提交 `ed3a057`）：`navigation_settings_checks` 现在 **102 PASS / 0 FAIL**（较首轮 +15 项：N1 1、N2 8、N6 6）；构建目录必须在 worktree 内，`settings_checks` 会拒绝系统 TEMP 构建根。
 
 环境变量前缀（Ninja/编译器/Qt DLL）：
 
@@ -73,29 +75,27 @@ E:\InstallApplication\Qt\6.12.0\mingw_64\bin
 Debug：
 
 ```
-cmake -S . -B build/issue17-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+cmake -S . -B build/fix-17u-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_PREFIX_PATH=E:/InstallApplication/Qt/6.12.0/mingw_64 \
   -DCMAKE_CXX_COMPILER=E:/InstallApplication/Qt/Tools/mingw1310_64/bin/g++.exe
-cmake --build build/issue17-debug
-ctest --test-dir build/issue17-debug --output-on-failure
+cmake --build build/fix-17u-debug
+ctest --test-dir build/fix-17u-debug --output-on-failure
 ```
 
-- configure rc=0；build rc=0（72 个目标，含 `windeployqt` 部署步骤）。
-- ctest：11/11 passed，0 failed，65.07 s。
-  - process_checks 0.03、settings_checks 0.08、smoke_enumerate 0.36、io_helper_binding_checks 0.03、process_ops_checks 0.05、close_lifecycle_checks 11.53、sampling_recovery_checks 1.77、stale_persistence_checks 8.76、io_table_checks 7.91、navigation_settings_checks 10.77、end_confirm_checks 23.76。
+- configure rc=0；build rc=0（72 个目标，含 `windeployqt` 部署步骤）；ctest：11/11 passed，0 failed，65.92 s。
+  - process_checks 0.04、settings_checks 0.09、smoke_enumerate 0.38、io_helper_binding_checks 0.04、process_ops_checks 0.09、close_lifecycle_checks 11.54、sampling_recovery_checks 1.81、stale_persistence_checks 8.77、io_table_checks 7.90、navigation_settings_checks 11.47、end_confirm_checks 23.77。
 
 Release：
 
 ```
-cmake -S . -B build/issue17-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
+cmake -S . -B build/fix-17u-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=E:/InstallApplication/Qt/6.12.0/mingw_64 \
   -DCMAKE_CXX_COMPILER=E:/InstallApplication/Qt/Tools/mingw1310_64/bin/g++.exe
-cmake --build build/issue17-release
-ctest --test-dir build/issue17-release --output-on-failure
+cmake --build build/fix-17u-release
+ctest --test-dir build/fix-17u-release --output-on-failure
 ```
 
-- configure rc=0；build rc=0（72 个目标）。
-- ctest：11/11 passed，0 failed，65.28 s（navigation 10.82、end_confirm 23.86）。
+- configure rc=0；build rc=0（72 个目标）；ctest：11/11 passed，0 failed，65.94 s（navigation 11.53、end_confirm 23.77）。
 
 ## 失败、重试与修复记录
 
