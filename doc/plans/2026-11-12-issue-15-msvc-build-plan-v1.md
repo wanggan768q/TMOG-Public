@@ -39,10 +39,10 @@
 | OS | Windows 11 专业版 build 26200 |
 | MSVC | VS2022 Professional；`cl.exe` 19.44.35228 x64（工具集 14.44.35207）；`rc.exe` 10.0.26100.0；`vcvars64.bat` = `C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat` |
 | CMake | 3.31.2 `D:\InstallApplication\CMake\bin\cmake.exe` |
-| Ninja | 1.12.1 `E:\InstallApplication\Qt\Tools\Ninja\ninja.exe` |
+| Ninja | 1.12.1，脚本实际解析到 VS 内置 `C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe`（Qt Tools 的 `E:\InstallApplication\Qt\Tools\Ninja\ninja.exe` 同为 1.12.1，未使用） |
 | MinGW | GCC 13.1.0 `E:\InstallApplication\Qt\Tools\mingw1310_64\bin` |
 | Qt (MinGW) | 6.12.0 完整 kit `E:\InstallApplication\Qt\6.12.0\mingw_64` |
-| Qt (MSVC) | **缺失/仅桩**（见 §2） |
+| Qt (MSVC) | 6.12.0 完整 kit `E:\InstallApplication\Qt\6.12.0\msvc2022_64`（用户批准选项 A 后由 Qt MaintenanceTool 安装，3.18 GB，qmake/windeployqt/Qt6Config.cmake 齐备；安装命令与结果见 §14） |
 
 ## 4. MSVC 无 Qt 核心构建（现在可做）
 
@@ -169,12 +169,14 @@ error C2059: syntax error: ')'
 
 | 项目 | 结果 | 证据 |
 | --- | --- | --- |
-| MSVC Debug GUI 构建 | 72/72 目标成功（TmogReplica.exe 64-bit debug）；ctest **11/11 PASS**（Low IL 修复后重跑，`process_ops_checks` PASS 0.06s；exit 0，总 66.33s） | `build/msvc-debug/logs/{configure,build,ctest}-Debug.log`、`toolchain-versions.txt` |
-| MSVC Release GUI 构建 | 72/72 目标成功；ctest **11/11 PASS**（exit 0，总 65.99s） | `build/msvc-release/logs/ctest-Release.log` |
-| MSVC Release 便携包 | 53 文件 / 48,822,377 字节；windeployqt + app-local MSVC 运行库（vcruntime140、vcruntime140_1、msvcp140、msvcp140_1、msvcp140_2）；`check-package.ps1 -Toolchain msvc` ALL PASS（24 项许可、清单 52 条）；IL 修复后复检仍 ALL PASS、文件 hash 未变 | `build/msvc-release/portable`、`logs/package-inventory-Release.txt`、`logs/check-package-Release-postilfix.log` |
-| 无开发 PATH 启动 | PASS：窗口标题 `TmogReplica`；Qt6Core/Qt6Gui/Qt6Widgets/VCRUNTIME140/MSVCP140/qwindows 均从包目录加载（包内 11 个模块，系统 77/78）；正常关闭，退出码 0；IL 修复后重跑仍 PASS（pid 35568） | `build/msvc-release/launch-temp/launch-evidence.json`、`launch-temp2/launch-evidence.json` |
+| MSVC Debug GUI 构建 | 72/72 目标成功（TmogReplica.exe 64-bit debug）；ctest **11/11 PASS**（Low IL 修复后重跑、审查修正后再次重跑，exit 0，总 66.4s） | `build/msvc-debug/logs/{configure,build,ctest}-Debug.log`、`toolchain-versions.txt` |
+| MSVC Release GUI 构建 | 72/72 目标成功；ctest **11/11 PASS**（exit 0，总 66.0s） | `build/msvc-release/logs/ctest-Release.log` |
+| MSVC Release 便携包 | 54 文件 / 48,855,184 字节；windeployqt + app-local MSVC 运行库（vcruntime140、vcruntime140_1、msvcp140、msvcp140_1、msvcp140_2）+ DXC 运行时（dxcompiler、dxil）；`check-package.ps1 -Toolchain msvc` ALL PASS（25 项许可、包内清单 53 条、MANIFEST hash+size 双向） | `build/msvc-release/portable`、`logs/package-inventory-Release.txt`、`logs/check-package-Release.log` |
+| 无开发 PATH 启动 | PASS：窗口标题 `TmogReplica`；Qt6Core/Qt6Gui/Qt6Widgets/VCRUNTIME140/MSVCP140/qwindows 均从包目录加载（包内 11 个模块，系统 86）；正常关闭，退出码 0（审查修正后重跑 pid 25876） | `build/msvc-release/launch-temp3/launch-evidence.json`（`launch-temp`/`launch-temp2` 为前序轮次证据） |
 | MinGW Debug 回归 | 构建 72/72；ctest **11/11 PASS**（IL 修复后重跑；exit 0，总 65.92s） | `build/mingw-debug/logs/ctest-rerun2.log` |
 | MinGW Release 包回归 | `package-portable.ps1` + `check-package.ps1 -Toolchain auto` ALL PASS（ABI=mingw，28 项许可，51 文件）→ 原路径未弱化；IL 修复后复检仍 ALL PASS | `build/issue6-w35-mingw-regress/portable`、`build/issue6-w35-mingw-regress/logs/check-package-postilfix.log` |
+
+审查 r1（`reports/ticket-15-review-r1.md`）的 F1–F6 修正已全部落地并复跑：上表为修正后的最新数字（含 DXC 许可文件与 DXC 运行时 DLL，包 54 文件）；另见偏差 7、`build/f5-debug-package-failfast.log`（Debug+Package 构建前失败，exit 1、638 ms）、`build/f2-crossabi.log` / `build/f2-dx-mingw.log`（交叉 ABI 与 MinGW 分支 dx 白名单行为验证）、`build/msvc-release/logs/{check-package,launch-verify}-Release.log`。
 
 与计划的偏差（均已实现并验证）：
 
@@ -184,5 +186,6 @@ error C2059: syntax error: ')'
 4. 新增 `scripts/verify-portable-launch.ps1`（干净 PATH/环境变量、窗口与模块核验、证据 JSON）。
 5. `build-msvc.ps1` 增加 `-SkipCtest`/`-SkipLaunchVerify`（跳过会在日志显式记录，不声明通过）。
 6. 初期 ctest 10/11 的唯一失败 `process_ops_checks` 根因为 Lead 环境准备动作给 worktree 打上的 **Low 完整性标签**（§10），不是工具链/代码问题；Lead 修复（`icacls ... /setintegritylevel "(OI)(CI)M" /T`）后本 worktree 三套 ctest 全部 11/11 重跑通过，报告 r2 与本节按修复后结果更新（r1 的"csrss 环境限制"结论已失效）。
+7. 审查 r1（`reports/ticket-15-review-r1.md`，风险 high：B1 构建/打包脚本 + B2 >800 行）后的追加修正：① `dxcompiler.dll`/`dxil.dll`（windeployqt 从 Windows SDK 复制的 DXC 运行时）保留不删，补齐合规——`packaging/licenses/DirectXShaderCompiler-license.txt`（上游 LICENSE.TXT，LLVM Release License / UIUC NCSA，29241 字节、SHA256 `27a49e35…`）、NOTICES 增加来源/版本/字节数/SHA256/许可段落、包内 `license-sources.json` 增加 DXC 组件、`check-package.ps1` 许可要求 25 项且这些 DLL 仅在 msvc 分支允许；② `-Package` + Debug 在构建前 fail fast；③ 计划 §3 的 Ninja 与 Qt MSVC 基线更正为实测值；④ 报告 r2 更正"8 个文件"为 7 个唯一文件并标注被 r3 取代。
 
 未验证/限制：`process_ops_checks` 的失败已定位并修复（§10），修复后三套 ctest 11/11；GUI 验证限于"进程启动 + 主窗口出现 + 核心页面测试由 ctest 覆盖"，不等于全页手工验收；其余未验证项（其他 Windows 版本/补丁 Qt/干净裸机/非管理员/Debug 包/MinGW 包启动）见报告 r2 §9。

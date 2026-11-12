@@ -132,7 +132,7 @@ if ($isMsvc) {
 # 必备许可证文件齐备性（缺任一 = 法律材料不完整；计划 §1.3/§4）
 # MSVC 包不随附 GCC/MinGW 许可，改为要求 Qt 许可 + 包根 MSVC 运行库说明。
 if ($isMsvc) {
-    foreach ($lic in 'licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt') {
+    foreach ($lic in 'licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt','licenses/DirectXShaderCompiler-license.txt') {
         $p = Join-Path $PackageDir $lic
         if ((Test-Path $p) -and ((Get-Item $p).Length -gt 0)) { Pass "许可齐备: $lic" } else { Fail "缺许可文件: $lic" }
     }
@@ -175,8 +175,10 @@ foreach ($lic in $bundledLicenseFiles) {
 # 清单外路径）；路径安全校验在包内读取/复制前进行；components 与 files 一致。
 # 固定允许路径集合（独立于清单存在；按 ABI 分支）：
 #   mingw = 28 项（22 内嵌 + Qt 2 + GCC/MinGW 工具链 4）
-#   msvc  = 24 项（22 内嵌 + Qt 2；MSVC 运行库说明不入 licenses/，避免未声明许可材料）
-$msvcLicensePaths = @('licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt') + $bundledLicenseFiles
+#   msvc  = 25 项（22 内嵌 + Qt 2 + DirectXShaderCompiler 1；MSVC 运行库说明不入 licenses/，
+#           避免未声明许可材料）
+$msvcLicensePaths = @('licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
+                      'licenses/DirectXShaderCompiler-license.txt') + $bundledLicenseFiles
 $mingwLicensePaths = @(
     'licenses/Qt-COPYING.txt','licenses/Qt-LICENSE.txt',
     'licenses/double-conversion-LICENSE.txt',
@@ -197,7 +199,7 @@ $mingwLicensePaths = @(
     'licenses/wintab-wintab.h','licenses/zlib-LICENSE.txt'
 )
 $allowedLicensePaths = if ($isMsvc) { $msvcLicensePaths } else { $mingwLicensePaths }
-$expectedSourceCount = if ($isMsvc) { 24 } else { 28 }
+$expectedSourceCount = if ($isMsvc) { 25 } else { 28 }
 $allowedSet = @{}
 foreach ($a in $allowedLicensePaths) { $allowedSet[$a.ToLower()] = $true }
 $sourcesPath = Join-Path $PackageDir 'license-sources.json'
@@ -290,11 +292,12 @@ $whitelist = @(
     'imageformats/qgif.dll','imageformats/qico.dll','imageformats/qjpeg.dll','imageformats/qsvg.dll',
     'networkinformation/qnetworklistmanager.dll',
     'styles/qmodernwindowsstyle.dll',
-    'tls/qcertonlybackend.dll','tls/qschannelbackend.dll',
-    # Qt 6.12 的 windeployqt 会为 Qt6Gui RHI 部署 Microsoft DirectX Shader Compiler（Qt 随附组件）
-    'dxcompiler.dll','dxil.dll'
+    'tls/qcertonlybackend.dll','tls/qschannelbackend.dll'
 )
 if ($isMsvc) {
+    # windeployqt 从 Windows SDK 复制的 DXC 运行时（DirectX Shader Compiler）仅在 MSVC kit 下部署；
+    # 许可与来源见 THIRD-PARTY-NOTICES-MSVC.md 与 licenses/DirectXShaderCompiler-license.txt。
+    $whitelist += @('dxcompiler.dll','dxil.dll')
     # MSVC 运行库（Release/Debug 变体均允许出现，必需集合由上方 Require-AnyDll 断言；
     # vcruntime140_threads / msvcp140_1 / msvcp140_2 / msvcp140_atomic_wait / msvcp140_codecvt_ids
     # 由 app-local 部署的 import 闭包决定是否出现）
@@ -305,7 +308,8 @@ if ($isMsvc) {
                     'concrt140.dll','concrt140d.dll','MSVC-RUNTIME-NOTICE.md')
     # Debug 版 Qt 运行库（windeployqt --debug 时）
     $whitelist += @('Qt6Cored.dll','Qt6Guid.dll','Qt6Widgetsd.dll','Qt6Networkd.dll','Qt6Svgd.dll')
-    $whitelist += @('licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt')
+    $whitelist += @('licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
+                    'licenses/DirectXShaderCompiler-license.txt')
 } else {
     $whitelist += @('libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll')
     $whitelist += @('licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',

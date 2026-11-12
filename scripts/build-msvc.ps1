@@ -301,6 +301,11 @@ if (-not $BuildDir.StartsWith($SourceDir + [System.IO.Path]::DirectorySeparatorC
     Fail "BuildDir 必须位于 SourceDir 内: $BuildDir"
 }
 if ($BuildDir.TrimEnd('\') -eq $SourceDir.TrimEnd('\')) { Fail "BuildDir 不得是源码根" }
+# 发布包只允许 Release：Debug CRT 属于开发机调试运行时，不可再发行，不能作为独立发布包。
+# 在解析工具链/构建之前 fail fast，避免先花几分钟配置+编译后才失败（审查 F5）。
+if ($Package -and $Configuration -eq 'Debug') {
+    Fail '便携包仅支持 Release（Debug CRT 不可再发行）；Debug 构建请不带 -Package 运行'
+}
 New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 $LogDir = Join-Path $BuildDir 'logs'
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
@@ -490,6 +495,7 @@ if ($Package) {
         Fail "未生成便携包: $(Join-Path $pkgDir 'TmogReplica.exe') 缺失"
     }
     # 发布包只允许 Release：Debug CRT 属于开发机调试运行时，不可再发行，不能作为独立发布包。
+    # 兜底检查：正常在 §0 已 fail fast（避免先构建几分钟后才失败）。
     if ($Configuration -eq 'Debug') {
         Fail '便携包仅支持 Release（Debug CRT 不可再发行）；Debug 构建请不带 -Package 运行'
     }
@@ -498,6 +504,8 @@ if ($Package) {
     # vc_redist.x64.exe 安装器、不放运行库 DLL；便携包要求目标机免安装运行，因此再从
     # VS 的 Microsoft.VC143.CRT 可再发行目录做 app-local 部署（Microsoft 允许 app-local 复制）。
     $windeployqt = Join-Path $qt.Prefix 'bin\windeployqt.exe'
+    # 保留 windeployqt 默认的系统 DXC 运行时部署（不传 --no-system-dxc-compiler）：
+    # 移除会让 Qt RHI 在 D3D12/DXC 路径退化；其来源/许可合规见 8.3 与 THIRD-PARTY-NOTICES-MSVC.md（审查 F1）。
     $wdArgs = @('--no-translations', '--no-system-d3d-compiler', '--no-opengl-sw', '--compiler-runtime')
     $wdArgs += (Join-Path $pkgDir 'TmogReplica.exe')
     Invoke-Logged -What 'windeployqt --compiler-runtime' -FilePath $windeployqt -Arguments $wdArgs `
@@ -521,7 +529,12 @@ if ($Package) {
         @{ Label = 'platforms/qwindows.dll'; Alt = @('platforms\qwindows.dll') },
         @{ Label = 'vcruntime140';   Alt = @('vcruntime140.dll','vcruntime140d.dll') },
         @{ Label = 'vcruntime140_1'; Alt = @('vcruntime140_1.dll','vcruntime140_1d.dll') },
-        @{ Label = 'msvcp140';       Alt = @('msvcp140.dll','msvcp140d.dll') }
+        @{ Label = 'msvcp140';       Alt = @('msvcp140.dll','msvcp140d.dll') },
+        # DXC 运行时（DirectX Shader Compiler）：windeployqt 从系统 Windows SDK 复制，显式保留（审查 F1，
+        # 不传 --no-system-dxc-compiler，避免破坏 Qt RHI 的 D3D12/DXC 路径）；许可与来源见
+        # THIRD-PARTY-NOTICES-MSVC.md 与 licenses/DirectXShaderCompiler-license.txt。
+        @{ Label = 'dxcompiler.dll (DXC)'; Alt = @('dxcompiler.dll') },
+        @{ Label = 'dxil.dll (DXC)';       Alt = @('dxil.dll') }
     )
     foreach ($req in $requireAny) {
         $hit = $null
@@ -542,8 +555,10 @@ if ($Package) {
         Copy-Item -LiteralPath $srcFile -Destination (Join-Path $pkgDir $pair.Dst) -Force
     }
 
-    # ---- 8.3 许可材料（24 = 22 内嵌 + Qt-LICENSE + Qt-COPYING）：按 ABI 从
-    #          packaging/license-sources.json 过滤；逐文件 hash 与源清单核对后复制。 ----
+    # ---- 8.3 许可材料（25 = 22 内嵌 + Qt-LICENSE + Qt-COPYING + DXC 许可）：按 ABI 从
+    #          packaging/license-sources.json 过滤；逐文件 hash 与源清单核对后复制。
+    #          DXC（dxcompiler.dll/dxil.dll）由 windeployqt 从 Windows SDK 复制，不在 Qt 清单中，
+    #          此处单独加入并校验固定的许可文本 hash（审查 F1）。 ----
     $licSrcDir = Join-Path $packagingDir 'licenses'
     $sourcesJsonPath = Join-Path $packagingDir 'license-sources.json'
     if (-not (Test-Path -LiteralPath $sourcesJsonPath)) { Fail '缺 packaging/license-sources.json' }
@@ -558,7 +573,22 @@ if ($Package) {
         $keptHash[$licEntry.file] = $licEntry.sha256
     }
     if ($keptFiles.Count -ne 24) {
-        Fail ("MSVC 许可清单应为 24 项（22 内嵌 + Qt 2），实际 {0}" -f $keptFiles.Count)
+        Fail ("MSVC 许可清单过滤后应为 24 项（22 内嵌 + Qt 2），实际 {0}" -f $keptFiles.Count)
+    }
+    # DXC 许可文本：上游 DirectXShaderCompiler LICENSE.TXT（LLVM Release License / UIUC NCSA）。
+    $dxcLicRel = 'licenses/DirectXShaderCompiler-license.txt'
+    $dxcLicSrc = Join-Path $licSrcDir 'DirectXShaderCompiler-license.txt'
+    if (-not (Test-Path -LiteralPath $dxcLicSrc)) {
+        Fail '缺 DXC 许可源文件: packaging/licenses/DirectXShaderCompiler-license.txt'
+    }
+    $dxcLicHash = (Get-FileHash -LiteralPath $dxcLicSrc -Algorithm SHA256).Hash.ToLower()
+    if ($dxcLicHash -ne '27a49e35d1da96eba18fba54bc882667ff0ff8c0254f16f2b6e165d605ba7df8') {
+        Fail ("DXC 许可文本 hash 与登记值不符: {0}" -f $dxcLicHash)
+    }
+    $keptFiles += [pscustomobject]@{ file = $dxcLicRel; sha256 = $dxcLicHash }
+    $keptHash[$dxcLicRel] = $dxcLicHash
+    if ($keptFiles.Count -ne 25) {
+        Fail ("MSVC 许可清单应为 25 项（22 内嵌 + Qt 2 + DXC 1），实际 {0}" -f $keptFiles.Count)
     }
     $licPkgDir = Join-Path $pkgDir 'licenses'
     if (Test-Path -LiteralPath $licPkgDir) { Remove-Item -LiteralPath $licPkgDir -Recurse -Force }
@@ -597,6 +627,16 @@ if ($Package) {
             $outComponents += $copy
         }
     }
+    # DXC 运行库组件（windeployqt 从 Windows SDK 复制的 dxcompiler.dll / dxil.dll；审查 F1）。
+    $outComponents += [pscustomobject]@{
+        component         = 'DirectX Shader Compiler 运行时（windeployqt 从 Windows SDK 复制的 DXC 运行时）'
+        version           = 'dxcompiler 1.9.2602.17 / dxil 101.7.2308.24'
+        embedded_in       = 'dxcompiler.dll、dxil.dll'
+        license_ids       = @('NCSA')
+        license_files     = @([pscustomobject]@{ file = $dxcLicRel; sha256 = $dxcLicHash })
+        upstream_download = 'https://github.com/microsoft/DirectXShaderCompiler'
+        notes             = 'windeployqt 从 Windows SDK 10.0.26100.0 的 Redist 目录复制，二进制未修改；许可证文本为 LLVM Release License（University of Illinois/NCSA），另含 miniz/Unicode 等第三方子许可；Windows SDK 再分发条款同样适用。'
+    }
     $outSources = [pscustomobject]@{
         schema     = $srcSources.schema
         provenance = $srcSources.provenance
@@ -606,7 +646,7 @@ if ($Package) {
     $outJsonPath = Join-Path $pkgDir 'license-sources.json'
     $outSources | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $outJsonPath -Encoding utf8
     $roundTrip = Get-Content -LiteralPath $outJsonPath -Raw | ConvertFrom-Json
-    if ($roundTrip.files.Count -ne 24) { Fail ("打包后 license-sources.json files 项应为 24，实际 {0}" -f $roundTrip.files.Count) }
+    if ($roundTrip.files.Count -ne 25) { Fail ("打包后 license-sources.json files 项应为 25，实际 {0}" -f $roundTrip.files.Count) }
     foreach ($c in $roundTrip.components) {
         foreach ($f in $c.license_files) {
             $k = $f.file.ToLower()

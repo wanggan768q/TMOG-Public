@@ -129,16 +129,20 @@ contributors.），逐行列出以避免"同上"在表格中不可追溯：
 
 ## MSVC 运行库（Microsoft Visual C++ 2015-2022 Redistributable，v14.44）
 
-| 文件 | 版本 | 版权 | 许可 |
-|---|---|---|---|
-| vcruntime140.dll | 14.44（实测 FileVersion 见 MSVC-RUNTIME-NOTICE.md） | Microsoft Corporation | Microsoft Visual C++ Redistributable 许可条款 |
-| vcruntime140_1.dll | 14.44（同上） | Microsoft Corporation | 同上 |
-| msvcp140.dll | 14.44（同上） | Microsoft Corporation | 同上 |
+实际随包部署 5 个运行库 DLL（由 `dumpbin /dependents` import 闭包决定；均来自 VS2022 14.44.35112 的 `x64/Microsoft.VC143.CRT`，二进制未修改）：
+
+| 文件 | 字节数 | FileVersion | SHA-256 | 许可 |
+|---|---|---|---|---|
+| vcruntime140.dll | 124544 | 14.44.35211.0 | `D5E4D9A3E835FA679450145D6A7D94E36573A509317111904D9B3712C30D9066` | Microsoft Visual C++ Redistributable 许可条款 |
+| vcruntime140_1.dll | 49792 | 14.44.35211.0 | `1F2D41C4AA5DB0BC33EBF7B66D72943A817D7CE6CBE880502A9403823633093F` | 同上 |
+| msvcp140.dll | 557728 | 14.44.35211.0 | `0F885B509A685D2BBFA652FED26B5FB31D88FBDAB0A978C641D1C7B8AA460AA9` | 同上 |
+| msvcp140_1.dll | 35952 | 14.44.35211.0 | `BFAD5AEF4C63A669E3C140655CDFDF395B6C979B400A447BD5DCB65ED8826C3D` | 同上 |
+| msvcp140_2.dll | 280200 | 14.44.35211.0 | `3EA06F0EE098B4823CB79599DF3780E7F23CCE52C19AAC31D2A0D47EFE33A5E9` | 同上 |
 
 - 说明文本：`MSVC-RUNTIME-NOTICE.md`（包根，记录实测 FileVersion、来源与条款出处）。
 - 来源：本机 Visual Studio 2022 Professional 安装的 MSVC 14.44 工具集可再发行运行库
-  （`VC/Redist/MSVC/14.44.*/x64/Microsoft.VC143.CRT/`），由 windeployqt
-  `--compiler-runtime` 从 Qt 安装对应工具集复制，二进制未修改。
+  （`VC/Redist/MSVC/14.44.*/x64/Microsoft.VC143.CRT/`），由 `build-msvc.ps1` 的 import 闭包
+  部署步骤以 app-local 方式复制；windeployqt `--compiler-runtime` 只生成安装器、不复制 DLL。
 - 许可：这些运行库按 Microsoft 的 Visual C++ Redistributable 条款随应用再分发
   （条款入口 https://visualstudio.microsoft.com/license-terms/ ）。本机 Visual Studio
   安装目录内的 LICENSE/ThirdPartyNotices 为条款随附件，未复制进包内 `licenses/`；
@@ -146,6 +150,31 @@ contributors.），逐行列出以避免"同上"在表格中不可追溯：
 - **交叉 ABI 拒绝**：本包不包含 GCC/MinGW 运行库（`libgcc_s_seh-1.dll`、
   `libstdc++-6.dll`、`libwinpthread-1.dll`）；`scripts/check-package.ps1 -Toolchain msvc`
   会拒绝这些文件混入，反之 MinGW 包亦拒绝 MSVC 运行库混入。
+
+## DirectX Shader Compiler 运行时（dxcompiler.dll / dxil.dll）
+
+`windeployqt` 会从 Windows SDK 的 Redistributable 目录复制 DirectX Shader Compiler
+运行时到包内（用于 Qt6Gui RHI / Direct3D 渲染路径）。本包保留这两个 DLL，并在
+`licenses/DirectXShaderCompiler-license.txt` 随附上游许可全文。
+
+| 文件 | 字节数 | FileVersion | 说明 | SHA-256 |
+|---|---|---|---|---|
+| dxcompiler.dll | 14261192 | 1.9.2602.17 | DirectX Compiler - Out Of Band | `5da37a35d53123274e2e4e7e247148350871df8ae9ecc05778bf2ac2057932be` |
+| dxil.dll | 1502784 | 101.7.2308.24 | DirectX IL for Redistribution | `3d030cca37f03955c95da0978026fc06d45c49fe4e6f9d4a8cb5b9e9adf2959d` |
+
+- 来源：`windeployqt`（Qt 6.12.0 msvc2022_64）从本机 Windows SDK `10.0.26100.0` 的
+  Redistributable 目录复制；本脚本未加 `--no-system-dxc-compiler`，以保留 D3D/DXC 渲染路径。
+  二进制未修改。
+- 上游项目与许可：DirectXShaderCompiler（https://github.com/microsoft/DirectXShaderCompiler），
+  许可为 LLVM Release License / University of Illinois/NCSA Open Source License 及其上游
+  LICENSE.TXT 中列明的第三方子许可；全文见 `licenses/DirectXShaderCompiler-license.txt`
+  （上游 `LICENSE.TXT` 原样，29,241 字节，SHA-256
+  `27a49e35d1da96eba18fba54bc882667ff0ff8c0254f16f2b6e165d605ba7df8`）。
+- Windows SDK 再分发：随 Windows SDK 交付的可再发行二进制同时受 Microsoft 的
+  Windows SDK/Visual Studio 许可条款约束；分发者须自行确认再分发权利。
+- **不虚称完整**：本表只覆盖包内实际出现的 DXC 运行时 DLL；上游源码树内其他第三方
+  组件（如 miniz、Unicode 数据）是否嵌入这两个二进制，以 Microsoft 发布物与上游
+  LICENSE.TXT 为准，尚未逐项静态核验。
 
 ## MSVC C/C++ 运行库的来源与可替换性
 
