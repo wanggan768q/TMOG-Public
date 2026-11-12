@@ -111,6 +111,7 @@ PR ready ≠ merged，merged ≠ 用户验收。用户验收后，关 Issue 仍�
 - 等待门闩：需要用户决定（首张合并确认、高风险票、扩权、凭据、连续 3 轮失败、无进展）时，Lead 在 state 写 `waiting_for_user = {reason, question, evidence, since}` 并结束 turn 提问；续跑在用户没有新决定前，不得执行 gated 动作（合并/关票/扩权/外部写入），只可做不受门闩限制的只读或已授权准备。
 - Issue 回写只允许改受控块内部：`program-checklist`（父票进度）、`program-spec`（子票规格修正）、`tmog-pr-findings`（PR 发现）；块外原文保留，冲突停止。需要 Mandate 的 `writeback` 授权，执行者为 IssueWriter。
 - 恢复先检查 `list_agents`、原队友/任务板、目录、Git 历史、远程 PR、**GitHub Issues**、用户 hold、配置差异与未完成后台操作。读过的输入不重复处理，已有 PR 不重开、已 merged 不重合并、已建票不重建（Program 按 Issue 正文 `<!-- program:<id> ticket:<NN> -->` 去重）。旧队友 inactive 且确认无写入才重新指派；人工暂停不能被机器人或例行重启解除。
+- **subagent 台账对账（中断/恢复必做）**：DSH 只在子代理正常结束时投递 `subagent-settled`；父 turn 被 `aborted`/`interrupted` 或会话被 dispose 时，子会话可能被连带终止且不补发通知，父日志/GUI 的 `subagent/catalog` 会把无 settle 条目长期显示为 running。恢复或续跑时**不得把“catalog 无 settle”当成仍在运行**：逐条查子会话日志（`%USERPROFILE%\.dsh\sessions\<workspace>\<childId>\session.v4.jsonl.zstd`）有无 `turn/end`、最后记录时间是否停在中断时刻、父会话是否收到 settle。无 `turn/end` 且无新写入的记 `abandoned`（原因 interrupted），不等待、不唤醒旧地址、不因它重复派发同票；只有子会话仍有新写入且当前 turn 活跃才计 running。对账结果写 state/events：childId、判定、子会话 mtime、有无 turn/end、恢复动作。
 
 ## 9. 通知、看板与收口
 

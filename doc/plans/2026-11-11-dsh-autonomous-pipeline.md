@@ -101,3 +101,22 @@
 - 仓库无 CI，本地证据替代方案未在真实票上验证；`Invoke-TeamCheck` 的包装脚本约束未实跑。
 - 合同无法防止工具层越权（Worker 技术上有 `gh`），只能审计；`Add-TeamRecord` 的 actor 可伪填，审计依赖时间线与真实状态交叉核对。
 - 因此结论是“**有条件闭环**”：在批量授权 + 低风险范围内可连续自动推进；高风险、扩权、首张合并确认、凭据/人工操作、3 轮失败、无进展仍会停，且 turn 结束依赖 goal 续跑。
+
+## 9. 第三轮修复：subagent 台账对账（2026-11-12）
+
+触发：对 session-9458620e 只读分析发现父日志 `subagent/catalog` 26 条中有 3 条无 settle。逐一核对子会话日志后确认：
+
+- `41815fb6`（独立审查三个 ready PR）：spawn 后 6 秒父 turn 1 `aborted(disposed)`，子会话无 `turn/end`、最后写入停在中止时刻 → 幽灵。
+- `dda7fedd`（R-13 r2 review）：父 turn 7 `interrupted` 时正在写报告，子会话无 `turn/end`、停 15 小时 → 幽灵。
+- `34528aad`（R-6 r2 review）：真实在途；`e848173d`（R-6 rebase）已正常 settle。
+
+根因：DSH 只在子代理正常结束时投递 `subagent-settled`；父 turn 被 abort/interrupt 会 dispose 子会话且不补发通知；会话恢复只重放消息历史，不重建 catalog，父日志/GUI 把“无 settle”长期当 running。
+
+合同修复（本次）：
+
+- README §8 新增 **subagent 台账对账**：catalog 无 settle ≠ running；查子会话 `turn/end`、最后写入时间、父是否收到 settle；无 `turn/end` 且无新写入记 `abandoned`，不等待、不唤醒、不重复派发；对账结果写 state/events。
+- program.md：§4 中断表新增“subagent 台账无 settle / 父 turn 被中断”行与用户 stop 行联动；§5 恢复条目先对账台账。
+- roles/lead.md：续跑、恢复、DSH 语义三处写入同一规则。
+- check.ps1：README 增锚点「subagent 台账对账」，program 增锚点「subagent 台账」；check.tests.ps1 增两条“删锚点必须失败”用例。
+
+未修复（环境限制）：DSH 本体在打包 `app.asar`（213 MB）内，不在工程仓库，无法在安装目录安全打补丁；建议上游修复：spawn 登记 / settle 清除 / turn abort 补发 `subagent-settled` / GUI 以子会话存活状态为准。session-9458620e 已写入磁盘的两个幽灵条目无法从只追加日志删除，只能按合同对账忽略；该会话 turn 8 仍在运行，未改动其 state。

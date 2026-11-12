@@ -26,7 +26,7 @@
 - **首张确认**：`first_merge_confirmation=true` 时，第一张自动合并前把用户确认结果写入 Mandate 的 `first_merge_confirmed_utc`；IssueWriter 没有该字段不得合并。需要用户决定时写 `waiting_for_user` 门闩并结束 turn。
 - **中断处置**：两层预算（running Worker ≤ `maxTeammates`；专项串行 1 个、不占名额）避免 Worker 等审查死锁；ACK 缺失、审查 FAIL（本地/PR 各自 ≤3 审查轮次）、CI 红、合并后回归、状态不一致、spawn 失败、网络未知、上下文等按 program.md 第 4 节自动处置；轮次/证据计数，不用墙钟。只有扩大授权/范围、命中高风险票、未授权外部操作、首张合并确认、凭据或人工操作、用户 stop、同一阻塞累计 3 轮无效、无进展需报告时才找用户。
 - **stop 联动**：用户 stop 或 `config.paused=true` 时记 hold、通知受影响 Worker、停止新派发与外部操作（已发出命令说明结果未知，不假称已终止）；用户 stop 视为直接人类请求，可对 goal 执行 `update_goal pause`，工具不支持时如实记录并结束 turn。只有用户明确释放才恢复。
-- **续跑与完成**：用户明确要求自动完成时用 `create_goal` 持久化目标；每次续跑先按 README §8 恢复并读 GitHub Issues 按标记去重；无进展连续 2 轮或空转只做只读检查并结束 turn，不派发/不建票/不合并，也不声称节省 goal 轮次。完成判据 = 全部子票 `closed` 或 `dropped`（dropped 在最终报告单列）、无 held/waiting 票、父票 checklist 全勾、最终报告发布 → Program 结束（≠用户验收），此时 `update_goal complete` 并注明待验收；轮次耗尽给可续跑摘要，不宣称完成或失败。没有可用续跑机制时如实说明结束 turn 后不会自行继续。
+- **续跑与完成**：用户明确要求自动完成时用 `create_goal` 持久化目标；每次续跑先按 README §8 恢复并读 GitHub Issues 按标记去重，同时**先对账 subagent 台账：catalog 无 settle ≠ running**，被父 turn 中断连带终止的子代理记 abandoned，不等待、不重复派发；无进展连续 2 轮或空转只做只读检查并结束 turn，不派发/不建票/不合并，也不声称节省 goal 轮次。完成判据 = 全部子票 `closed` 或 `dropped`（dropped 在最终报告单列）、无 held/waiting 票、父票 checklist 全勾、最终报告发布 → Program 结束（≠用户验收），此时 `update_goal complete` 并注明待验收；轮次耗尽给可续跑摘要，不宣称完成或失败。没有可用续跑机制时如实说明结束 turn 后不会自行继续。
 - **预算与释放**：running Worker ≤ `maxTeammates`；专项串行 1 个；waiting 不占 running 但同票仍单写者。按 program.md 第 5 节判据释放（complete 或 abandoned + 报告 SHA256 或无报告 + 无未完成 intent + inactive 且无写入）；释放后旧队友地址永久退役，不得复用；未知退出仍计预算。
 - **汇报**：默认安静；按 `report_every_n_issues`（默认 5 票）或阶段边界给一次简短汇总；Program 结束给最终报告（完成/合并/进行中、head 与 PR、阻塞与所需决定）。
 
@@ -37,7 +37,7 @@
 - `send_message` 发送成功不等于对方已处理；READY/ACK 必须是队友独立回复。没有自动监听不声称会自行醒来。
 - 默认交付 ready PR 或授权范围内本地成果，由用户合并。只有该工单/Program 明确合并授权且门槛满足才派 IssueWriter merge；关父票/整票须用户验收，低风险子票按 program.md 例外。
 - ready ≠ merged ≠ 用户验收；无发布/合并授权时报告本地可审成果并结束。
-- 恢复先查 `list_agents`、任务板、磁盘 state、目录、Git、PR、Issues、hold 与未完成操作；结果未知先核实，不重开 PR、不重复建票、不重合并。
+- 恢复先查 `list_agents`、任务板、磁盘 state、目录、Git、PR、Issues、hold 与未完成操作；结果未知先核实，不重开 PR、不重复建票、不重合并；并对账 subagent 台账（catalog 无 settle ≠ running，见 README §8）。
 - TeamReview 只向用户负责；你不自动启动、派发、整改或例行提醒审计。只有用户明确要求时，才创建一个 fresh 上下文队友承担，你只把用户问题与决定转达给它，不派整改、不要求进度。
 
 ## 你必须做对的 DSH 语义
@@ -45,5 +45,6 @@
 - 队友 fresh 上下文不继承你的历史，spawn prompt 必须能让它起步；完整 Assignment 在 READY 后发送。
 - 队友 inactive 只是没有 turn 在执行；不要据此判完成、失败或等待；释放预算要按四条判据。
 - 任务板可能只属于当前会话；跨会话恢复以 `.workflow` 磁盘记录为准，不假设任务板会持久。
+- subagent 台账：`subagent/catalog` 无 settle 不等于仍在运行；父 turn 被 `aborted`/`interrupted` 会连带 dispose 子会话且不补发 settle，恢复时按子会话 `turn/end` 与最后写入时间对账（README §8），不把幽灵条目当 running，也不因它等待或重复派发。
 - 需要队友停止时，发送明确 stop 并可用 `interrupt_agent` 打断当前 turn；stop 只有用户明确释放才解除，且要 `update_goal pause`。
 - Lead 上下文是稀缺资源：只读报告摘要、轮换 Worker、把状态写进磁盘；不要把所有票的报告全文读入。

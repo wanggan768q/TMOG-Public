@@ -111,14 +111,14 @@ try {
             $strictUtf8Contract.GetString([IO.File]::ReadAllBytes((Join-Path $PSScriptRoot $Name)))
         }
         $readmeText = & $readContract 'README.md'
-        foreach ($anchor in @('## 4. 路由、所有权与并行', '## 8. 状态、报告、跟进与恢复', '## 13. Program 模式')) {
+        foreach ($anchor in @('## 4. 路由、所有权与并行', '## 8. 状态、报告、跟进与恢复', '## 13. Program 模式', 'subagent 台账对账')) {
             Assert-Condition ($readmeText.Contains($anchor)) "README.md 缺少关键条款锚点「$anchor」；合同不完整，拒绝就绪。"
         }
         $teamReviewText = & $readContract 'team-review.md'
         Assert-Condition ($teamReviewText.Contains('## 用户控制的入口')) 'team-review.md 缺少“用户控制的入口”锚点；合同不完整，拒绝就绪。'
         # program.md 是自动流水线的门槛来源；缺关键条款的残缺合同不能当作可用。
         $programText = & $readContract 'program.md'
-        foreach ($anchor in @('## 3. 低风险门槛', '## 4. 中断清单', '## 5. 续跑', 'numstat', 'risk_ceiling', 'waiting_for_user', 'first_merge_confirmation', 'program-checklist', 'max_goal_rounds')) {
+        foreach ($anchor in @('## 3. 低风险门槛', '## 4. 中断清单', '## 5. 续跑', 'numstat', 'risk_ceiling', 'waiting_for_user', 'first_merge_confirmation', 'program-checklist', 'max_goal_rounds', 'subagent 台账')) {
             Assert-Condition ($programText.Contains($anchor)) "program.md 缺少关键条款锚点「$anchor」；自动流水线合同不完整，拒绝就绪。"
         }
         Assert-Condition (Test-Path -LiteralPath $SkillsRoot -PathType Container) "DSH 项目技能根不存在或不是目录：$SkillsRoot。"

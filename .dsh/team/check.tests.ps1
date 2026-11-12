@@ -151,6 +151,32 @@ try {
     [IO.File]::WriteAllText((Join-Path $teamCopy3 'README.md'), '# 残缺 README', [Text.UTF8Encoding]::new($false))
     $result = Invoke-Check @('-ConfigPath', $template, '-RolesRoot', $roles, '-SkillsRoot', $skills, '-Ready', '-Role', 'team') -Checker (Join-Path $teamCopy3 'check.ps1')
     Assert-Exit 1 $result 'README.md 缺少关键章节锚点时不得报告就绪。'
+
+    # README 缺少 subagent 台账对账锚点时，-Ready 必须失败。
+    $teamCopy4 = Join-Path $root 'teamcopy4'
+    [IO.Directory]::CreateDirectory($teamCopy4) | Out-Null
+    Copy-Item -LiteralPath $checker -Destination (Join-Path $teamCopy4 'check.ps1')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'team-review.md') -Destination (Join-Path $teamCopy4 'team-review.md')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'program.md') -Destination (Join-Path $teamCopy4 'program.md')
+    $readme = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'README.md'))
+    $readmeWithoutLedger = $readme.Replace('subagent 台账对账', 'subagent ledger')
+    if ($readmeWithoutLedger -eq $readme) { throw '测试准备失败：README.md 未包含 subagent 台账对账锚点。' }
+    [IO.File]::WriteAllText((Join-Path $teamCopy4 'README.md'), $readmeWithoutLedger, [Text.UTF8Encoding]::new($false))
+    $result = Invoke-Check @('-ConfigPath', $template, '-RolesRoot', $roles, '-SkillsRoot', $skills, '-Ready', '-Role', 'team') -Checker (Join-Path $teamCopy4 'check.ps1')
+    Assert-Exit 1 $result 'README.md 缺少 subagent 台账对账锚点时不得报告就绪。'
+
+    # program.md 缺少 subagent 台账锚点时，-Ready 必须失败。
+    $teamCopy5 = Join-Path $root 'teamcopy5'
+    [IO.Directory]::CreateDirectory($teamCopy5) | Out-Null
+    Copy-Item -LiteralPath $checker -Destination (Join-Path $teamCopy5 'check.ps1')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $teamCopy5 'README.md')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'team-review.md') -Destination (Join-Path $teamCopy5 'team-review.md')
+    $program = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'program.md'))
+    $programWithoutLedger = $program.Replace('subagent 台账', 'subagent ledger')
+    if ($programWithoutLedger -eq $program) { throw '测试准备失败：program.md 未包含 subagent 台账锚点。' }
+    [IO.File]::WriteAllText((Join-Path $teamCopy5 'program.md'), $programWithoutLedger, [Text.UTF8Encoding]::new($false))
+    $result = Invoke-Check @('-ConfigPath', $template, '-RolesRoot', $roles, '-SkillsRoot', $skills, '-Ready', '-Role', 'team') -Checker (Join-Path $teamCopy5 'check.ps1')
+    Assert-Exit 1 $result 'program.md 缺少 subagent 台账锚点时不得报告就绪。'
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force -Confirm:$false
 }

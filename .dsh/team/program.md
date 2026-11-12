@@ -93,6 +93,7 @@ Mandate 之外的新范围、新依赖、权限或外部操作一律需要用户
 | 规格失效/超范围 | 规格与 Issue 不符 | Lead 记 `dropped` 并写明理由，子票保持 open；重新拆解或纳入下一批；最终报告单列 | 需要用户决定关闭/重拆 |
 | state/任务板不一致 | 记录冲突 | 以磁盘 state 为准重排 frontier、重登记任务板；按 Issue 唯一标记去重 | 无法判定归属 |
 | 队友 spawn 失败/failed | 创建/运行失败 | 一次重试；仍失败换新 Worker 名，按磁盘交接恢复同票；无可核实报告的 Assignment 记为 abandoned | 连续失败 |
+| subagent 台账无 settle / 父 turn 被中断 | `subagent/catalog` 条目无 settle，且子会话无 `turn/end` 或最后写入停在中断时刻 | 按 README §8 对账，判定 dead 的记 `abandoned`，不等待、不唤醒、不重复派发同票；同票换新 Worker 名并重排 frontier | 子会话仍有活跃写入而归属/双写未知 |
 | 预算满 | 见第 5 节两层预算 | 已就绪票排队；释放后再派 | 长期满且无进展 |
 | GitHub 网络/限流未知 | 结果未知 | 先 `gh view/list` 查真实状态，退避重试一次；不盲重建/重合并 | 仍未知或有副作用风险 |
 | path 冲突/依赖 | write_scopes/blocked_by | 串行或拆票，不并行写同路径 | 依赖导致长期停滞 |
@@ -100,7 +101,7 @@ Mandate 之外的新范围、新依赖、权限或外部操作一律需要用户
 | 命中高风险 | 第 3 节 A/B 任一条不满足 | **只停该票外部操作并 hold**；未被它 blocked_by 的票继续；汇总单列；完成判据要求该票最终关闭或 dropped | 用户决定该票授权/放弃 |
 | Worker 自行创建队友/子代理 | 发现 spawn/subagent 调用 | 立即停止该动作并报告；该产出不计入验收 | 重复发生 |
 | 分支保护/合并权限拒绝 | 工具原始错误 | 记录错误，停止自动合并 | 需要用户改仓库设置或授权 |
-| 用户 stop | 用户明确 stop/等确认 | 记录 hold、通知受影响 Worker、停止新派发与外部操作；用户 stop 视为直接人类请求，可对 goal 执行 `update_goal pause`；工具不支持时如实记录并结束 turn | 只有用户明确释放才恢复 |
+| 用户 stop | 用户明确 stop/等确认 | 记录 hold、通知受影响 Worker、停止新派发与外部操作；用户 stop 视为直接人类请求，可对 goal 执行 `update_goal pause`；工具不支持时如实记录并结束 turn；同时按 README §8 对账 subagent 台账，被连带终止的子代理记 abandoned，不等待 | 只有用户明确释放才恢复 |
 | 无进展 / 轮次空转 | 见第 5 节定义 | 只读检查后结束 turn，不派发、不做外部操作 | 第 2 轮无进展后向用户报告并等待 |
 
 ## 5. 续跑、等待、完成与预算
@@ -110,7 +111,7 @@ Mandate 之外的新范围、新依赖、权限或外部操作一律需要用户
 - **首张合并确认**：`first_merge_confirmation=true` 时，IssueWriter 只有在 Mandate 有 `first_merge_confirmed_utc` 时才执行第一次合并；该字段只能由 Lead 在用户确认后写入，不由 IssueWriter 自填。
 - **无进展与空转定义**：连续 2 轮没有任何进展（定义见第 4 节开头）即“无进展”；没有可派发的工作且全部在等外部/用户即“空转”。两种情况都只做只读检查并结束 turn，不派发、不建票、不合并、不评论；“空转轮次”不保证节省 goal 轮次，只保证不产生副作用和工作浪费。
 - **停止联动**：用户 stop 或 `config.paused=true` 时立即 state 记 hold、通知受影响 Worker、停止新派发与外部操作；对已发出的命令用 `interrupt_agent` 打断并说明哪些动作结果未知，不声称已终止无法核实的进程。用户明确释放后才 resume。
-- **恢复**：每次续跑开始执行 README §8 恢复协议，并额外读 GitHub Issues，按 `<!-- program:<id> ticket:<NN> -->` 去重；已完成的不重做，已 merged 的不重合并，已建票的不重建。
+- **恢复**：每次续跑开始执行 README §8 恢复协议，并额外读 GitHub Issues，按 `<!-- program:<id> ticket:<NN> -->` 去重；已完成的不重做，已 merged 的不重合并，已建票的不重建；先对账 subagent 台账（`catalog` 无 settle ≠ running，见 README §8 与第 4 节），被中断连带终止的子代理记 abandoned 且不等待。
 - **完成判据（Program 结束 ≠ 用户验收）**：全部子票进入终态——`closed`，或 `dropped` 且在最终报告单列原因与未交付内容；**没有 held / waiting 的子票**；父票 `program-checklist` 全部勾选；最终报告已发布。满足后 `update_goal complete` 并注明“待用户验收”。用户拒绝 dropped 票时重新打开。
 - **轮次耗尽**：goal 轮次上限用尽但不是阻塞时，写可续跑状态摘要（完成/进行中/下一批/未合并 head），报告“需要新一轮续跑”，不宣称完成也不宣称失败。
 - **两层预算**：
