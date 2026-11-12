@@ -4,12 +4,12 @@
 // 不真实终止、不触碰真实用户配置（显式传临时 settings 路径）。
 //
 //  N1. 默认页 Processes；QStackedWidget 两真实页面；objectName 可定位
-//  N2. Qt action 与 Ctrl+1/Ctrl+2 切换页面；设置页禁用进程操作；无自动操作
+//  N2. Qt action 与 Ctrl+1/Ctrl+2 切换页面；设置页禁用进程操作；切页不产生额外采样（计数）
 //  N3. 四档刷新：click 单选 → 同一 timer interval 实际改变；非法档位 →
 //      1000 + 状态栏非模态反馈；采样不重叠/不重入（max_active==1）
 //  N4. 暂停跨页保持；切页不自动执行操作
 //  N5. 重启式构造恢复刷新档位/窗口尺寸/排序方向（临时设置文件）
-//  N6. 损坏 JSON / 越界值 → 安全默认 + 可见错误反馈
+//  N6. 损坏 JSON / 越界值 → 安全默认（1000 ms、pid 升序、默认尺寸）+ 错误反馈
 //  N7. 只读设置文件写入失败 → 反馈且旧字节不变；无效目录 → 反馈
 //  N8. 关闭后 timer 停止，不再启动采样
 #include <QAction>
@@ -24,6 +24,7 @@
 #include <QLabel>
 #include <QRadioButton>
 #include <QScreen>
+#include <QSize>
 #include <QStackedWidget>
 #include <QStatusBar>
 #include <QTableView>
@@ -164,6 +165,16 @@ QStackedWidget* stack_of(MainWindow& win) {
     return win.findChild<QStackedWidget*>(QStringLiteral("main_stack"));
 }
 
+// N6：加载默认尺寸按 screen()->availableGeometry() 夹取（见
+// MainWindow::apply_loaded_settings）。期望值与生产代码同一算法。
+QSize expected_default_window_size() {
+    const QScreen* screen = QApplication::primaryScreen();
+    const QRect available =
+        screen ? screen->availableGeometry() : QRect(0, 0, 1920, 1080);
+    return QSize(qMin(1000, available.width()),
+                 qMin(700, available.height()));
+}
+
 QLabel* error_label_of(MainWindow& win) {
     return win.findChild<QLabel*>(QStringLiteral("settings_error_label"));
 }
@@ -205,6 +216,11 @@ void n1_default_page_and_widgets(const QString& settings_path) {
     check(stack && stack->currentWidget() == processes,
           "N1: default page is Processes on every start");
     check(table != nullptr, "N1: process table present (process_table)");
+    // 离屏测试不依赖 isVisible()：用 isVisibleTo 表达“在父页可见”。
+    check(stack && processes && stack->currentWidget() == processes && table &&
+              table->isVisibleTo(processes),
+          "N1: current page is processes_page and process_table is visible in it "
+          "(isVisibleTo)");
     check(timer != nullptr, "N1: sample timer present (sample_timer)");
     check(action_of(win, "pause_action") && action_of(win, "refresh_action") &&
               action_of(win, "end_task_action"),
@@ -245,8 +261,16 @@ void n2_navigation_actions_and_ctrl_keys(const QString& settings_path) {
     check(nav_settings && nav_settings->shortcut() == QKeySequence("Ctrl+2"),
           "N2: settings action bound to Ctrl+2");
 
+    // N2：切页本身不得触发采样。先把档位调到 5000 ms（远大于本段测试窗口，
+    // 排除 timer 自然 tick），再在每次切页前后比较 fake 枚举器采样计数。
+    check(click_tier(win, 5000), "N2: baseline tier 5000 ms applied");
+    pump_ms(150);   // 让构造期 Queued 首帧采样收尾，避免把在途帧算进切页
+    check(win.refresh_interval_ms() == 5000,
+          "N2: baseline refresh interval is 5000 ms before page switch");
+
+    const int calls_before_settings = f.raw->calls();
     if (nav_settings) nav_settings->trigger();
-    pump_ms(50);
+    pump_ms(200);
     check(stack->currentWidget() == settings, "N2: action switches to settings page");
     check(nav_settings && nav_settings->isChecked(),
           "N2: settings action checked after switch");
@@ -255,24 +279,43 @@ void n2_navigation_actions_and_ctrl_keys(const QString& settings_path) {
           "N2: destructive/process actions disabled on settings page");
     check(pause && !pause->isChecked(),
           "N2: page switch does not auto-execute or toggle process actions");
+    check(f.raw->calls() == calls_before_settings,
+          "N2: page switch itself does not trigger sampling (action -> settings)");
+    check(win.refresh_interval_ms() == 5000,
+          "N2: page switch keeps refresh interval (action -> settings)");
 
+    const int calls_before_processes = f.raw->calls();
     if (nav_processes) nav_processes->trigger();
-    pump_ms(50);
+    pump_ms(200);
     check(stack->currentWidget() == processes, "N2: action returns to Processes page");
     check(pause && pause->isEnabled() && refresh && refresh->isEnabled() &&
               end_task && end_task->isEnabled(),
           "N2: process actions re-enabled on Processes page");
+    check(f.raw->calls() == calls_before_processes,
+          "N2: page switch itself does not trigger sampling (action -> processes)");
+    check(win.refresh_interval_ms() == 5000,
+          "N2: page switch keeps refresh interval (action -> processes)");
 
 #ifdef TMOG_HAVE_QT_TEST
     win.activateWindow();
     win.setFocus();
     pump_ms(50);
+    const int calls_before_key_settings = f.raw->calls();
     QTest::keyClick(&win, Qt::Key_2, Qt::ControlModifier);
-    pump_ms(100);
+    QTest::qWait(200);
     check(stack->currentWidget() == settings, "N2: Ctrl+2 switches to settings page");
+    check(f.raw->calls() == calls_before_key_settings,
+          "N2: page switch itself does not trigger sampling (Ctrl+2 -> settings)");
+    check(win.refresh_interval_ms() == 5000,
+          "N2: Ctrl+2 page switch keeps refresh interval");
+    const int calls_before_key_processes = f.raw->calls();
     QTest::keyClick(&win, Qt::Key_1, Qt::ControlModifier);
-    pump_ms(100);
+    QTest::qWait(200);
     check(stack->currentWidget() == processes, "N2: Ctrl+1 returns to Processes page");
+    check(f.raw->calls() == calls_before_key_processes,
+          "N2: page switch itself does not trigger sampling (Ctrl+1 -> processes)");
+    check(win.refresh_interval_ms() == 5000,
+          "N2: Ctrl+1 page switch keeps refresh interval");
 #else
     std::cout << "SKIP: Ctrl+key delivery (Qt6::Test unavailable); shortcut "
                  "bindings asserted above\n";
@@ -418,6 +461,8 @@ void n5_persistence_restart(const QString& settings_path) {
 }
 
 void n6_corrupt_and_out_of_range(const QString& dir_path) {
+    const QSize default_size = expected_default_window_size();
+
     const QString corrupt_path = dir_path + "/corrupt.json";
     {
         QFile f(corrupt_path);
@@ -428,10 +473,20 @@ void n6_corrupt_and_out_of_range(const QString& dir_path) {
     {
         WindowFixture f = make_window(corrupt_path);
         MainWindow& win = *f.win;
+        auto* table = win.findChild<QTableView*>(QStringLiteral("process_table"));
         check(win.refresh_interval_ms() == 1000,
               "N6: corrupt JSON -> safe defaults (tier 1000)");
         check(action_of(win, "nav_settings_action") != nullptr,
               "N6: window still fully constructed");
+        check(table && table->horizontalHeader()->sortIndicatorSection() ==
+                           ProcessTableModel::ColPid &&
+                  table->horizontalHeader()->sortIndicatorOrder() ==
+                      Qt::AscendingOrder,
+              "N6: corrupt JSON -> default sort is pid ascending");
+        check(win.width() == default_size.width() &&
+                  win.height() == default_size.height(),
+              "N6: corrupt JSON -> default window size "
+              "(qMin(1000, availableWidth) x qMin(700, availableHeight))");
         action_of(win, "nav_settings_action")->trigger();
         pump_ms(50);
         QLabel* err = error_label_of(win);
@@ -460,8 +515,18 @@ void n6_corrupt_and_out_of_range(const QString& dir_path) {
     {
         WindowFixture f = make_window(out_of_range);
         MainWindow& win = *f.win;
+        auto* table = win.findChild<QTableView*>(QStringLiteral("process_table"));
         check(win.refresh_interval_ms() == 1000,
               "N6: out-of-range values -> safe default tier");
+        check(table && table->horizontalHeader()->sortIndicatorSection() ==
+                           ProcessTableModel::ColPid &&
+                  table->horizontalHeader()->sortIndicatorOrder() ==
+                      Qt::AscendingOrder,
+              "N6: out-of-range values -> default sort is pid ascending");
+        check(win.width() == default_size.width() &&
+                  win.height() == default_size.height(),
+              "N6: out-of-range values -> default window size "
+              "(qMin(1000, availableWidth) x qMin(700, availableHeight))");
         action_of(win, "nav_settings_action")->trigger();
         pump_ms(50);
         QLabel* err = error_label_of(win);
@@ -579,4 +644,3 @@ int main(int argc, char** argv) {
                                 : "navigation_settings_checks: FAILURES\n");
     return failures == 0 ? 0 : 1;
 }
-

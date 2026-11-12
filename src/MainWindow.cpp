@@ -715,6 +715,3 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 }
 
 } // namespace tmog
-
-
-

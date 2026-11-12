@@ -12,7 +12,7 @@
 | 项 | 变更 |
 | --- | --- |
 | 导航 | `MainWindow` 的 central widget 改为 `QStackedWidget`（`main_stack`）：`processes_page`（原表格页，启动默认）与 `settings_page`（真实四档刷新、窗口尺寸/排序偏好、设置错误区）。工具栏 `nav_processes_action`（Ctrl+1）与 `nav_settings_action`（Ctrl+2）互斥；切页不持久化 page id。 |
-| 安全操作合同 | 设置页禁用暂停/刷新/结束任务（`pause_action`/`refresh_action`/`end_task_action`），切页本身不触发任何操作；暂停状态跨页保持。 |
+| 安全操作合同 | 设置页禁用暂停/刷新/结束任务（`pause_action`/`refresh_action`/`end_task_action`），切页本身不触发任何操作（刷新不采样由 N2 计数断言；结束任务路径需选中目标并弹模态确认，切页不触发该路径为代码审查确认，未自动断言）；暂停状态跨页保持。 |
 | 刷新档位 | 新增公共 `set_refresh_interval(int)` / `refresh_interval_ms()`；仅 500/1000/2000/5000 合法，非法值回落 1000 并在状态栏给出非模态反馈；只调整同一个 `sample_timer`，不新建 worker。 |
 | 持久化 | 生产路径为 `QStandardPaths::AppConfigLocation` + `display-settings.json`（`main.cpp` 已设 organization/application 名 `TmogReplica`）；JSON 契约复用 `DisplaySettings`（`schema_version/width/height/refresh_ms/sort_column/sort_descending`）。加载损坏/越界/未知版本 → 整份安全默认 + 可见错误；保存经 `QSaveFile` 原子替换，失败给出错误且旧文件不变。 |
 | 测试 | 新增 `tests/navigation_settings_checks.cpp`（真实 `MainWindow` + fake 枚举器，全程 offscreen，使用临时设置文件）；`tests/stale_persistence_checks.cpp` 改为按 objectName 定位 `stale_label`/`pause_action`。 |
@@ -23,9 +23,9 @@
 ### AC1 — Processes 默认可用，鼠标和键盘导航、窗口缩放正常，切页不丢失已有安全操作合同
 
 - 自动检查（offscreen，真实 `MainWindow` + fake 枚举器）：`navigation_settings_checks`
-  - N1：启动后 `main_stack` 当前页为 `processes_page`；`process_table` 可见；四个刷新 radio 存在且 `refresh_1000` 默认选中。
-  - N2：`nav_processes_action`/`nav_settings_action` 的快捷键分别为 Ctrl+1/Ctrl+2；触发 action 与 `QTest::keyClick` 键序列均切换页面（无 Qt Test 时回退校验 shortcut 绑定 + action 触发）；设置页上暂停/刷新/结束任务三个 action 均为 disabled；切页不产生额外采样。
-  - 窗口缩放：N5 中 `resize(700, 520)` 后关闭并重启式构造，窗口尺寸恢复为 700×520；加载尺寸会按 `screen()->availableGeometry()` 夹取。
+  - N1：启动后 `main_stack` 当前页为 `processes_page`；`process_table` 存在且在其父页可见（`table->isVisibleTo(processes_page)`；断言不依赖顶层窗口的 `isVisible()` 映射）；四个刷新 radio 存在且 `refresh_1000` 默认选中。
+  - N2：`nav_processes_action`/`nav_settings_action` 的快捷键分别为 Ctrl+1/Ctrl+2；触发 action 与 `QTest::keyClick` 键序列均切换页面（无 Qt Test 时回退校验 shortcut 绑定 + action 触发）；设置页上暂停/刷新/结束任务三个 action 均为 disabled；切页不产生额外采样——先把档位设为 5000 ms，再在 action 与 Ctrl 键两条切页路径的前后比较 fake 枚举器采样计数不变，且 `refresh_interval_ms()` 保持 5000（断言消息「N2: page switch itself does not trigger sampling」）。
+  - 窗口缩放：N5 中 `resize(700, 520)` 后关闭并重启式构造，窗口尺寸恢复为 700×520；加载尺寸会按 `screen()->availableGeometry()` 夹取，N6 对默认尺寸 `qMin(1000, availableWidth)` × `qMin(700, availableHeight)` 做断言。
 - 命令与结果（Debug/Release 均执行）：
   - `ctest --test-dir build/issue17-debug -R navigation_settings_checks --output-on-failure` → Passed（10.77 s）
   - `ctest --test-dir build/issue17-release -R navigation_settings_checks --output-on-failure` → Passed（10.82 s）
@@ -44,7 +44,7 @@
 
 - 自动检查：
   - N5：设置 2000 ms、尺寸 700×520、按内存列降序，关闭窗口后直接读取 JSON 校验字段；再以同一路径重启式构造 `MainWindow`，断言档位/尺寸/排序均恢复。
-  - N6：写入损坏 JSON、`refresh_ms=1234`、`sort_column=bogus` 三种文件后构造窗口：均回落默认（1000 ms、pid 升序、默认尺寸），`settings_error_label` 可见且状态栏 `showMessage` 含「加载失败」。
+  - N6：用两个 fixture：`corrupt.json`（损坏 JSON）与 `out_of_range.json`（合法 JSON，但同时含非法 `refresh_ms=1234` 与 `sort_column=bogus`）后构造窗口：断言 `refresh_interval_ms()==1000`、`horizontalHeader()->sortIndicatorSection()==ProcessTableModel::ColPid` 且 `sortIndicatorOrder()==Qt::AscendingOrder`、窗口宽高为 `qMin(1000, availableWidth)` × `qMin(700, availableHeight)`（与实际 `apply_loaded_settings()` 的夹取逻辑一致）；`settings_error_label` 可见且状态栏 `showMessage` 含「加载失败」。
   - N7：只读设置文件写入失败 → `settings_error_label` 含「保存失败」，旧文件逐字节不变；设置路径父级为普通文件（无效目录，`mkpath` 失败）→ 同样给出错误反馈。
 - 命令与结果：同 AC1（Debug/Release 均 Passed）。
 - 限制：只读/无权限用文件属性模拟（未用 ACL 受限账户实测）；真实用户目录权限异常场景待人工验收。
@@ -58,7 +58,7 @@
 - 命令与结果：
   - Debug 全量：`ctest --test-dir build/issue17-debug --output-on-failure` → **11/11 passed，0 failed**（65.07 s）
   - Release 全量：`ctest --test-dir build/issue17-release --output-on-failure` → **11/11 passed，0 failed**（65.28 s）
-- 限制：关闭路径的 Windows 句柄/线程级资源审计依赖现有检查，未做额外 ETW/Process Explorer 实机核对。
+- 限制：关闭路径的 Windows 句柄/线程级资源审计依赖现有检查，未做额外 ETW/Process Explorer 实机核对。关闭瞬间（`closeEvent` 内 `save_preferences()` 失败）的错误反馈写入设置页 label 与 8 秒状态栏消息后窗口立即 `accept()` 关闭，当前实现中用户基本不可感知；非阻断，已记录（代码审查确认，未自动断言）。
 
 ## 构建与测试实测记录
 
@@ -118,4 +118,5 @@ ctest --test-dir build/issue17-release --output-on-failure
 - 人工键鼠/重启体验待用户验收：鼠标点击导航、Tab 焦点顺序、真实重启后的窗口位置/尺寸恢复需维护者实机确认。
 - 只读/无权限用文件属性模拟，未用受限 ACL 账户或系统策略实测。
 - 采样间隔的长时间稳定性、系统高负载下的 timer 抖动未做长时实测。
+- 关闭瞬间保存失败的反馈不可感知：`closeEvent` 中 `save_preferences()` 失败时只写设置页 label 与 8 秒状态栏消息，窗口随即 `accept()` 关闭；当前实现中用户基本看不到（非阻断，已记录；代码审查确认，未自动断言）。
 - 本次未运行原厂程序，无像素级对比诉求；不涉及网络/遥测/提权。
