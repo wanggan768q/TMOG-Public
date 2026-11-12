@@ -33,6 +33,12 @@
 //  - 有界握手：PeekNamedPipe 轮询（≤10ms），累积到换行最多 255 字节；
 //    总预算从准备启动前计时，握手 ≤5s 且 ≤ 剩余预算。
 //  - 统一失败收束：取消、关 stdin 写端 EOF、等自然退出 ≤10s、确认退出码。
+// W35 MSVC x64 兼容（最小修复）：windows.h 无条件定义 min/max 宏，会破坏本文件
+// 大量 std::min/std::max 调用（MSVC 报 C2589/C2059）。仅本翻译单元定义 NOMINMAX，
+// 不改全局编译参数、不影响 MinGW 行为。
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <shellapi.h>
 #include <algorithm>

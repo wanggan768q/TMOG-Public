@@ -8,7 +8,13 @@
 # - 重复路径/重复哈希行拒绝。
 # - "篡改清单加未知文件"不能通过：未知路径即使重写 MANIFEST 也无法自证合法
 #   （白名单独立于清单存在）。
-param([Parameter(Mandatory)][string]$PackageDir)
+param(
+    [Parameter(Mandatory)][string]$PackageDir,
+    # W35：按工具链 ABI 选择运行库/许可材料。auto 时按包内运行库 DLL 探测：
+    #   mingw = libgcc_s_seh-1.dll/libstdc++-6.dll/libwinpthread-1.dll 任一存在；
+    #   msvc  = vcruntime140*.dll/msvcp140*.dll 任一存在。
+    [ValidateSet('auto','mingw','msvc')][string]$Toolchain = 'auto'
+)
 $ErrorActionPreference = 'Stop'
 
 # ===== 读取前统一拒绝链接/重解析/非普通对象（计划 §4M2；材料恢复修复轮1 R-B）=====
@@ -60,6 +66,39 @@ $script:fail = 0
 function Fail([string]$m) { Write-Host "FAIL: $m"; $script:fail++ }
 function Pass([string]$m) { Write-Host "PASS: $m" }
 
+# ===== 工具链 ABI（W35：MinGW 与 MSVC 的必需运行库、许可证材料不同）=====
+# 说明：不是弱化既有断言——MinGW 路径（-Toolchain mingw/auto 探测为 mingw）仍要求
+# 原 MinGW 三件套与 28 个许可文件；MSVC 路径要求 MSVC 运行库与 24 个许可文件，
+# 并双向拒绝交叉 ABI 的 DLL 混入。
+$mingwRuntimeDlls = @('libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll')
+$msvcRuntimeCandidates = @('vcruntime140.dll', 'vcruntime140_1.dll', 'vcruntime140d.dll',
+                           'vcruntime140_1d.dll', 'msvcp140.dll', 'msvcp140d.dll')
+$hasMingwRuntime = $false
+foreach ($d in $mingwRuntimeDlls) { if (Test-Path (Join-Path $PackageDir $d)) { $hasMingwRuntime = $true } }
+$hasMsvcRuntime = $false
+foreach ($d in $msvcRuntimeCandidates) { if (Test-Path (Join-Path $PackageDir $d)) { $hasMsvcRuntime = $true } }
+$isMsvc = $false
+switch ($Toolchain) {
+    'mingw' { $isMsvc = $false }
+    'msvc'  { $isMsvc = $true }
+    default {
+        if ($hasMingwRuntime) { $isMsvc = $false }
+        elseif ($hasMsvcRuntime) { $isMsvc = $true }
+        else { Fail '无法判定工具链 ABI（包内既无 MinGW 三件套也无 MSVC 运行库）；请用 -Toolchain 明确指定' }
+    }
+}
+$abiName = if ($isMsvc) { 'msvc' } else { 'mingw' }
+Pass "工具链 ABI: $abiName（-Toolchain $Toolchain；MinGW 运行库=$hasMingwRuntime，MSVC 运行库=$hasMsvcRuntime）"
+if ($isMsvc) {
+    foreach ($d in $mingwRuntimeDlls) {
+        if (Test-Path (Join-Path $PackageDir $d)) { Fail "MSVC 包混入 MinGW 运行库: $d" }
+    }
+} else {
+    foreach ($d in $msvcRuntimeCandidates) {
+        if (Test-Path (Join-Path $PackageDir $d)) { Fail "MinGW 包混入 MSVC 运行库: $d" }
+    }
+}
+
 if (-not (Test-Path (Join-Path $PackageDir 'TmogReplica.exe'))) { Fail 'TmogReplica.exe 缺失' }
 foreach ($f in 'THIRD-PARTY-NOTICES.md', 'README-PACKAGE.md', 'MANIFEST.txt') {
     $p = Join-Path $PackageDir $f
@@ -67,20 +106,47 @@ foreach ($f in 'THIRD-PARTY-NOTICES.md', 'README-PACKAGE.md', 'MANIFEST.txt') {
 }
 if (-not (Test-Path (Join-Path $PackageDir 'licenses'))) { Fail 'licenses/ 缺失' }
 
-# 运行库齐备性（缺任何一个 = GUI 无法启动或崩溃）
-foreach ($dll in 'Qt6Core.dll','Qt6Gui.dll','Qt6Widgets.dll',
-                 'platforms/qwindows.dll',
-                 'libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll') {
-    if (Test-Path (Join-Path $PackageDir $dll)) { Pass "运行库齐备: $dll" } else { Fail "缺运行库: $dll" }
+# 运行库齐备性（缺任何一个 = GUI 无法启动或崩溃）；按 ABI 选择期望集合
+function Require-AnyDll([string[]]$Alternatives, [string]$Label) {
+    foreach ($r in $Alternatives) {
+        if (Test-Path (Join-Path $PackageDir $r)) { Pass "运行库齐备: $r"; return }
+    }
+    Fail ("缺运行库: {0}（期望其一: {1}）" -f $Label, ($Alternatives -join ' / '))
+}
+if ($isMsvc) {
+    Require-AnyDll @('Qt6Core.dll','Qt6Cored.dll') 'Qt6Core'
+    Require-AnyDll @('Qt6Gui.dll','Qt6Guid.dll') 'Qt6Gui'
+    Require-AnyDll @('Qt6Widgets.dll','Qt6Widgetsd.dll') 'Qt6Widgets'
+    Require-AnyDll @('platforms/qwindows.dll') 'platforms/qwindows.dll'
+    Require-AnyDll @('vcruntime140.dll','vcruntime140d.dll') 'vcruntime140（MSVC C 运行库）'
+    Require-AnyDll @('vcruntime140_1.dll','vcruntime140_1d.dll') 'vcruntime140_1（MSVC C 运行库扩展）'
+    Require-AnyDll @('msvcp140.dll','msvcp140d.dll') 'msvcp140（MSVC C++ 运行库）'
+} else {
+    foreach ($dll in 'Qt6Core.dll','Qt6Gui.dll','Qt6Widgets.dll',
+                     'platforms/qwindows.dll',
+                     'libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll') {
+        if (Test-Path (Join-Path $PackageDir $dll)) { Pass "运行库齐备: $dll" } else { Fail "缺运行库: $dll" }
+    }
 }
 
 # 必备许可证文件齐备性（缺任一 = 法律材料不完整；计划 §1.3/§4）
-foreach ($lic in 'licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
-                 'licenses/gcc-COPYING3.txt','licenses/gcc-COPYING.RUNTIME.txt',
-                 'licenses/winpthreads-COPYING.txt',
-                 'licenses/mingw-w64-runtime-COPYING.txt') {
-    $p = Join-Path $PackageDir $lic
-    if ((Test-Path $p) -and ((Get-Item $p).Length -gt 0)) { Pass "许可齐备: $lic" } else { Fail "缺许可文件: $lic" }
+# MSVC 包不随附 GCC/MinGW 许可，改为要求 Qt 许可 + 包根 MSVC 运行库说明。
+if ($isMsvc) {
+    foreach ($lic in 'licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt','licenses/DirectXShaderCompiler-license.txt') {
+        $p = Join-Path $PackageDir $lic
+        if ((Test-Path $p) -and ((Get-Item $p).Length -gt 0)) { Pass "许可齐备: $lic" } else { Fail "缺许可文件: $lic" }
+    }
+    $notice = Join-Path $PackageDir 'MSVC-RUNTIME-NOTICE.md'
+    if ((Test-Path $notice) -and ((Get-Item $notice).Length -gt 0)) { Pass 'MSVC 运行库说明在包内: MSVC-RUNTIME-NOTICE.md' }
+    else { Fail '缺 MSVC 运行库说明: MSVC-RUNTIME-NOTICE.md' }
+} else {
+    foreach ($lic in 'licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
+                     'licenses/gcc-COPYING3.txt','licenses/gcc-COPYING.RUNTIME.txt',
+                     'licenses/winpthreads-COPYING.txt',
+                     'licenses/mingw-w64-runtime-COPYING.txt') {
+        $p = Join-Path $PackageDir $lic
+        if ((Test-Path $p) -and ((Get-Item $p).Length -gt 0)) { Pass "许可齐备: $lic" } else { Fail "缺许可文件: $lic" }
+    }
 }
 
 # 内嵌第三方组件许可全文（Qt 6.12.0 SBOM 内嵌 11 组件；材料轴 attempt=3 补齐）
@@ -107,7 +173,13 @@ foreach ($lic in $bundledLicenseFiles) {
 # 清单缺失/不可解析/文件与清单双向不一致 = 来源材料失真（N17/N18/N19 覆盖）。
 # 材料恢复计划 §4M2：固定 28 允许路径集合独立于清单存在（整体改写清单不能引入
 # 清单外路径）；路径安全校验在包内读取/复制前进行；components 与 files 一致。
-$allowedLicensePaths = @(
+# 固定允许路径集合（独立于清单存在；按 ABI 分支）：
+#   mingw = 28 项（22 内嵌 + Qt 2 + GCC/MinGW 工具链 4）
+#   msvc  = 25 项（22 内嵌 + Qt 2 + DirectXShaderCompiler 1；MSVC 运行库说明不入 licenses/，
+#           避免未声明许可材料）
+$msvcLicensePaths = @('licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
+                      'licenses/DirectXShaderCompiler-license.txt') + $bundledLicenseFiles
+$mingwLicensePaths = @(
     'licenses/Qt-COPYING.txt','licenses/Qt-LICENSE.txt',
     'licenses/double-conversion-LICENSE.txt',
     'licenses/freetype-BDF-LICENSE.txt','licenses/freetype-FTL.txt',
@@ -126,6 +198,8 @@ $allowedLicensePaths = @(
     'licenses/wintab-Lcs-Telegraphics-LICENSE.txt','licenses/wintab-pktdef.h',
     'licenses/wintab-wintab.h','licenses/zlib-LICENSE.txt'
 )
+$allowedLicensePaths = if ($isMsvc) { $msvcLicensePaths } else { $mingwLicensePaths }
+$expectedSourceCount = if ($isMsvc) { 25 } else { 28 }
 $allowedSet = @{}
 foreach ($a in $allowedLicensePaths) { $allowedSet[$a.ToLower()] = $true }
 $sourcesPath = Join-Path $PackageDir 'license-sources.json'
@@ -136,7 +210,7 @@ if ((-not (Test-Path $sourcesPath)) -or ((Get-Item $sourcesPath).Length -eq 0)) 
     try {
         $sources = Get-Content $sourcesPath -Raw | ConvertFrom-Json
         if (-not $sources.files -or $sources.files.Count -eq 0) { throw 'files 数组为空' }
-        if ($sources.files.Count -ne 28) { throw ("files 必须 28 项，实际 {0}" -f $sources.files.Count) }
+        if ($sources.files.Count -ne $expectedSourceCount) { throw ("files 必须 {0} 项（ABI={1}），实际 {2}" -f $expectedSourceCount, $abiName, $sources.files.Count) }
         if (-not $sources.components -or $sources.components.Count -eq 0) { throw 'components 数组缺失或为空' }
         $declaredLicenseFiles = @{}
         foreach ($e in $sources.files) {
@@ -212,19 +286,37 @@ $whitelist = @(
     'THIRD-PARTY-NOTICES.md',
     'license-sources.json',
     'Qt6Core.dll','Qt6Gui.dll','Qt6Widgets.dll','Qt6Network.dll','Qt6Svg.dll',
-    'libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll',
     'platforms/qwindows.dll',
     'generic/qtuiotouchplugin.dll',
     'iconengines/qsvgicon.dll',
     'imageformats/qgif.dll','imageformats/qico.dll','imageformats/qjpeg.dll','imageformats/qsvg.dll',
     'networkinformation/qnetworklistmanager.dll',
     'styles/qmodernwindowsstyle.dll',
-    'tls/qcertonlybackend.dll','tls/qschannelbackend.dll',
-    'licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
-    'licenses/gcc-COPYING3.txt','licenses/gcc-COPYING.RUNTIME.txt',
-    'licenses/winpthreads-COPYING.txt',
-    'licenses/mingw-w64-runtime-COPYING.txt'
+    'tls/qcertonlybackend.dll','tls/qschannelbackend.dll'
 )
+if ($isMsvc) {
+    # windeployqt 从 Windows SDK 复制的 DXC 运行时（DirectX Shader Compiler）仅在 MSVC kit 下部署；
+    # 许可与来源见 THIRD-PARTY-NOTICES-MSVC.md 与 licenses/DirectXShaderCompiler-license.txt。
+    $whitelist += @('dxcompiler.dll','dxil.dll')
+    # MSVC 运行库（Release/Debug 变体均允许出现，必需集合由上方 Require-AnyDll 断言；
+    # vcruntime140_threads / msvcp140_1 / msvcp140_2 / msvcp140_atomic_wait / msvcp140_codecvt_ids
+    # 由 app-local 部署的 import 闭包决定是否出现）
+    $whitelist += @('vcruntime140.dll','vcruntime140_1.dll','vcruntime140d.dll',
+                    'vcruntime140_1d.dll','vcruntime140_threads.dll',
+                    'msvcp140.dll','msvcp140d.dll','msvcp140_1.dll','msvcp140_2.dll',
+                    'msvcp140_atomic_wait.dll','msvcp140_codecvt_ids.dll',
+                    'concrt140.dll','concrt140d.dll','MSVC-RUNTIME-NOTICE.md')
+    # Debug 版 Qt 运行库（windeployqt --debug 时）
+    $whitelist += @('Qt6Cored.dll','Qt6Guid.dll','Qt6Widgetsd.dll','Qt6Networkd.dll','Qt6Svgd.dll')
+    $whitelist += @('licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
+                    'licenses/DirectXShaderCompiler-license.txt')
+} else {
+    $whitelist += @('libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll')
+    $whitelist += @('licenses/Qt-LICENSE.txt','licenses/Qt-COPYING.txt',
+                    'licenses/gcc-COPYING3.txt','licenses/gcc-COPYING.RUNTIME.txt',
+                    'licenses/winpthreads-COPYING.txt',
+                    'licenses/mingw-w64-runtime-COPYING.txt')
+}
 # 内嵌第三方许可文件并入白名单（与上方 $bundledLicenseFiles 同一清单对象）
 $whitelist += $bundledLicenseFiles
 $whitelistSet = @{}
