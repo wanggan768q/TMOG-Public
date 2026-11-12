@@ -1,7 +1,5 @@
 #include "PerformancePage.h"
 
-#include "SystemMetricsSampler.h"
-
 #include <QFont>
 #include <QFrame>
 #include <QGroupBox>

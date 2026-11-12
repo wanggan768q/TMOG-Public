@@ -4,11 +4,12 @@
 #include <cstddef>
 #include <deque>
 
+#include "SystemMetricsSampler.h"
+
 class QLabel;
 
 namespace tmog {
 
-struct SystemSample;
 class SystemHistoryChart;
 
 // 整机 CPU／内存实时性能页（#19）。
