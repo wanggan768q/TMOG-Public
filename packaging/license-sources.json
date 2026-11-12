@@ -1,0 +1,429 @@
+{
+  "schema": "issue6-license-sources v1",
+  "provenance": {
+    "archive": "qtbase-everywhere-src-6.12.0.tar.xz",
+    "official_url": "https://download.qt.io/official_releases/qt/6.12/6.12.0/submodules/qtbase-everywhere-src-6.12.0.tar.xz",
+    "official_sha256_published": "a951bd163c7b80fc6b8c88d7668fb56abf91c152373e13c10666763238131307",
+    "official_sha256_file_url": "https://download.qt.io/official_releases/qt/6.12/6.12.0/submodules/qtbase-everywhere-src-6.12.0.tar.xz.sha256",
+    "local_sha256_verified": "a951bd163c7b80fc6b8c88d7668fb56abf91c152373e13c10666763238131307",
+    "verification_note": "本地实测 SHA-256 与官方 .sha256 文件一致；未取得 Qt 官方 GPG/签名元数据（该发布点未提供逐文件签名文件，unknown 不虚称已认证）。",
+    "extraction": "静态提取 src/3rdparty/ 与 LICENSES/ 内选定许可/版权文本成员；字节级复制，未修改任何文本。",
+    "license_declaration_status": "SBOM 各内嵌组件 licenseDeclared=NOASSERTION；本清单“license_ids”列为 Attribution 记录与 tarball 内随附许可文本的对应关系，非上游或 Qt 的法律判定。"
+  },
+  "components": [
+    {
+      "component": "zlib",
+      "version": "1.3.2",
+      "embedded_in": "Qt6Core/Qt6Gui",
+      "license_ids": [
+        "Zlib"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/zlib-LICENSE.txt",
+          "source_member": "src/3rdparty/zlib/LICENSE",
+          "sha256": "d7e3139972874dc8abdbbfce27ec1e6f942b28279dd7d27453630a8b4610e080"
+        }
+      ],
+      "upstream_download": "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz"
+    },
+    {
+      "component": "libpng",
+      "version": "1.6.58",
+      "embedded_in": "Qt6Gui",
+      "license_ids": [
+        "Libpng",
+        "libpng-2.0"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/libpng-LICENSE.txt",
+          "source_member": "src/3rdparty/libpng/LICENSE",
+          "sha256": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526"
+        },
+        {
+          "file": "licenses/libpng-libpng-2.0-LICENSE.txt",
+          "source_member": "LICENSES/libpng-2.0.txt",
+          "sha256": "7317e078e2d3b5d7ba5a6159e650945153262b44b76f6700f8e9edb261c5143e"
+        }
+      ],
+      "upstream_download": "https://download.sourceforge.net/libpng/libpng-1.6.58.tar.xz",
+      "notes": "src/3rdparty/libpng/LICENSE 内容即 PNG Reference Library License version 2；LICENSES/Libpng.txt 为 Qt 仓库随附的 libpng-1.x 许可副本（本清单如实并列，供逐项核对）。"
+    },
+    {
+      "component": "libjpeg-turbo (IJG)",
+      "version": "3.2.0",
+      "embedded_in": "Qt6Gui (qjpeg 插件)",
+      "license_ids": [
+        "IJG",
+        "BSD-3-Clause"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/libjpeg-turbo-LICENSE.txt",
+          "source_member": "src/3rdparty/libjpeg/LICENSE",
+          "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579"
+        },
+        {
+          "file": "licenses/libjpeg-turbo-ijg-license.txt",
+          "source_member": "src/3rdparty/libjpeg/ijg-license.txt",
+          "sha256": "1cb448f5e2e6d3aca60943f4eee1a04675628dc0266a074a42bc1560ebc28d61"
+        },
+        {
+          "file": "licenses/libjpeg-turbo-COPYRIGHT.txt",
+          "source_member": "src/3rdparty/libjpeg/COPYRIGHT.txt",
+          "sha256": "e5b349c6a98d997a8d0f5fcfe5cc900b1f76bbc32743674c52a70981498748c0"
+        }
+      ],
+      "upstream_download": "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz"
+    },
+    {
+      "component": "PCRE2",
+      "version": "10.48",
+      "embedded_in": "Qt6Core (QRegularExpression)",
+      "license_ids": [
+        "BSD-3-Clause",
+        "LicenseRef-BSD-3-Clause-with-PCRE2-Binary-Like-Packages-Exception"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/pcre2-LICENCE.md",
+          "source_member": "src/3rdparty/pcre2/LICENCE.md",
+          "sha256": "197d8a73ffee0d6b09adba2f9c677b5f5aede24edf89258a68e48248d010d811"
+        },
+        {
+          "file": "licenses/pcre2-LICENSE-SLJIT.txt",
+          "source_member": "src/3rdparty/pcre2/LICENSE-SLJIT",
+          "sha256": "5f216505c0f6ea3273caec89e766eef93cdeb7bbb0c429f9360116d7c938feeb"
+        },
+        {
+          "file": "licenses/pcre2-BSD-3-Clause-PCRE2-exception.txt",
+          "source_member": "LICENSES/LicenseRef-BSD-3-Clause-with-PCRE2-Binary-Like-Packages-Exception.txt",
+          "sha256": "0526625fcc746a42d3f19a0ab357d3dc8479fdbe3bfd168825498f50215c7a63"
+        }
+      ],
+      "upstream_download": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.48/pcre2-10.48.tar.bz2"
+    },
+    {
+      "component": "Freetype",
+      "version": "2.14.3",
+      "embedded_in": "Qt6Gui",
+      "license_ids": [
+        "FTL",
+        "GPL-2.0-only",
+        "Zlib (freetype 内嵌副本)",
+        "BDF/PCF 附加条款"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/freetype-LICENSE.txt",
+          "source_member": "src/3rdparty/freetype/LICENSE.txt",
+          "sha256": "bf543cdda11864477b8d2ca2aa9afc2aaa8f9133461b4d962ed6ec73646256a1"
+        },
+        {
+          "file": "licenses/freetype-FTL.txt",
+          "source_member": "LICENSES/FTL.txt",
+          "sha256": "08c135755dd589039470f1fdbb400daaabaaa50d0b366d19cebff4d22986baa1"
+        },
+        {
+          "file": "licenses/freetype-GPL-2.0-only.txt",
+          "source_member": "LICENSES/GPL-2.0-only.txt",
+          "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+        },
+        {
+          "file": "licenses/freetype-ZLIB-LICENSE.txt",
+          "source_member": "src/3rdparty/freetype/ZLIB-LICENSE.txt",
+          "sha256": "2b1f5d615382a151af3eb71462ad17d89e2efee8fa7664058d35d3d9237ebb19"
+        },
+        {
+          "file": "licenses/freetype-BDF-LICENSE.txt",
+          "source_member": "src/3rdparty/freetype/BDF-LICENSE.txt",
+          "sha256": "e4e792f29e66750f2e410fd7b50a567652c180f6ee15e1a4dfa0bb5cde524537"
+        },
+        {
+          "file": "licenses/freetype-PCF-LICENSE.txt",
+          "source_member": "src/3rdparty/freetype/PCF-LICENSE.txt",
+          "sha256": "6938597bfdeca0db191a8f9ede52eaf2482c2c71a0094c084747a1235f9958fe"
+        }
+      ],
+      "upstream_download": "https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.gz",
+      "notes": "SBOM 的 licenseDeclared=NOASSERTION；FTL/GPL-2.0 双许可选项由分发者选定，本清单不代法律判定。"
+    },
+    {
+      "component": "HarfBuzz",
+      "version": "14.5.0",
+      "embedded_in": "Qt6Gui",
+      "license_ids": [
+        "MIT (Old MIT)"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/harfbuzz-COPYING.txt",
+          "source_member": "src/3rdparty/harfbuzz-ng/COPYING",
+          "sha256": "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64"
+        }
+      ],
+      "upstream_download": "https://github.com/harfbuzz/harfbuzz/releases/tag/14.5.0"
+    },
+    {
+      "component": "Unicode Character Database (UCD)",
+      "version": "36",
+      "embedded_in": "Qt6Core (qunicodetables)",
+      "license_ids": [
+        "Unicode-3.0"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/unicode-Unicode-3.0.txt",
+          "source_member": "LICENSES/Unicode-3.0.txt",
+          "sha256": "80bb6294022d8764adb36a9d65ebb6bd94efb1865918a71e31e6c247607d7634"
+        }
+      ],
+      "upstream_download": "https://www.unicode.org/ucd/"
+    },
+    {
+      "component": "Unicode CLDR",
+      "version": "v48.2",
+      "embedded_in": "Qt6Core (QLocale/QTimeZone 数据)",
+      "license_ids": [
+        "Unicode-3.0"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/unicode-Unicode-3.0.txt",
+          "shared_with": "ucd",
+          "source_member": "LICENSES/Unicode-3.0.txt",
+          "sha256": "80bb6294022d8764adb36a9d65ebb6bd94efb1865918a71e31e6c247607d7634"
+        }
+      ],
+      "upstream_download": "https://cldr.unicode.org/",
+      "notes": "UCD 与 CLDR 均为 Unicode-3.0，同一许可文本文件共享。"
+    },
+    {
+      "component": "double-conversion",
+      "version": "3.4.0",
+      "embedded_in": "Qt6Core",
+      "license_ids": [
+        "BSD-3-Clause"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/double-conversion-LICENSE.txt",
+          "source_member": "src/3rdparty/double-conversion/LICENSE",
+          "sha256": "4af93c12062c58058378de2397dc1c92bbff9ddfb1d583a01c84127557ce97ca"
+        }
+      ],
+      "upstream_download": "https://github.com/google/double-conversion（版本经 qtbase src/3rdparty/double-conversion/qt_attribution.json 记录为 3.4.0）"
+    },
+    {
+      "component": "tinycbor",
+      "version": "7.0",
+      "embedded_in": "Qt6Core",
+      "license_ids": [
+        "MIT"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/tinycbor-LICENSE.txt",
+          "source_member": "src/3rdparty/tinycbor/LICENSE",
+          "sha256": "3c6ba0b5bfa7830505301ffb336a17b0748e0d61c4d34216e9dc98f10e40395e"
+        }
+      ],
+      "upstream_download": "https://github.com/intel/tinycbor/archive/v7.0/tinycbor-7.0.tar.gz"
+    },
+    {
+      "component": "wintab",
+      "version": "unknown（SBOM 未记版本）",
+      "embedded_in": "platforms/qwindows.dll",
+      "license_ids": [
+        "LicenseRef-Lcs-Telegraphics"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/wintab-Lcs-Telegraphics-LICENSE.txt",
+          "source_member": "LICENSES/LicenseRef-Lcs-Telegraphics.txt",
+          "sha256": "c10225ebbd5191bfdd761b0d7752c785f2453ab665d6c454473fb12d254668aa"
+        },
+        {
+          "file": "licenses/wintab-wintab.h",
+          "source_member": "src/3rdparty/wintab/wintab.h",
+          "sha256": "27a8d66f8c9db27e7de52b233e3d13ee5b8cf92bed800f21491fdd229a31c0da",
+          "purpose": "原始头文件内含 LCS/Telegraphics 许可与版权声明原文（逐字节保留，不删通知）"
+        },
+        {
+          "file": "licenses/wintab-pktdef.h",
+          "source_member": "src/3rdparty/wintab/pktdef.h",
+          "sha256": "11f53ac5568c0efcf06e1aaa18e9ac16cfe1b51060d063762c8ba809bbb894df",
+          "purpose": "同上头文件（.h 非 .txt，check 白名单按声明文件名精确匹配）"
+        }
+      ],
+      "upstream_download": "NOASSERTION（qt_attribution.json 记录上游 http://www.pointing.com/Wintab.html 已停止更新）"
+    },
+    {
+      "component": "Qt 6.12.0 本体与 GCC 13.1.0 运行库许可（工具链随附文本，非 11 内嵌组件）",
+      "version": "Qt 6.12.0 / GCC 13.1.0",
+      "embedded_in": "包内 Qt6*.dll、libgcc_s_seh-1.dll、libstdc++-6.dll、libwinpthread-1.dll",
+      "license_ids": [
+        "LGPL-3.0-only",
+        "GPL-3.0-only + GCC Runtime Library Exception",
+        "MIT (winpthreads)",
+        "mingw-w64 runtime 汇总"
+      ],
+      "license_files": [
+        {
+          "file": "licenses/Qt-LICENSE.txt",
+          "source_member": "local Qt installer / MinGW toolchain (see note)",
+          "sha256": "2004ee3ef8282a85f7dbd035dfacf63cf03d569537bc08655ffeb140ea3671c5",
+          "note": "Qt 官方安装器 Licenses/LICENSE（LGPLv3 等多许可），本机合法源原样复制"
+        },
+        {
+          "file": "licenses/Qt-COPYING.txt",
+          "source_member": "local Qt installer / MinGW toolchain (see note)",
+          "sha256": "eb7e9ab9690124c5c9f42bdc81383d886a3dede26345b6ed15bbad7caf81f7ea",
+          "note": "Qt 官方安装器 Licenses/COPYING.txt（Apache License 2.0 全文），本机合法源原样复制",
+          "purpose": "官方随附材料：该文本为 Apache-2.0，不含 GPL/LGPL/例外内容；不作为本包 Qt 运行库的分发许可依据（该依据为 licenses/Qt-LICENSE.txt 的 LGPLv3/GPLv3 多许可）。因其不对应包内任何组件，未列入本组件 license_ids"
+        },
+        {
+          "file": "licenses/gcc-COPYING3.txt",
+          "source_member": "local Qt installer / MinGW toolchain (see note)",
+          "sha256": "0b383d5a63da644f628d99c33976ea6487ed89aaa59f0b3257992deac1171e6b",
+          "note": "MinGW 工具链 licenses/gcc/COPYING3（GPLv3 全文），本机合法源原样复制"
+        },
+        {
+          "file": "licenses/gcc-COPYING.RUNTIME.txt",
+          "source_member": "local Qt installer / MinGW toolchain (see note)",
+          "sha256": "90077ba306ee9d8ed966cab1b4abd69b6e728acf08777283cc50283cd9503fa6",
+          "note": "MinGW 工具链 licenses/gcc/COPYING.RUNTIME（GCC 运行库例外），本机合法源原样复制"
+        },
+        {
+          "file": "licenses/winpthreads-COPYING.txt",
+          "source_member": "local Qt installer / MinGW toolchain (see note)",
+          "sha256": "1c8d23063c3772b9435831410b31b51fef3d9cf2138a442dc367ef5d72239f67",
+          "note": "MinGW 工具链 licenses/winpthreads/COPYING，本机合法源原样复制"
+        },
+        {
+          "file": "licenses/mingw-w64-runtime-COPYING.txt",
+          "source_member": "local Qt installer / MinGW toolchain (see note)",
+          "sha256": "e7a33fd8d164abd188ee629bbe3b07912419b29192a6bbfdce29de0ad4f0e7fb",
+          "note": "MinGW 工具链 licenses/mingw-w64/COPYING.MinGW-w64-runtime.txt，本机合法源原样复制"
+        }
+      ],
+      "upstream_download": "https://download.qt.io/official_releases/qt/6.12/6.12.0/ ; https://gcc.gnu.org/pub/gcc/releases/gcc-13.1.0/",
+      "notes": "这 6 个文件源自本机 Qt 官方安装器/MinGW 工具链（attempt=2 已核与随附源逐字节一致），列入本清单以满足来源清单与包内许可文件双向闭环。其中 licenses/Qt-COPYING.txt 实为 Apache License 2.0（R-6 审查阻断项 B1 已更正描述），属官方随附材料而非本包分发许可依据，故不进入 license_ids；包内 Qt/GCC 组件的许可依据为 Qt-LICENSE.txt（LGPLv3/GPLv3）、gcc-COPYING3/COPYING.RUNTIME（GPLv3 + 例外）、winpthreads-COPYING（MIT 式）与 mingw-w64-runtime-COPYING（汇总）。"
+    }
+  ],
+  "files": [
+    {
+      "file": "licenses/Qt-COPYING.txt",
+      "sha256": "eb7e9ab9690124c5c9f42bdc81383d886a3dede26345b6ed15bbad7caf81f7ea"
+    },
+    {
+      "file": "licenses/Qt-LICENSE.txt",
+      "sha256": "2004ee3ef8282a85f7dbd035dfacf63cf03d569537bc08655ffeb140ea3671c5"
+    },
+    {
+      "file": "licenses/double-conversion-LICENSE.txt",
+      "sha256": "4af93c12062c58058378de2397dc1c92bbff9ddfb1d583a01c84127557ce97ca"
+    },
+    {
+      "file": "licenses/freetype-BDF-LICENSE.txt",
+      "sha256": "e4e792f29e66750f2e410fd7b50a567652c180f6ee15e1a4dfa0bb5cde524537"
+    },
+    {
+      "file": "licenses/freetype-FTL.txt",
+      "sha256": "08c135755dd589039470f1fdbb400daaabaaa50d0b366d19cebff4d22986baa1"
+    },
+    {
+      "file": "licenses/freetype-GPL-2.0-only.txt",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+    },
+    {
+      "file": "licenses/freetype-LICENSE.txt",
+      "sha256": "bf543cdda11864477b8d2ca2aa9afc2aaa8f9133461b4d962ed6ec73646256a1"
+    },
+    {
+      "file": "licenses/freetype-PCF-LICENSE.txt",
+      "sha256": "6938597bfdeca0db191a8f9ede52eaf2482c2c71a0094c084747a1235f9958fe"
+    },
+    {
+      "file": "licenses/freetype-ZLIB-LICENSE.txt",
+      "sha256": "2b1f5d615382a151af3eb71462ad17d89e2efee8fa7664058d35d3d9237ebb19"
+    },
+    {
+      "file": "licenses/gcc-COPYING.RUNTIME.txt",
+      "sha256": "90077ba306ee9d8ed966cab1b4abd69b6e728acf08777283cc50283cd9503fa6"
+    },
+    {
+      "file": "licenses/gcc-COPYING3.txt",
+      "sha256": "0b383d5a63da644f628d99c33976ea6487ed89aaa59f0b3257992deac1171e6b"
+    },
+    {
+      "file": "licenses/harfbuzz-COPYING.txt",
+      "sha256": "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64"
+    },
+    {
+      "file": "licenses/libjpeg-turbo-COPYRIGHT.txt",
+      "sha256": "e5b349c6a98d997a8d0f5fcfe5cc900b1f76bbc32743674c52a70981498748c0"
+    },
+    {
+      "file": "licenses/libjpeg-turbo-LICENSE.txt",
+      "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579"
+    },
+    {
+      "file": "licenses/libjpeg-turbo-ijg-license.txt",
+      "sha256": "1cb448f5e2e6d3aca60943f4eee1a04675628dc0266a074a42bc1560ebc28d61"
+    },
+    {
+      "file": "licenses/libpng-LICENSE.txt",
+      "sha256": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526"
+    },
+    {
+      "file": "licenses/libpng-libpng-2.0-LICENSE.txt",
+      "sha256": "7317e078e2d3b5d7ba5a6159e650945153262b44b76f6700f8e9edb261c5143e"
+    },
+    {
+      "file": "licenses/mingw-w64-runtime-COPYING.txt",
+      "sha256": "e7a33fd8d164abd188ee629bbe3b07912419b29192a6bbfdce29de0ad4f0e7fb"
+    },
+    {
+      "file": "licenses/pcre2-BSD-3-Clause-PCRE2-exception.txt",
+      "sha256": "0526625fcc746a42d3f19a0ab357d3dc8479fdbe3bfd168825498f50215c7a63"
+    },
+    {
+      "file": "licenses/pcre2-LICENCE.md",
+      "sha256": "197d8a73ffee0d6b09adba2f9c677b5f5aede24edf89258a68e48248d010d811"
+    },
+    {
+      "file": "licenses/pcre2-LICENSE-SLJIT.txt",
+      "sha256": "5f216505c0f6ea3273caec89e766eef93cdeb7bbb0c429f9360116d7c938feeb"
+    },
+    {
+      "file": "licenses/tinycbor-LICENSE.txt",
+      "sha256": "3c6ba0b5bfa7830505301ffb336a17b0748e0d61c4d34216e9dc98f10e40395e"
+    },
+    {
+      "file": "licenses/unicode-Unicode-3.0.txt",
+      "sha256": "80bb6294022d8764adb36a9d65ebb6bd94efb1865918a71e31e6c247607d7634"
+    },
+    {
+      "file": "licenses/winpthreads-COPYING.txt",
+      "sha256": "1c8d23063c3772b9435831410b31b51fef3d9cf2138a442dc367ef5d72239f67"
+    },
+    {
+      "file": "licenses/wintab-Lcs-Telegraphics-LICENSE.txt",
+      "sha256": "c10225ebbd5191bfdd761b0d7752c785f2453ab665d6c454473fb12d254668aa"
+    },
+    {
+      "file": "licenses/wintab-pktdef.h",
+      "sha256": "11f53ac5568c0efcf06e1aaa18e9ac16cfe1b51060d063762c8ba809bbb894df"
+    },
+    {
+      "file": "licenses/wintab-wintab.h",
+      "sha256": "27a8d66f8c9db27e7de52b233e3d13ee5b8cf92bed800f21491fdd229a31c0da"
+    },
+    {
+      "file": "licenses/zlib-LICENSE.txt",
+      "sha256": "d7e3139972874dc8abdbbfce27ec1e6f942b28279dd7d27453630a8b4610e080"
+    }
+  ]
+}
