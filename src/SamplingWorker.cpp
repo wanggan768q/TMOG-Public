@@ -10,8 +10,11 @@ class SamplingWorker::Bridge : public QObject {
     Q_OBJECT
 public:
     IProcessEnumerator* enumerator = nullptr;
+    ISystemMetricsSource* system = nullptr;
 public slots:
     void run() {
+        // #19：先读整机（一次系统 API 调用），再枚举进程；两者互不影响。
+        if (system != nullptr) emit system_reading(system->read());
         auto result = enumerator->take_sample();
         // #16：结果存在与成功标志分别检查——ok=false 的 API 失败快照
         // 不再被当成功投递（不进入成功差分、不污染基线）。
@@ -22,6 +25,7 @@ public slots:
                                : std::string("take_sample returned no result"));
     }
 signals:
+    void system_reading(SystemReading reading);
     void done(SampleResult result);
     void failed(const std::string& error);
 };
@@ -33,12 +37,26 @@ SamplingWorker::~SamplingWorker() {
 }
 
 void SamplingWorker::start(QObject* owner, IProcessEnumerator* enumerator,
-                           DoneFn on_done, FailedFn on_failed) {
+                           DoneFn on_done, FailedFn on_failed,
+                           ISystemMetricsSource* system_source,
+                           SystemReadingFn on_system) {
     if (in_flight_ || closing_) return;   // 至多一个在途；关闭中不接受新采样
     auto* bridge = new Bridge();
     bridge->enumerator = enumerator;
+    bridge->system = system_source;
     auto* thread = new QThread(/*无 parent：生命周期由本类显式管理*/);
     in_flight_ = thread;
+
+    // #19：整机读数与进程结果均跨线程 → 队列连接回 owner；同一 Bridge 的
+    // 信号在 owner 线程按发射顺序投递（整机先于进程）。closing_ 时丢弃。
+    if (system_source != nullptr && on_system) {
+        QObject::connect(bridge, &Bridge::system_reading, owner,
+                [this, on_system = std::move(on_system)](SystemReading reading) {
+                    if (closing_) return;
+                    on_system(reading);
+                },
+                Qt::QueuedConnection);
+    }
 
     // 结果跨线程 → 队列连接回 owner 线程；closing_ 时回调直接丢弃，
     // 队列迟到回调不访问已销毁资源（owner 保证连接上下文存活到此处执行）。

@@ -18,6 +18,9 @@ endif()
 add_library(tmog_core STATIC
     src/ProcessSnapshot.cpp
     src/ProcessSampler.cpp
+    # #19：整机 CPU／物理内存采集（独立系统 API）与有界历史采样器（纯计算）
+    src/SystemMetrics.cpp
+    src/SystemMetricsSampler.cpp
 )
 target_include_directories(tmog_core PUBLIC src)
 
@@ -29,7 +32,9 @@ endif()
 
 if(WIN32)
     target_sources(tmog_core PRIVATE src/platform/WindowsProcesses.cpp
-                                     src/platform/WindowsProcessOps.cpp)
+                                     src/platform/WindowsProcessOps.cpp
+                                     # #19：GetSystemTimes / GlobalMemoryStatusEx
+                                     src/platform/WindowsSystemMetrics.cpp)
 elseif(APPLE)
     target_sources(tmog_core PRIVATE src/platform/MacProcesses.cpp)
 elseif(UNIX)
@@ -41,6 +46,13 @@ enable_testing()
 add_executable(process_checks tests/process_checks.cpp)
 target_link_libraries(process_checks PRIVATE tmog_core)
 add_test(NAME process_checks COMMAND process_checks)
+
+# #19 整机采样器纯计算检查（无 Qt/平台依赖）：首样本待采样、时间差百分比、
+# 有效空闲 0.0%、计数器回退/读取失败缺样、内存口径与不可用、历史 5 分钟窗口
+# 与 600 样本上限、格式化单位。
+add_executable(system_metrics_sampler_checks tests/system_metrics_sampler_checks.cpp)
+target_link_libraries(system_metrics_sampler_checks PRIVATE tmog_core)
+add_test(NAME system_metrics_sampler_checks COMMAND system_metrics_sampler_checks)
 
 # 17S 设置检查：复用既有 tests/settings/settings_checks.cpp（不复制实现），
 # 同源编入 DisplaySettings.cpp；显式传 test root（build 目录）供临时目录
@@ -102,6 +114,7 @@ if(TARGET Qt6::Widgets)
         src/MainWindow.cpp
         src/ProcessTableModel.cpp
         src/DisplaySettings.cpp
+        src/PerformancePage.cpp
     )
     target_link_libraries(TmogReplica PRIVATE tmog_core Qt6::Widgets)
     set_target_properties(TmogReplica PROPERTIES
@@ -118,6 +131,7 @@ if(TARGET Qt6::Widgets)
         src/MainWindow.cpp
         src/ProcessTableModel.cpp
         src/DisplaySettings.cpp
+        src/PerformancePage.cpp
     )
     target_link_libraries(stale_persistence_checks PRIVATE tmog_core Qt6::Widgets)
     add_test(NAME stale_persistence_checks
@@ -132,6 +146,7 @@ if(TARGET Qt6::Widgets)
         src/MainWindow.cpp
         src/ProcessTableModel.cpp
         src/DisplaySettings.cpp
+        src/PerformancePage.cpp
     )
     target_link_libraries(io_table_checks PRIVATE tmog_core Qt6::Widgets)
     add_test(NAME io_table_checks COMMAND io_table_checks)
@@ -147,14 +162,49 @@ if(TARGET Qt6::Widgets)
         src/MainWindow.cpp
         src/ProcessTableModel.cpp
         src/DisplaySettings.cpp
+        src/PerformancePage.cpp
     )
     target_link_libraries(navigation_settings_checks PRIVATE tmog_core Qt6::Widgets)
     if(TARGET Qt6::Test)
         target_link_libraries(navigation_settings_checks PRIVATE Qt6::Test)
         target_compile_definitions(navigation_settings_checks PRIVATE TMOG_HAVE_QT_TEST=1)
+        # windeployqt 只收集生产程序运行库，不部署 Qt6Test.dll；测试 EXE 与
+        # windeployqt 输出同目录运行，必须把链接到的 Qt6::Test 运行库复制到
+        # EXE 目录，否则 Windows 下以 0xc0000135 (STATUS_DLL_NOT_FOUND) 退出。
+        add_custom_command(TARGET navigation_settings_checks POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:Qt6::Test>"
+                "$<TARGET_FILE_DIR:navigation_settings_checks>"
+            VERBATIM)
     endif()
     add_test(NAME navigation_settings_checks COMMAND navigation_settings_checks)
     set_tests_properties(navigation_settings_checks PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins/platforms"
+        TIMEOUT 120)
+
+    # #19 检查：整机性能页（生产 MainWindow + PerformancePage，注入受控整机
+    # 来源与枚举器）——首样本「待采样」、累计时间差百分比、有效空闲 0.0%、
+    # 读取失败缺样与错误不显示 0、恢复后重建基线、曲线断口分段、内存单位与
+    # 口径、切页/暂停不中断采样且无冻结。全程离屏，TIMEOUT 120。
+    add_executable(performance_checks
+        tests/performance_checks.cpp
+        src/MainWindow.cpp
+        src/ProcessTableModel.cpp
+        src/DisplaySettings.cpp
+        src/PerformancePage.cpp
+    )
+    target_link_libraries(performance_checks PRIVATE tmog_core Qt6::Widgets)
+    if(TARGET Qt6::Test)
+        target_link_libraries(performance_checks PRIVATE Qt6::Test)
+        target_compile_definitions(performance_checks PRIVATE TMOG_HAVE_QT_TEST=1)
+        add_custom_command(TARGET performance_checks POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:Qt6::Test>"
+                "$<TARGET_FILE_DIR:performance_checks>"
+            VERBATIM)
+    endif()
+    add_test(NAME performance_checks COMMAND performance_checks)
+    set_tests_properties(performance_checks PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins/platforms"
         TIMEOUT 120)
 
@@ -169,6 +219,7 @@ if(TARGET Qt6::Widgets)
             src/MainWindow.cpp
             src/ProcessTableModel.cpp
             src/DisplaySettings.cpp
+            src/PerformancePage.cpp
         )
         target_link_libraries(end_confirm_checks PRIVATE tmog_core Qt6::Widgets)
         add_test(NAME end_confirm_checks COMMAND end_confirm_checks)
@@ -239,6 +290,10 @@ if(TARGET Qt6::Widgets)
         # #17U：新导航/设置测试与上述测试同在构建目录根，同受 windeployqt
         # platforms/ 部署影响；Windows 下统一用同源派生插件路径。
         set_tests_properties(navigation_settings_checks PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=${_plugin_dir_real}"
+            TIMEOUT 120)
+        # #19：性能页离屏测试同处构建目录根，同样使用同源派生插件路径。
+        set_tests_properties(performance_checks PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=${_plugin_dir_real}"
             TIMEOUT 120)
         unset(_qt_cmake_real)

@@ -3,8 +3,9 @@
 // 注入受控枚举器（G5 模式）驱动真实 SamplingWorker/事件循环；不真实枚举、
 // 不真实终止、不触碰真实用户配置（显式传临时 settings 路径）。
 //
-//  N1. 默认页 Processes；QStackedWidget 两真实页面；objectName 可定位
-//  N2. Qt action 与 Ctrl+1/Ctrl+2 切换页面；设置页禁用进程操作；切页不产生额外采样（计数）
+//  N1. 默认页 Processes；QStackedWidget 三个真实页面（进程/设置/性能）；objectName 可定位
+//  N2. Qt action 与 Ctrl+1/Ctrl+2/Ctrl+3 切换页面；设置页禁用进程操作、性能页禁用结束任务；
+//      切页不产生额外采样（计数）
 //  N3. 四档刷新：click 单选 → 同一 timer interval 实际改变；非法档位 →
 //      1000 + 状态栏非模态反馈；采样不重叠/不重入（max_active==1）
 //  N4. 暂停跨页保持；切页不自动执行操作
@@ -207,12 +208,15 @@ void n1_default_page_and_widgets(const QString& settings_path) {
     auto* stack = stack_of(win);
     auto* processes = win.findChild<QWidget*>(QStringLiteral("processes_page"));
     auto* settings = win.findChild<QWidget*>(QStringLiteral("settings_page"));
+    auto* performance =
+        win.findChild<QWidget*>(QStringLiteral("performance_page"));
     auto* table = win.findChild<QTableView*>(QStringLiteral("process_table"));
     auto* timer = timer_of(win);
 
     check(stack != nullptr, "N1: QStackedWidget present (main_stack)");
-    check(stack && stack->count() == 2, "N1: exactly two real pages");
-    check(processes && settings, "N1: processes_page + settings_page exist");
+    check(stack && stack->count() == 3, "N1: exactly three real pages");
+    check(processes && settings && performance,
+          "N1: processes_page + settings_page + performance_page exist");
     check(stack && stack->currentWidget() == processes,
           "N1: default page is Processes on every start");
     check(table != nullptr, "N1: process table present (process_table)");
@@ -249,17 +253,24 @@ void n2_navigation_actions_and_ctrl_keys(const QString& settings_path) {
     auto* stack = stack_of(win);
     auto* processes = win.findChild<QWidget*>(QStringLiteral("processes_page"));
     auto* settings = win.findChild<QWidget*>(QStringLiteral("settings_page"));
+    auto* performance =
+        win.findChild<QWidget*>(QStringLiteral("performance_page"));
     QAction* nav_processes = action_of(win, "nav_processes_action");
     QAction* nav_settings = action_of(win, "nav_settings_action");
+    QAction* nav_performance = action_of(win, "nav_performance_action");
     QAction* pause = action_of(win, "pause_action");
     QAction* refresh = action_of(win, "refresh_action");
     QAction* end_task = action_of(win, "end_task_action");
 
-    check(nav_processes && nav_settings, "N2: navigation actions exist");
+    check(nav_processes && nav_settings && nav_performance,
+          "N2: navigation actions exist (processes/settings/performance)");
     check(nav_processes && nav_processes->shortcut() == QKeySequence("Ctrl+1"),
           "N2: Processes action bound to Ctrl+1");
     check(nav_settings && nav_settings->shortcut() == QKeySequence("Ctrl+2"),
           "N2: settings action bound to Ctrl+2");
+    check(nav_performance &&
+              nav_performance->shortcut() == QKeySequence("Ctrl+3"),
+          "N2: performance action bound to Ctrl+3 (#19)");
 
     // N2：切页本身不得触发采样。先把档位调到 5000 ms（远大于本段测试窗口，
     // 排除 timer 自然 tick），再在每次切页前后比较 fake 枚举器采样计数。
@@ -296,6 +307,27 @@ void n2_navigation_actions_and_ctrl_keys(const QString& settings_path) {
     check(win.refresh_interval_ms() == 5000,
           "N2: page switch keeps refresh interval (action -> processes)");
 
+    // #19：性能页导航（Ctrl+3）。切页不采样；只读快照页禁用「结束任务」，
+    // 暂停/刷新仍作用于统一采样调度（跨页有效）。
+    const int calls_before_performance = f.raw->calls();
+    if (nav_performance) nav_performance->trigger();
+    pump_ms(200);
+    check(stack->currentWidget() == performance,
+          "N2: action switches to performance page");
+    check(nav_performance && nav_performance->isChecked(),
+          "N2: performance action checked after switch");
+    check(pause && pause->isEnabled() && refresh && refresh->isEnabled() &&
+              end_task && !end_task->isEnabled(),
+          "N2: performance page keeps sampling controls, disables end task");
+    check(f.raw->calls() == calls_before_performance,
+          "N2: page switch itself does not trigger sampling (action -> performance)");
+    check(win.refresh_interval_ms() == 5000,
+          "N2: page switch keeps refresh interval (action -> performance)");
+    if (nav_processes) nav_processes->trigger();
+    pump_ms(200);
+    check(stack->currentWidget() == processes,
+          "N2: action returns from performance to Processes page");
+
 #ifdef TMOG_HAVE_QT_TEST
     win.activateWindow();
     win.setFocus();
@@ -316,6 +348,23 @@ void n2_navigation_actions_and_ctrl_keys(const QString& settings_path) {
           "N2: page switch itself does not trigger sampling (Ctrl+1 -> processes)");
     check(win.refresh_interval_ms() == 5000,
           "N2: Ctrl+1 page switch keeps refresh interval");
+    // #19：Ctrl+3 → 性能页，仍不触发采样。
+    const int calls_before_key_performance = f.raw->calls();
+    QTest::keyClick(&win, Qt::Key_3, Qt::ControlModifier);
+    QTest::qWait(200);
+    check(stack->currentWidget() == performance,
+          "N2: Ctrl+3 switches to performance page");
+    check(f.raw->calls() == calls_before_key_performance,
+          "N2: page switch itself does not trigger sampling (Ctrl+3 -> performance)");
+    check(win.refresh_interval_ms() == 5000,
+          "N2: Ctrl+3 page switch keeps refresh interval");
+    const int calls_before_key_back = f.raw->calls();
+    QTest::keyClick(&win, Qt::Key_1, Qt::ControlModifier);
+    QTest::qWait(200);
+    check(stack->currentWidget() == processes,
+          "N2: Ctrl+1 returns from performance to Processes page");
+    check(f.raw->calls() == calls_before_key_back,
+          "N2: page switch itself does not trigger sampling (Ctrl+1 <- performance)");
 #else
     std::cout << "SKIP: Ctrl+key delivery (Qt6::Test unavailable); shortcut "
                  "bindings asserted above\n";
@@ -620,7 +669,10 @@ void n8_close_stops_timer(const QString& settings_path) {
 int main(int argc, char** argv) {
     QApplication app(argc, argv);   // 平台由 ctest ENV 设为 offscreen
 
-    QTemporaryDir temp;
+    // 显式落在构建目录下：受限环境里系统临时目录可能不可用（QTemporaryDir
+    // 默认根目录创建失败），用当前工作目录保证测试自身可运行。
+    QTemporaryDir temp(
+        QDir::current().filePath(QStringLiteral("nav_checks_settings_XXXXXX")));
     if (!temp.isValid()) {
         std::cout << "FAIL: cannot create temporary directory\n";
         return 1;

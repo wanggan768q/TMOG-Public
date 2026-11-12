@@ -5,6 +5,7 @@
 #include <utility>
 #include "IProcessEnumerator.h"
 #include "ProcessSnapshot.h"
+#include "SystemMetrics.h"
 
 class QObject;
 
@@ -28,6 +29,8 @@ public:
     using DoneFn = std::function<void(SampleResult)>;
     // #16：失败回调带错误描述（结果不存在或 ok=false 均到达此处）
     using FailedFn = std::function<void(const std::string&)>;
+    // #19：整机读数回调（与进程枚举解耦：进程枚举失败不影响整机读数投递）。
+    using SystemReadingFn = std::function<void(const SystemReading&)>;
 
     SamplingWorker() = default;
     // 析构前必须已 shutdown 成功（调用方保证；shutdown 失败时禁止析构枚举器）
@@ -40,8 +43,12 @@ public:
     bool closing() const { return closing_; }
 
     // owner: 结果回调接收者（生命周期由调用方保证长于回调投递）。
+    // system_source/on_system 可选（#19）：同一次采样先投递整机读数，再投递
+    // 进程结果；两者各自独立，整机读数失败不影响进程采样。
     void start(QObject* owner, IProcessEnumerator* enumerator,
-               DoneFn on_done, FailedFn on_failed);
+               DoneFn on_done, FailedFn on_failed,
+               ISystemMetricsSource* system_source = nullptr,
+               SystemReadingFn on_system = SystemReadingFn());
 
     // 收束：返回线程是否在 timeout 内实际退出。成功后内部状态清空，可再次 start。
     bool shutdown(int timeout_ms);
