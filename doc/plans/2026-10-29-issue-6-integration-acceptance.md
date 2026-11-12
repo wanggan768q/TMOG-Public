@@ -264,59 +264,73 @@ material-dev-2-contract.md 修复合同内由 dev attempt2 完成最小修复：
 上节 §9 的"共 28 案例 exit 0"为修复前旧构造记录（历史保留）；本轮 §10 为
 修复后新证据，Review attempt2 以新固定 SHA 复审。
 
-## 11. rebase 到 main 后复测（2026-11-11，提交 PR 前）
+## 11. rebase 后复测（d3e9e2 轮 2026-11-11；1158475 轮 2026-11-12 重跑）
 
-本节记录分支 rebase 到 `origin/main` `d3e9e2e6c68d75f60d4cd2aa2af1303b04ec36d4`
-之后的实测数据。§1 迁移表与 §4 的数字/哈希是各轮当时的历史快照；§5 的组件/白名单
-数字已按本节实测更正；其余冲突处一律以本节为准（6 个受校准文件的本轮哈希见下）。
+本节记录分支 rebase 到 `origin/main` 之后的实测数据。**当前轮**为第 2 次 rebase
+到 `1158475d0e8c5e74fa788a41bbf4a056121e4674`（PR #53 合并提交）后的重跑；上一轮
+（rebase 到 `d3e9e2e6c68d75f60d4cd2aa2af1303b04ec36d4`）的数字保留并标注轮次对照。
+§1 迁移表与 §4 的数字/哈希是各轮当时的历史快照；§5 的组件/白名单数字已按本节实测
+更正；其余冲突处一律以本节当前轮为准（6 个受校准文件的本轮哈希见下）。
 
-- **rebase**：`git rebase origin/main` 5 个 commit 全部自动应用，**0 冲突**
-  （`git merge-tree --write-tree` 预判 rc=0 与实际一致）。rebase 后、本次文档
-  提交前 tip = `5c1bdb5`。远端此前无该分支，推送为新建分支。
+- **rebase**：`git rebase origin/main`（origin/main = `1158475d…`，即 PR #53 合并
+  提交）7 个 commit 全部自动应用，**0 冲突**（无需手工解冲突）；rebase 后、本次
+  文档提交前 tip = `8a0a9ec`（d3e9e2 轮为 5 个 commit、0 冲突、tip `5c1bdb5`）。
+  `CMakeLists.txt` 结果为双方改动共存：PR #53 的 `end_confirm_checks` 块位于
+  `if(TARGET Qt6::Widgets)` 内、M4 块之前；R-6 的 `TMOG_PORTABLE_STRICT` +
+  `portable_package` 块在文件末尾，无互相覆盖。
 - **工具链**（全部绝对路径，`$env:PATH` 仅会话内加 MinGW/Ninja/Qt bin 前缀）：
   CMake 3.31.2（`D:/InstallApplication/CMake/bin/cmake.exe`）、Ninja 1.12.1、
   Qt 6.12.0 mingw_64（`Qt6Core.dll` FileVersion 6.12.0.0）、
   MinGW-w64 GCC 13.1.0（`g++ -dumpfullversion` = 13.1.0）。
-- **Debug / Release**：各在 `<WT>/build/issue6-{debug,release}` configure
+- **Debug / Release**：各在 `<WT>/build/issue6-rebase-{debug,release}` 全新 configure
   （`-G Ninja`，`-DTMOG_PORTABLE_STRICT=ON`）rc=0、`cmake --build --parallel 4`
-  rc=0；`ctest --output-on-failure -j 4` 两配置均 **8/8 Passed，0 failed**
-  （库存 `ctest -N` = 8；§4.1 的 4 项是当时按 `-R` 过滤的安全子集，之后 main 增加
-  `smoke_enumerate`/`io_helper_binding_checks`/`process_ops_checks`/`io_table_checks`）。
-  逐项耗时（Release / Debug，秒）：process_checks 0.05/0.06、smoke_enumerate
-  0.41/0.45、io_helper_binding_checks 0.05/0.09、process_ops_checks 0.09/0.13、
-  sampling_recovery_checks 1.79/1.83、io_table_checks 7.93/7.96、
-  stale_persistence_checks 9.00/8.87、close_lifecycle_checks 11.63/11.59
-  （总 11.68s / 11.60s）。`process_ops_checks` 按默认参数运行，未触发真实
-  TerminateProcess。
+  rc=0（构建耗时 28.7 s / 31.2 s）；`ctest --output-on-failure -j 4` 两配置均
+  **9/9 Passed，0 failed**（d3e9e2 轮为 8/8；本轮新增的 `end_confirm_checks` 来自
+  PR #53；§4.1 的 4 项是当时按 `-R` 过滤的安全子集，非库存全量）。
+  逐项耗时（Release / Debug，秒）：process_checks 0.10/0.12、smoke_enumerate
+  0.38/0.39、io_helper_binding_checks 0.08/0.10、process_ops_checks 0.08/0.10、
+  sampling_recovery_checks 1.79/1.82、io_table_checks 7.90/7.90、
+  stale_persistence_checks 8.79/8.79、close_lifecycle_checks 11.51/11.55、
+  end_confirm_checks 23.86/23.83（ctest 总 25.79 s / 25.81 s）。`process_ops_checks`
+  按默认参数运行，未触发真实 TerminateProcess。
 - **package_checks 负例**：`pwsh -NoProfile -File tests/package_checks.ps1
-  -SourceDir <WT> -WorkDir <WT>/build/issue6-r6-checks ...`，**28 cases
-  （27 负例 + 1 正例对照），0 意外通过，raw exit=0**，净耗时 40,264 ms。
+  -SourceDir <WT> -WorkDir <WT>/build/issue6-rebase-checks ...`，**28 cases
+  （27 负例 + 1 正例对照），0 意外通过，raw exit=0**，净耗时 26,343 ms
+  （d3e9e2 轮 40,264 ms、B1 轮 34,407 ms；耗时为机器负载波动，用例集未变）。
   §10 各轮目标诊断（R-A/N22 casefold 重复、N4 size 单篡改、N16 缺内嵌许可、
   N27 HardLink 读前拒绝等）本轮同样命中。
-- **完整打包**（rebase 轮快照，`-BuildDir <WT>/build/issue6-release`）：
-  `scripts/package-portable.ps1` strict configure → `portable_package` staging →
-  许可收集 → MANIFEST → 包内自检，raw exit=0，净耗时 9,323 ms。该轮产物盘上 52 文件、
-  合计 40,769,058 字节；**B1 修复后重建**（`-BuildDir <WT>/build/issue6-fix-package`，
-  见 §12）为同 52 文件、**合计 40,769,990 字节（38.88 MiB）**，差值即 §12 两处描述
-  文本净增 932 字节。`TmogReplica.exe` 265,876 字节、`MANIFEST.txt` 5,380 字节
-  （清单主体 51 条，MANIFEST 自身不入列）两轮一致。MANIFEST 头部实测：
-  `app-version: 0.1.0`、`qt: 6.12.0.0`、`compiler-runtime: MinGW-w64 GCC 13.1.0`。
-  两轮 `scripts/check-package.ps1 -PackageDir .../portable` 均输出
-  **`check-package: ALL PASS`**（exit 0）。
+- **完整打包**（本轮快照：新建空目录 `<WT>/build/issue6-rebase-package` 后以
+  `-BuildDir` 指向它运行 `scripts/package-portable.ps1`，含全量编译）：
+  strict configure → `portable_package` staging → 许可收集 → MANIFEST → 包内自检，
+  raw exit=0，净耗时 15,861 ms。产物盘上 **52 文件、合计 40,770,050 字节
+  （38.88 MiB）**；`TmogReplica.exe` **265,936 字节**、`MANIFEST.txt` 5,380 字节
+  （57 行 = 头部 6 行 + 主体 **51 条**，MANIFEST 自身不入列）。历史对照：
+  d3e9e2 轮 52 文件 / 40,769,058 字节 / exe 265,876 字节；B1 轮 52 文件 /
+  40,769,990 字节 / exe 265,876 字节；本轮 exe +60 字节来自 PR #53 的 MainWindow
+  改动，总字节相应变化。MANIFEST 头部实测：`app-version: 0.1.0`、`qt: 6.12.0.0`、
+  `compiler-runtime: MinGW-w64 GCC 13.1.0`。独立重跑
+  `scripts/check-package.ps1 -PackageDir .../portable` 输出
+  **`check-package: ALL PASS`**（exit 0；打包脚本内自检同样 ALL PASS）。
 - **缺组件失败路径**（真实执行，非静态声称）：以 `-DTMOG_PORTABLE_STRICT=ON` 且
-  不传 Qt 前缀在 `<WT>/build/issue6-strict-noqt` configure，CMake 在
-  `CMakeLists.txt:139` 以
+  不传 Qt 前缀、PATH 仅含 MinGW/Ninja（不含 Qt bin）在
+  `<WT>/build/issue6-rebase-strict-noqt2` configure，CMake 在
+  **`CMakeLists.txt:226`** 以
   `TMOG_PORTABLE_STRICT=ON 但未找到 Qt6 Widgets：便携包要求 GUI 与部署工具齐备`
-  失败，exit=1，不静默降级。包内缺 DLL/缺许可的失败路径由 package_checks 负例
-  N1/N2 覆盖（真实 check-package.ps1 实测非零）。
-- **6 个受校准文件当前 SHA-256**（rebase 后、本节提交前实测）：
-  CMakeLists.txt `bed7647c8d5509596b95aece319cbfbe16eca9b511343792ca48350c92d5d860`；
-  scripts/package-portable.ps1 `3c015ad5f508fc4d7edd193be11862374798f5a7c18cdfba14664c33ee52d5eb`；
-  scripts/check-package.ps1 `7edce6fc36401b5b32eb85ae925b31e131bd3d361bfcf612978c6673c52cdb4b`；
-  packaging/README-PACKAGE.md `a6180dc0c06d187e91b88d85b0540315f9c4e3bdd548482124c607714ef5deb2`；
+  失败，exit=1，不静默降级（d3e9e2 轮为 `CMakeLists.txt:139`；PR #53 在
+  `if(TARGET Qt6::Widgets)` 内插入 87 行使其下移）。边界事实：Qt bin 在 PATH 中时
+  CMake 会经 system environment PATH 找到 Qt6（`--debug-find-pkg=Qt6` 实测），
+  strict 因而不会失败——故该负例必须在 Qt 不可发现的 PATH 下执行。包内缺 DLL/
+  缺许可的失败路径由 package_checks 负例 N1/N2 覆盖（真实 check-package.ps1
+  实测非零）。
+- **6 个受校准文件当前 SHA-256**（本轮 rebase 后、本节提交前实测）：
+  CMakeLists.txt `815917bd2aec062076574e85b37cfa1961887adb6e28d35c1279ff9013cf966f`
+  （d3e9e2 轮 `bed7647c…`，因 rebase 合入 PR #53 的 87 行而变化）；
+  scripts/package-portable.ps1 `3c015ad5f508fc4d7edd193be11862374798f5a7c18cdfba14664c33ee52d5eb`（未变）；
+  scripts/check-package.ps1 `7edce6fc36401b5b32eb85ae925b31e131bd3d361bfcf612978c6673c52cdb4b`（未变）；
+  packaging/README-PACKAGE.md `a6180dc0c06d187e91b88d85b0540315f9c4e3bdd548482124c607714ef5deb2`（未变）；
   packaging/THIRD-PARTY-NOTICES.md `6cc8aa5a2caeabaf2e869add97202ba87820e1e68a975e247d2db8b9d264e713`
-  （B1 修复后值；修复前 `1ecc208c…921cfc`）；
-  tests/package_checks.ps1 `3b78d01e7e84676f2c4ddfcb67f7916e85ad9df8ae8a142952e8add945c0500e`。
+  （B1 修复后值，本轮未变；修复前 `1ecc208c…921cfc`）；
+  tests/package_checks.ps1 `3b78d01e7e84676f2c4ddfcb67f7916e85ad9df8ae8a142952e8add945c0500e`（未变）。
   §1 表内数值为 attempt=2 时快照（材料恢复轮改动了这些文件），不再代表当前内容。
 - **本轮仍未验证（与 §7/§9 一致，不因本节复测而消失）**：
   - 干净 Windows 11（未装 Qt/开发工具）实机运行、清 PATH 启动（6H 人工授权项）；
@@ -348,15 +362,19 @@ SHA-256 全部未变，逐项复核 0 不符）。
    会与「本包 Qt 运行库按 LGPLv3 分发」的既有断言冲突并制造虚假组件映射。故按审查
    建议的第二分支处理：以显式声明（文件级 `purpose` + 组件级 `notes`）说明其角色；
    该组件 `notes` 同轮补写「Qt-COPYING 为 Apache-2.0 随附材料、不进入 license_ids」。
-4. **全文检索**：`GPL 及例外|GPL 与例外` 在 `packaging/`、`scripts/`、`tests/` 与
-   `doc/plans/` 内已 0 命中；`licenses/` 下 28 个文本文件 `git status` 无改动。
+4. **全文检索**（rebase 轮重跑，如实记录）：`GPL 及例外|GPL 与例外` 在
+   `packaging/`、`scripts/`、`tests/` 内 **0 命中**；`doc/plans/` 内 **2 处**，均为
+   §12 以引号引用旧错误描述所产生（本条上方正文引用 1 处 + 本条检索正则模式 1 处），
+   不构成仍在使用的错误描述。重跑方式：在工作树内对上述 4 个目录做
+   `ripgrep` 正则检索，返回 2 个匹配行、均位于本文档；`packaging/licenses/` 下
+   28 个许可文本文件 `git status` 无改动。
 5. **复验实测**（同环境，PATH 前缀 MinGW/Ninja/Qt bin）：
    - `tests/package_checks.ps1`（`-WorkDir <WT>/build/issue6-fix-checks`）：
      **28 cases（27 负例 + 1 正例），0 意外通过，raw exit=0**，净耗时 34,407 ms；
      日志 `evidence/worker-r6-b1-fix-package_checks.log`。
    - `scripts/package-portable.ps1`（`-BuildDir <WT>/build/issue6-fix-package`，
-     全新构建目录、含全量编译）：raw exit=0，净耗时 22,967 ms（§11 的 9,323 ms
-     为增量构建轮），包内自检 `check-package: ALL PASS`；
+     全新构建目录、含全量编译）：raw exit=0，净耗时 22,967 ms（§11 中 d3e9e2 轮的
+     9,323 ms 为增量构建轮，两者不可直接比较），包内自检 `check-package: ALL PASS`；
      日志 `evidence/worker-r6-b1-fix-package.log`。
    - `scripts/check-package.ps1 -PackageDir <WT>/build/issue6-fix-package/portable`：
      **`check-package: ALL PASS`**，exit=0；产物 **52 文件 / 40,769,990 字节**，
