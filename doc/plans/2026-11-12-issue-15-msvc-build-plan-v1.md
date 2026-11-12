@@ -106,17 +106,31 @@ error C2059: syntax error: ')'
 ## 9. MinGW 回归（AC3）
 
 - 新构建目录 `build/mingw-debug`（Qt mingw kit + MinGW 编译器），`-DCMAKE_BUILD_TYPE=Debug`，全量构建与 `ctest`。
-- 对照 handoff 基线 11/11；任何差异必须解释。当前已知环境异常：`process_ops_checks` 报 `csrss not found`（见 §10）。
+- 对照 handoff 基线 11/11；任何差异必须解释。过程中曾出现 `process_ops_checks` 报 `csrss not found`，已定位为 Lead 环境准备动作的 Low 完整性副作用并修复（见 §10）；修复后 11/11 全绿。
 - 若 Debug 全绿且 Release 包检查不过（时间/环境），如实标注 Release 未做，不冒充全绿。
 
-## 10. `csrss not found` 异常排查
+## 10. `process_ops_checks` 失败根因与修复记录（Low 完整性环境副作用，已修复）
 
-现象：MSVC 与旧 MinGW 二进制的 `process_ops_checks` 均输出
-`NOTE: csrss not found; read-only verification unavailable this run` + `FAIL: csrss present for read-only critical verification`，退出码 1。
-- 实测 csrss.exe 存在 2 个（PID 1412 session0、1556 session1），`Get-Process`/`tasklist` 可见；当前进程 High 完整性（S-1-16-12288），用户 `guoxiaobo\ambition`。
-- 测试用 `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS)` + `PROCESSENTRY32W` 枚举按名匹配；说明是 toolhelp 枚举视角差异，非 MSVC 编译问题。
-- 排查计划：写最小 toolhelp 探针（编译于 `build/` 下，不入库）对比 `Get-Process` 与 toolhelp 列表差异；在普通控制台/新会话复跑；检查是否与父进程会话、完整性级别、会话 0 隔离或 Windows build 26200 的进程枚举过滤有关。
-- 记录要求：命令、退出码、csrss 实况、与 handoff 基线差异、结论（环境限制 vs 真实回归），**不写"通过"**。
+初期现象：MSVC Debug/Release 与 MinGW Debug 的 `process_ops_checks` 均输出
+`NOTE: csrss not found; read-only verification unavailable this run` + `FAIL: csrss present for read-only critical verification`，退出码 1；同环境主工程旧 MinGW 二进制（2026-10-27 构建）同样失败，故初判为"会话环境限制"并如实记录 10/11。
+
+**根因（Lead 定位，2026-11-12 17:51 通报）**：Lead 在 16:2x 对 `E:\Git\TMOG-Public-WorkTree` 执行
+`icacls /setintegritylevel "(OI)(CI)L"`，使 worktree 内全部文件（含构建出的 exe）继承 **Low 完整性标签（Mandatory Label\Low）**。
+从 Low IL 镜像启动的进程枚举本机进程时被系统裁剪到 ~60–66 个且不含 `csrss.exe`（测试用 `CreateToolhelp32Snapshot` + `PROCESSENTRY32W` 按名匹配），因此 FAIL；与 MSVC、MinGW 或本票代码无关。
+
+根因证据（Lead 提供 + 本 worktree 探针交叉印证）：
+- 同一 `smoke_enumerate.exe`：在 worktree 内（Low IL）看到 66 个进程；复制到 `%TEMP%`（Medium）后看到 569 个进程。
+- `icacls` 显示 worktree 文件带 `Mandatory Label\Low`。
+- 本 worktree 探针（`build/csrss-probe/`，不入库）：toolhelp_count=62–66、enumprocesses_count=62–66、`csrss_hits=0`；而同一 shell 的 `Get-Process`/`tasklist` 能看到 csrss（PID 1412 session 0、1556 session 1）。
+
+修复（Lead 执行）：`icacls E:\Git\TMOG-Public-WorkTree /setintegritylevel "(OI)(CI)M" /T`（3366 文件，0 失败）；Lead 独立复跑 w04 worktree ctest 13/13 PASS。
+
+本 worktree 修复后重跑（2026-11-12 17:51–17:53，标签恢复 Medium 后）：
+- `pwsh -NoProfile -File scripts\build-msvc.ps1 -Configuration Debug` → ctest **11/11 PASS**（`process_ops_checks` 0.06 s PASS），exit **0**；日志 `build/msvc-debug/logs/ctest-Debug.log`。
+- `pwsh -NoProfile -File scripts\build-msvc.ps1 -Configuration Release` → ctest **11/11 PASS**，exit **0**；日志 `build/msvc-release/logs/ctest-Release.log`。
+- MinGW Debug `ctest --output-on-failure`（TEMP/TMP=`build/mingw-debug/tmp`、PATH 前置 mingw bin）→ **11/11 PASS**，ctest exit **0**；日志 `build/mingw-debug/logs/ctest-rerun2.log`。
+
+结论：最初 10/11 是**环境准备副作用**（Low IL），不是 MSVC 兼容性回归、也不是本票改动引入；修复后 AC1/AC3 的 ctest 均为 11/11。代码无需任何规避改动。
 
 ## 11. 证据清单（AC4）
 
@@ -127,7 +141,7 @@ error C2059: syntax error: ')'
 5. 包清单：文件数、总字节、关键 DLL/插件 SHA-256、MANIFEST 摘要。
 6. 干净 PATH 启动证据（模块加载、窗口/核心流程、关闭）。
 7. 未验证环境与阻塞项（Qt MSVC kit、GUI 构建、打包、干净环境）逐条列明。
-8. 报告落盘 `E:\Git\TMOG-Public\.workflow\dsh-resume-20261112\reports\ticket-15-worker-r1.md`，ops 追加 `.workflow\dsh-resume-20261112\ops\ticket-15\ops.jsonl`。
+8. 报告落盘 `E:\Git\TMOG-Public\.workflow\dsh-resume-20261112\reports\ticket-15-worker-r1.md`；根因修正后按不可覆写纪律追加新版本 `ticket-15-worker-r2.md`（r1 标为已被 r2 取代），ops 追加 `.workflow\dsh-resume-20261112\ops\ticket-15\dev-15-1.ops.jsonl`。
 
 ## 12. 步骤与门禁
 
@@ -146,7 +160,7 @@ error C2059: syntax error: ')'
 - MSVC 与 Qt 版本/ABI 错配 → prefix REALPATH 与 `msvc2022_64` 目录名校验，配置后 CMakeCache 复核。
 - Debug Qt DLL 缺失 → windeployqt/构建失败即报错，不回退 Release。
 - 干净 PATH 启动失败（缺 VC Redist）→ 如实记录为未满足项，不静默改 PATH 掩盖。
-- csrss 环境问题被误判为回归 → 用旧 MinGW 二进制交叉验证（已完成），报告中标注环境限制。
+- `process_ops_checks` 失败被误判为回归 → 用旧 MinGW 二进制交叉验证（已完成）；后由 Lead 定位为 worktree Low 完整性标签副作用并修复（§10），修复后重跑 11/11，本票未做任何规避代码。
 - 回退：全部改动限于 `scripts/`、`tests/`、`doc/plans/`，可单独回退；不触碰 `src/`、`CMakeLists.txt`。
 
 ## 14. 执行结果（2026-11-12，本计划已执行完毕）
@@ -155,12 +169,12 @@ error C2059: syntax error: ')'
 
 | 项目 | 结果 | 证据 |
 | --- | --- | --- |
-| MSVC Debug GUI 构建 | 72/72 目标成功（TmogReplica.exe 64-bit debug）；ctest 10/11，仅 `process_ops_checks` 因 csrss 环境限制失败 | `build/msvc-debug/logs/{configure,build,ctest}-Debug.log`、`toolchain-versions.txt` |
-| MSVC Release GUI 构建 | 72/72 目标成功；ctest 10/11，同上 | `build/msvc-release/logs/ctest-Release.log` |
-| MSVC Release 便携包 | 53 文件 / 48,822,377 字节；windeployqt + app-local MSVC 运行库（vcruntime140、vcruntime140_1、msvcp140、msvcp140_1、msvcp140_2）；`check-package.ps1 -Toolchain msvc` ALL PASS（24 项许可、清单 52 条） | `build/msvc-release/portable`、`logs/package-inventory-Release.txt` |
-| 无开发 PATH 启动 | PASS：窗口标题 `TmogReplica`；Qt6Core/Qt6Gui/Qt6Widgets/VCRUNTIME140/MSVCP140/qwindows 均从包目录加载（包内 11 个模块，系统 78）；正常关闭，退出码 0 | `build/msvc-release/launch-temp/launch-evidence.json` |
-| MinGW Debug 回归 | 构建 72/72；ctest 10/11，仅 `process_ops_checks` 因同一 csrss 环境限制失败（`navigation_settings_checks` 经 TEMP 修正后 PASS） | `build/mingw-debug/logs/ctest-rerun.log` |
-| MinGW Release 包回归 | `package-portable.ps1` + `check-package.ps1 -Toolchain auto` ALL PASS（ABI=mingw，28 项许可，51 文件）→ 原路径未弱化 | `build/issue6-w35-mingw-regress/portable` |
+| MSVC Debug GUI 构建 | 72/72 目标成功（TmogReplica.exe 64-bit debug）；ctest **11/11 PASS**（Low IL 修复后重跑，`process_ops_checks` PASS 0.06s；exit 0，总 66.33s） | `build/msvc-debug/logs/{configure,build,ctest}-Debug.log`、`toolchain-versions.txt` |
+| MSVC Release GUI 构建 | 72/72 目标成功；ctest **11/11 PASS**（exit 0，总 65.99s） | `build/msvc-release/logs/ctest-Release.log` |
+| MSVC Release 便携包 | 53 文件 / 48,822,377 字节；windeployqt + app-local MSVC 运行库（vcruntime140、vcruntime140_1、msvcp140、msvcp140_1、msvcp140_2）；`check-package.ps1 -Toolchain msvc` ALL PASS（24 项许可、清单 52 条）；IL 修复后复检仍 ALL PASS、文件 hash 未变 | `build/msvc-release/portable`、`logs/package-inventory-Release.txt`、`logs/check-package-Release-postilfix.log` |
+| 无开发 PATH 启动 | PASS：窗口标题 `TmogReplica`；Qt6Core/Qt6Gui/Qt6Widgets/VCRUNTIME140/MSVCP140/qwindows 均从包目录加载（包内 11 个模块，系统 77/78）；正常关闭，退出码 0；IL 修复后重跑仍 PASS（pid 35568） | `build/msvc-release/launch-temp/launch-evidence.json`、`launch-temp2/launch-evidence.json` |
+| MinGW Debug 回归 | 构建 72/72；ctest **11/11 PASS**（IL 修复后重跑；exit 0，总 65.92s） | `build/mingw-debug/logs/ctest-rerun2.log` |
+| MinGW Release 包回归 | `package-portable.ps1` + `check-package.ps1 -Toolchain auto` ALL PASS（ABI=mingw，28 项许可，51 文件）→ 原路径未弱化；IL 修复后复检仍 ALL PASS | `build/issue6-w35-mingw-regress/portable`、`build/issue6-w35-mingw-regress/logs/check-package-postilfix.log` |
 
 与计划的偏差（均已实现并验证）：
 
@@ -169,5 +183,6 @@ error C2059: syntax error: ')'
 3. `check-package.ps1` 增加 `-Toolchain auto|mingw|msvc` ABI 分支（运行库/许可/白名单按 ABI 选择、交叉 ABI DLL 双向拒绝），MinGW 原断言保持；为 Qt 6.12 windeployqt 产物补充 `dxcompiler.dll`/`dxil.dll` 及 `msvcp140_*.dll` 白名单。
 4. 新增 `scripts/verify-portable-launch.ps1`（干净 PATH/环境变量、窗口与模块核验、证据 JSON）。
 5. `build-msvc.ps1` 增加 `-SkipCtest`/`-SkipLaunchVerify`（跳过会在日志显式记录，不声明通过）。
+6. 初期 ctest 10/11 的唯一失败 `process_ops_checks` 根因为 Lead 环境准备动作给 worktree 打上的 **Low 完整性标签**（§10），不是工具链/代码问题；Lead 修复（`icacls ... /setintegritylevel "(OI)(CI)M" /T`）后本 worktree 三套 ctest 全部 11/11 重跑通过，报告 r2 与本节按修复后结果更新（r1 的"csrss 环境限制"结论已失效）。
 
-未验证/限制：`process_ops_checks` 在本会话环境必失败（harness 派生进程只见约 66 个进程且不含 csrss；旧 MinGW 二进制同样失败，非本票改动引入），报告如实记录；GUI 验证限于"进程启动 + 主窗口出现 + 核心页面测试由 ctest 覆盖"，不等于全页手工验收。
+未验证/限制：`process_ops_checks` 的失败已定位并修复（§10），修复后三套 ctest 11/11；GUI 验证限于"进程启动 + 主窗口出现 + 核心页面测试由 ctest 覆盖"，不等于全页手工验收；其余未验证项（其他 Windows 版本/补丁 Qt/干净裸机/非管理员/Debug 包/MinGW 包启动）见报告 r2 §9。
